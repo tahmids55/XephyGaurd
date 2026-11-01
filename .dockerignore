@@ -1,0 +1,21 @@
+# Keep local state, secrets and build output out of CCC images (build context = repo root).
+.git
+**/__pycache__
+**/.pytest_cache
+agent/build*
+dist
+eval/results
+ccc-deploy/.env
+server/.env
+server/vendor
+server/node_modules
+server/public/build
+server/public/hot
+server/bootstrap/cache/*.php
+server/storage/app/private
+server/storage/app/net
+server/storage/logs/*
+server/storage/framework/cache/data/*
+server/storage/framework/sessions/*
+server/storage/framework/views/*
+server/database/*.sqlite

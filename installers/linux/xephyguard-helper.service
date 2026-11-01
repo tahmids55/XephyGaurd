@@ -1,0 +1,14 @@
+# systemd *user* unit, enabled globally for every graphical login (systemctl --global enable).
+# If a user masks or kills it, the agent service reports "helper_missing" to the CCC.
+[Unit]
+Description=XephyGuard session helper (indicator, focused window, clipboard sizes)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/lib/xephyguard/xephyguard-helper
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

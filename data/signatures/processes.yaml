@@ -1,0 +1,162 @@
+# XephyGuard process signatures.
+# Compiled by the CCC into a signed JSON bundle and pushed to agents. Never hard-code these in the agent.
+#
+# Matcher fields (all case-insensitive; ".exe" is stripped on Windows before comparing):
+#   exe:               executable basename equals one of the values
+#   exe_prefix:        executable basename starts with one of the values
+#   cmdline_contains:  command line contains one of the substrings
+#   interpreters:      only evaluate cmdline_contains when the exe is one of these (node, python, ...)
+# A rule matches if ANY of exe / exe_prefix matches, OR (interpreter condition holds AND cmdline_contains matches).
+version: 1
+rules:
+  # ---- local model runtimes -------------------------------------------------
+  - id: proc.ollama
+    category: local_llm
+    severity: high
+    description: Ollama local LLM runtime
+    match: { exe: [ollama, ollama_llama_server, "ollama app"] }
+  - id: proc.llamacpp
+    category: local_llm
+    severity: high
+    description: llama.cpp server / CLI
+    match: { exe: [llama-server, llama-cli, llama-run, llamafile, main-llama], exe_prefix: ["llama-"] }
+  - id: proc.lmstudio
+    category: local_llm
+    severity: high
+    description: LM Studio
+    match: { exe: [lmstudio, "lm studio", lms, lm-studio] }
+  - id: proc.koboldcpp
+    category: local_llm
+    severity: high
+    description: KoboldCpp
+    match: { exe: [koboldcpp, koboldcpp_cu12, koboldcpp_nocuda] }
+  - id: proc.gpt4all
+    category: local_llm
+    severity: high
+    description: GPT4All
+    match: { exe: [gpt4all], cmdline_contains: [gpt4all] }
+  - id: proc.jan
+    category: local_llm
+    severity: high
+    description: Jan desktop
+    match: { exe: [jan] }
+  - id: proc.localai
+    category: local_llm
+    severity: high
+    description: LocalAI
+    match: { exe: [local-ai, localai] }
+  - id: proc.textgen_webui
+    category: local_llm
+    severity: high
+    description: text-generation-webui / vLLM / similar Python servers
+    match:
+      interpreters: [python, python3, pythonw, python3.10, python3.11, python3.12, python3.13]
+      cmdline_contains: [text-generation-webui, server.py --model, vllm.entrypoints, "-m vllm", llama_cpp.server, "-m mlx_lm", "transformers-cli serve"]
+
+  # ---- AI editors -----------------------------------------------------------
+  - id: proc.editor.cursor
+    category: ai_editor
+    severity: high
+    description: Cursor AI editor
+    match: { exe: [cursor] }
+  - id: proc.editor.windsurf
+    category: ai_editor
+    severity: high
+    description: Windsurf AI editor
+    match: { exe: [windsurf] }
+  - id: proc.editor.zed
+    category: ai_editor
+    severity: medium
+    description: Zed editor (built-in AI assistant)
+    match: { exe: [zed, zed-editor] }
+  - id: proc.editor.void
+    category: ai_editor
+    severity: high
+    description: Void AI editor
+    match: { exe: [void] }
+  - id: proc.desktop.chatgpt
+    category: ai_desktop
+    severity: high
+    description: ChatGPT / Copilot / Perplexity desktop apps (Claude desktop is claude.exe, matched by proc.cli.claude_code)
+    match: { exe: [chatgpt, "claude desktop", copilot, "microsoft copilot", perplexity] }
+
+  # ---- CLI agents (often node/python scripts) -------------------------------
+  - id: proc.cli.claude_code
+    category: cli_agent
+    severity: high
+    description: Claude Code CLI
+    match:
+      exe: [claude]
+      interpreters: [node, nodejs, bun, deno]
+      cmdline_contains: ["@anthropic-ai/claude-code", "claude-code/cli"]
+  - id: proc.cli.codex
+    category: cli_agent
+    severity: high
+    description: OpenAI Codex CLI
+    match:
+      exe: [codex]
+      interpreters: [node, nodejs, bun]
+      cmdline_contains: ["@openai/codex"]
+  - id: proc.cli.gemini
+    category: cli_agent
+    severity: high
+    description: Gemini CLI
+    match:
+      exe: [gemini]
+      interpreters: [node, nodejs, bun]
+      cmdline_contains: ["@google/gemini-cli"]
+  - id: proc.cli.aider
+    category: cli_agent
+    severity: high
+    description: Aider
+    match:
+      exe: [aider]
+      interpreters: [python, python3, pythonw]
+      cmdline_contains: ["aider.main", "/aider ", "-m aider"]
+  - id: proc.cli.misc
+    category: cli_agent
+    severity: medium
+    description: Other AI CLIs (llm, sgpt, opencode, goose, amp)
+    match:
+      exe: [sgpt, opencode, goose, amp, crush, qwen]
+      interpreters: [python, python3, node]
+      cmdline_contains: ["shell_gpt", "llm.cli", "opencode-ai"]
+
+  # ---- virtualization / containers (monitored, low severity by default) -----
+  - id: vm.wsl
+    category: virtualization
+    severity: medium
+    description: WSL instance running
+    match: { exe: [wsl, wslhost, wslservice, vmmem, vmmemwsl] }
+  - id: vm.hyperv
+    category: virtualization
+    severity: medium
+    description: Hyper-V VM worker
+    match: { exe: [vmwp, vmconnect] }
+  - id: vm.virtualbox
+    category: virtualization
+    severity: medium
+    description: VirtualBox VM
+    match: { exe_prefix: [virtualboxvm, vboxheadless, vboxsvc], exe: [virtualbox] }
+  - id: vm.vmware
+    category: virtualization
+    severity: medium
+    description: VMware VM
+    match: { exe: [vmware-vmx, vmware, vmplayer] }
+  - id: vm.qemu
+    category: virtualization
+    severity: medium
+    description: QEMU / KVM guest
+    match: { exe_prefix: [qemu-system-], exe: [qemu-kvm] }
+  - id: vm.container
+    category: virtualization
+    severity: low
+    description: Docker / Podman containers
+    match: { exe: [dockerd, docker, podman, containerd-shim, containerd-shim-runc-v2, "docker desktop"] }
+
+  # ---- bypass tooling ---------------------------------------------------------
+  - id: net.vpn_client
+    category: bypass
+    severity: high
+    description: VPN / proxy / Tor clients
+    match: { exe: [openvpn, wireguard, wg-quick, tor, "tor browser", firefox-tor, protonvpn, nordvpn, expressvpn, warp-svc, psiphon, psiphon3, v2ray, xray, sing-box, clash, shadowsocks, sslocal] }

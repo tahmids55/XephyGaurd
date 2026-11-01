@@ -1,0 +1,35 @@
+#!/bin/sh
+# Debian maintainer script for xephyguard-agent.
+set -e
+case "$1" in configure)
+  install -d -m 0700 -o root -g root /etc/xephyguard /var/lib/xephyguard
+  install -d -m 0750 -o root -g adm /var/log/xephyguard
+  [ -f /etc/xephyguard/agent.toml ] || cp /usr/share/xephyguard/agent.toml.default /etc/xephyguard/agent.toml
+  chmod 0600 /etc/xephyguard/agent.toml
+  cp /usr/share/xephyguard/signatures.json /etc/xephyguard/signatures.json
+  # expected hashes of our own binaries (tamper check)
+  sha256sum /usr/lib/xephyguard/xephyguard-agent /usr/lib/xephyguard/xephyguard-helper > /etc/xephyguard/manifest.sha256
+  chmod 0644 /etc/xephyguard/manifest.sha256
+  # Lab CA: system store, Chromium NSS (per user, via helper script), Firefox enterprise policy.
+  if [ -f /etc/xephyguard/ca.crt ]; then
+    install -m 0644 /etc/xephyguard/ca.crt /usr/local/share/ca-certificates/xephyguard-lab-ca.crt
+    update-ca-certificates >/dev/null 2>&1 || true
+    /usr/lib/xephyguard/install-browser-ca.sh || true
+  fi
+  install -d /etc/opt/chrome/policies/managed /etc/chromium/policies/managed /etc/opt/edge/policies/managed /etc/firefox/policies
+  install -m 0644 /usr/share/xephyguard/browser-policies/chromium.json /etc/opt/chrome/policies/managed/xephyguard.json
+  install -m 0644 /usr/share/xephyguard/browser-policies/chromium.json /etc/chromium/policies/managed/xephyguard.json
+  install -m 0644 /usr/share/xephyguard/browser-policies/edge.json /etc/opt/edge/policies/managed/xephyguard.json
+  [ -f /etc/firefox/policies/policies.json ] || install -m 0644 /usr/share/xephyguard/browser-policies/firefox.json /etc/firefox/policies/policies.json
+  ln -sf /usr/lib/xephyguard/xephyguard-agent /usr/sbin/xephyguard-agent
+  # Login banner (transparency)
+  cp /usr/share/xephyguard/issue.net /etc/issue.d/xephyguard.issue 2>/dev/null || true
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    systemctl enable xephyguard-agent.service >/dev/null
+    systemctl --global enable xephyguard-helper.service >/dev/null 2>&1 || true
+    systemctl restart xephyguard-agent.service || true
+  fi
+  echo "XephyGuard agent installed. Enroll with: sudo xephyguard-agent enroll --key <KEY>"
+;; esac
+exit 0

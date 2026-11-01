@@ -1,0 +1,8 @@
+# XephyGuard agent configuration (root-only). Written by `xephyguard-agent enroll`.
+[ccc]
+host = ""            # empty = auto-discovery on the lab network
+api_port = 8443
+discovery_port = 47474
+
+[logging]
+level = "info"

@@ -1,0 +1,99 @@
+# XephyGuard CCC stack. Started by install.sh (do not run before it has written .env and the CA).
+#
+# All services use host networking:
+#   * the gateway/proxy/DNS layers must see real lab-PC source addresses (per-PC policy),
+#   * Docker's own iptables rules are disabled (install.sh) so they cannot interfere with nftables.
+# Internal services bind to 127.0.0.1 only; nginx is the single entry point for the LAN.
+name: xephyguard
+
+x-app: &app
+  image: xephyguard/ccc-app:${XG_VERSION:-latest}
+  build: { context: .., dockerfile: ccc-deploy/docker/app.Dockerfile }
+  network_mode: host
+  env_file: .env
+  restart: unless-stopped
+  volumes:
+    - /var/lib/xephyguard/ca:/var/lib/xephyguard/ca
+    - /var/lib/xephyguard/net:/var/lib/xephyguard/net
+    - /var/lib/xephyguard/storage:/var/www/html/storage/app
+    - /var/log/xephyguard:/var/www/html/storage/logs
+  depends_on:
+    mysql: { condition: service_healthy }
+
+services:
+  mysql:
+    image: mysql:8.4
+    network_mode: host
+    restart: unless-stopped
+    command: ["--bind-address=127.0.0.1", "--port=3306", "--mysqlx=OFF", "--innodb-buffer-pool-size=512M"]
+    environment:
+      MYSQL_DATABASE: xephyguard
+      MYSQL_USER: xephyguard
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes: [ "/var/lib/xephyguard/mysql:/var/lib/mysql" ]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${DB_ROOT_PASSWORD}"]
+      interval: 5s
+      retries: 30
+
+  web:        # nginx + php-fpm: dashboard (443), agent endpoint (8443, mTLS), CA/installers (80)
+    <<: *app
+    command: ["web"]
+    volumes:
+      - /var/lib/xephyguard/ca:/var/lib/xephyguard/ca
+      - /var/lib/xephyguard/net:/var/lib/xephyguard/net
+      - /var/lib/xephyguard/storage:/var/www/html/storage/app
+      - /var/log/xephyguard:/var/www/html/storage/logs
+      - ./nginx/xephyguard.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/xg-php.conf:/etc/nginx/xg-php.conf:ro
+
+  reverb:     # WebSocket server (127.0.0.1:8081, reached through nginx /app)
+    <<: *app
+    command: ["reverb"]
+
+  worker:     # queue: scoring, reports, retention
+    <<: *app
+    command: ["worker"]
+
+  scheduler:  # timetable, machine-silent detection, purge
+    <<: *app
+    command: ["scheduler"]
+
+  netpolicy:  # Unbound (DNS sinkhole with per-PC views) + nftables set updates
+    image: xephyguard/ccc-netpolicy:${XG_VERSION:-latest}
+    build: { context: .., dockerfile: ccc-deploy/docker/netpolicy.Dockerfile }
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    restart: unless-stopped
+    volumes: [ "/var/lib/xephyguard/net:/var/lib/xephyguard/net" ]
+
+  proxy:      # transparent mitmproxy with the XephyGuard addon (SNI filter + selective inspection)
+    image: xephyguard/ccc-proxy:${XG_VERSION:-latest}
+    build: { context: .., dockerfile: ccc-deploy/docker/proxy.Dockerfile }
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - /var/lib/xephyguard/net:/var/lib/xephyguard/net:ro
+      - /var/lib/xephyguard/mitmproxy:/home/mitmproxy/.mitmproxy      # owned by uid 1500 (install.sh)
+      - /var/log/xephyguard/proxy:/var/log/xephyguard
+
+  analysis:   # behavioral scoring service (127.0.0.1:8090)
+    image: xephyguard/ccc-analysis:${XG_VERSION:-latest}
+    build: { context: .., dockerfile: ccc-deploy/docker/analysis.Dockerfile }
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      XG_DB_URL: mysql://xephyguard:${DB_PASSWORD}@127.0.0.1:3306/xephyguard
+      XG_INTERNAL_TOKEN: ${XG_INTERNAL_TOKEN}
+      XG_SCORING_V2: ${XG_SCORING_V2:-0}
+    depends_on:
+      mysql: { condition: service_healthy }
+
+  discovery:  # answers agent auto-discovery broadcasts (UDP 47474)
+    image: xephyguard/ccc-discovery:${XG_VERSION:-latest}
+    build: { context: .., dockerfile: ccc-deploy/docker/discovery.Dockerfile }
+    network_mode: host
+    restart: unless-stopped
+    env_file: .env
+    volumes: [ "/var/lib/xephyguard/ca:/var/lib/xephyguard/ca:ro" ]

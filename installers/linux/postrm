@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+[ "$1" = remove ] || [ "$1" = purge ] && rm -f /usr/sbin/xephyguard-agent
+if [ "$1" = purge ]; then
+  rm -rf /etc/xephyguard /var/lib/xephyguard /var/log/xephyguard
+  rm -f /usr/local/share/ca-certificates/xephyguard-lab-ca.crt /etc/opt/chrome/policies/managed/xephyguard.json \
+        /etc/chromium/policies/managed/xephyguard.json /etc/opt/edge/policies/managed/xephyguard.json /etc/issue.d/xephyguard.issue
+  update-ca-certificates --fresh >/dev/null 2>&1 || true
+fi
+exit 0

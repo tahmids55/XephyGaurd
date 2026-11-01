@@ -1,0 +1,55 @@
+#!/usr/sbin/nft -f
+# XephyGuard gateway ruleset (gateway mode). Rendered by ccc-deploy/install.sh which replaces
+# @LAN_IF@, @WAN_IF@, @CCC_IP@, @LAB_SUBNET@, @PROXY_PORT@ and @AGENT_PORT@.
+# Set *elements* are updated at runtime by xg_netpolicy (sets.nft); the rules below are static.
+#
+# Layers (cheapest first):
+#   1. all lab DNS is forced to the CCC resolver (Unbound with per-client views)
+#   2. public DoH/DoT resolvers are dropped by IP and port 853
+#   3. QUIC (UDP 443) is dropped so browsers fall back to TCP that the proxy can see
+#   4. TCP 80/443 is redirected to the transparent proxy (SNI filter, selective inspection)
+#   5. Test-mode clients get no other egress; isolated clients only reach the agent port
+
+table inet xephyguard
+delete table inet xephyguard
+
+table inet xephyguard {
+    set test_clients     { type ipv4_addr; }
+    set block_ai_clients { type ipv4_addr; }
+    set isolated_clients { type ipv4_addr; }
+    set exempt_clients   { type ipv4_addr; }
+    set resolver_ips     { type ipv4_addr; flags interval; }
+    set resolver_ips6    { type ipv6_addr; flags interval; }
+
+    chain prerouting_nat {
+        type nat hook prerouting priority dstnat; policy accept;
+        iifname "@LAN_IF@" ip saddr @isolated_clients return
+        iifname "@LAN_IF@" udp dport 53 ip daddr != @CCC_IP@ dnat ip to @CCC_IP@:53
+        iifname "@LAN_IF@" tcp dport 53 ip daddr != @CCC_IP@ dnat ip to @CCC_IP@:53
+        iifname "@LAN_IF@" tcp dport { 80, 443 } ip daddr != @CCC_IP@ redirect to :@PROXY_PORT@
+    }
+
+    chain input {
+        type filter hook input priority filter; policy accept;
+        # Isolated PCs may only talk to the agent endpoint (so commands and alerts keep flowing).
+        iifname "@LAN_IF@" ip saddr @isolated_clients tcp dport != @AGENT_PORT@ drop
+        iifname "@LAN_IF@" ip saddr @isolated_clients udp dport != 53 drop
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+        ct state established,related accept
+        iifname "@LAN_IF@" ip saddr @isolated_clients counter drop
+        iifname "@LAN_IF@" udp dport 443 counter drop comment "QUIC"
+        iifname "@LAN_IF@" meta l4proto { tcp, udp } th dport 853 counter drop comment "DoT"
+        iifname "@LAN_IF@" ip daddr @resolver_ips counter drop comment "public resolvers / DoH"
+        iifname "@LAN_IF@" ip6 daddr @resolver_ips6 counter drop
+        iifname "@LAN_IF@" ip saddr @test_clients counter drop comment "Test mode: proxy path only"
+        iifname "@LAN_IF@" oifname "@WAN_IF@" ip saddr @LAB_SUBNET@ accept
+    }
+
+    chain postrouting_nat {
+        type nat hook postrouting priority srcnat; policy accept;
+        oifname "@WAN_IF@" masquerade
+    }
+}

@@ -1,0 +1,17 @@
+# build outputs
+/agent/build*/
+/dist/
+/.cache/
+compile_commands.json
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+# CCC secrets and local state
+/ccc-deploy/.env
+/installers/windows/signatures.json
+/installers/windows/ca.crt
+/installers/windows/*.exe
+# eval outputs
+/eval/results/

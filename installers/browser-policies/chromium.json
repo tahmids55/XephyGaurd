@@ -1,0 +1,13 @@
+{
+  "DnsOverHttpsMode": "off",
+  "GenAiDefaultSettings": 2,
+  "GeminiSettings": 1,
+  "HelpMeWriteSettings": 2,
+  "TabOrganizerSettings": 2,
+  "TabCompareSettings": 2,
+  "HistorySearchSettings": 2,
+  "DevToolsGenAiSettings": 2,
+  "CreateThemesSettings": 2,
+  "GenAILocalFoundationalModelSettings": 1,
+  "QuicAllowed": false
+}

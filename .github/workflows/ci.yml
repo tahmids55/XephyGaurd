@@ -1,0 +1,85 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  agent-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libssl-dev libsqlite3-dev libx11-dev libxfixes-dev python3-yaml
+      - run: cmake -S agent -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - run: cmake --build build -j
+      - run: ctest --test-dir build --output-on-failure
+      - name: Package (.deb)
+        run: |
+          cmake -S agent -B build-rel -DCMAKE_BUILD_TYPE=Release -DXG_BUILD_TESTS=OFF
+          cmake --build build-rel -j && (cd build-rel && cpack)
+      - uses: actions/upload-artifact@v4
+        with: { name: agent-deb, path: build-rel/*.deb }
+
+  agent-windows-compile-check:
+    # Cross-compile syntax check of the Windows adapters on Linux (behaviour is tested on real Windows).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix libssl-dev libsqlite3-dev
+      - run: |
+          mkdir -p hdr && cp -r /usr/include/openssl hdr/ && cp /usr/include/x86_64-linux-gnu/openssl/* hdr/openssl/ && cp /usr/include/sqlite3*.h hdr/
+          curl -sL https://github.com/nlohmann/json/releases/download/v3.11.3/include.zip -o j.zip && unzip -q j.zip -d nl
+          git clone -q --depth 1 -b v3.4.0 https://github.com/marzer/tomlplusplus.git toml
+          for f in agent/platform/windows/*.cpp agent/apps/*.cpp agent/core/src/*.cpp; do
+            x86_64-w64-mingw32-g++-posix -std=c++20 -fsyntax-only -Wall -Wextra -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
+              -D_WIN32_WINNT=0x0A00 -DXG_VERSION='"ci"' -Iagent/core/include -Iagent/platform/windows -Ihdr \
+              -Inl/include -Itoml/include "$f"
+          done
+
+  agent-windows-msvc:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - run: vcpkg install openssl:x64-windows-static sqlite3:x64-windows-static
+      - run: cmake -S agent -B build -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static
+      - run: cmake --build build --config Release
+      - run: ctest --test-dir build -C Release --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with: { name: agent-windows, path: build/Release/*.exe }
+
+  server:
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: server } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with: { php-version: '8.3', extensions: pdo_sqlite, intl, zip, gd }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: composer install --no-interaction --prefer-dist
+      - run: composer audit
+      - run: npm ci && npm run build
+      - run: cp .env.example .env && php artisan key:generate
+      - run: vendor/bin/pint --test
+        continue-on-error: true
+      - run: php artisan test
+
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r proxy/requirements.txt -r analysis/requirements.txt pytest pyyaml ruff
+      - run: ruff check proxy analysis eval --select E,F,W --ignore E501,E731
+      - run: python -m pytest -q proxy/tests analysis/tests eval/tests
+      - run: python scripts/compile_signatures.py --out /tmp/signatures.json
+
+  deploy-config:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash -n ccc-deploy/install.sh && bash -n ccc-deploy/bin/xephyguard-ccc && bash -n eval/harness/agent_overhead.sh
+      - run: cp /dev/null ccc-deploy/.env && docker compose -f ccc-deploy/docker-compose.yml config -q
+      - name: nftables ruleset loads
+        run: |
+          sed -e 's|@LAN_IF@|lan0|g; s|@WAN_IF@|wan0|g; s|@CCC_IP@|192.168.10.2|g; s|@LAB_SUBNET@|192.168.10.0/24|g; s|@PROXY_PORT@|8080|g; s|@AGENT_PORT@|8443|g' \
+            proxy/nftables/xephyguard.nft > /tmp/x.nft
+          docker run --rm --cap-add NET_ADMIN -v /tmp/x.nft:/x.nft debian:bookworm-slim sh -c 'apt-get update -qq && apt-get install -y -qq nftables >/dev/null && nft -c -f /x.nft'

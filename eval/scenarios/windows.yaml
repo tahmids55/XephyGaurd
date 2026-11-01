@@ -1,0 +1,39 @@
+# Windows subset (target runs OpenSSH Server; commands run in PowerShell).
+version: 1
+platform: windows
+scenarios:
+  - id: web.chatgpt
+    layer: network
+    title: Open a chatbot site
+    run: |-
+      powershell -NoProfile -Command "try { (Invoke-WebRequest https://chatgpt.com -UseBasicParsing -TimeoutSec 8).StatusCode } catch { '000' }"
+    blocked_if: { stdout_not_in: ["200", "403"] }
+    expect: { net_blocked_host: chatgpt.com }
+  - id: local.ollama
+    layer: agent
+    title: Run ollama.exe
+    run: |-
+      powershell -NoProfile -Command "Copy-Item $env:WINDIR\System32\timeout.exe $env:TEMP\ollama.exe -Force; Start-Process $env:TEMP\ollama.exe -ArgumentList '/t 20 /nobreak' -WindowStyle Hidden; Start-Sleep 10; 'started'"
+    cleanup: |-
+      powershell -NoProfile -Command "Stop-Process -Name ollama -Force -ErrorAction SilentlyContinue"
+    expect: { alert_rule: proc.ollama }
+  - id: vm.wsl
+    layer: agent
+    title: Start WSL
+    run: |-
+      powershell -NoProfile -Command "Start-Process wsl.exe -ArgumentList 'sleep 20' -WindowStyle Hidden; Start-Sleep 10; 'started'"
+    expect: { alert_rule: vm.wsl }
+  - id: tamper.stop_agent
+    layer: tamper
+    title: Stop the agent service as a standard user
+    run: |-
+      powershell -NoProfile -Command "try { Stop-Service XephyGuardAgent -ErrorAction Stop; 'stopped' } catch { 'denied' }"
+    blocked_if: { stdout_contains: denied }
+    expect: { alert_rule_prefix: tamper. }
+  - id: bypass.doh
+    layer: dns
+    title: DNS-over-HTTPS
+    run: |-
+      powershell -NoProfile -Command "try { (Invoke-WebRequest 'https://cloudflare-dns.com/dns-query?name=chatgpt.com&type=A' -Headers @{accept='application/dns-json'} -UseBasicParsing -TimeoutSec 8).Content } catch { 'failed' }"
+    blocked_if: { stdout_not_contains: '"Answer"' }
+    expect: { net_blocked_host: cloudflare-dns.com }

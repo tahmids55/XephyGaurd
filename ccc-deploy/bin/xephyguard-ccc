@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# xephyguard-ccc: day-to-day CCC administration.
+#   doctor        host + application checks with plain-language fixes
+#   status        container status
+#   logs [svc]    follow logs (web, worker, proxy, netpolicy, analysis, ...)
+#   enroll-key    show the lab enrollment key (--rotate to replace it)
+#   backup DIR    database dump + CA + settings into DIR
+#   update        rebuild images, migrate, restart
+#   artisan ...   run a Laravel artisan command
+set -uo pipefail
+XG_DEPLOY=/opt/xephyguard/ccc-deploy
+cd "$XG_DEPLOY" || { echo "XephyGuard not installed in $XG_DEPLOY"; exit 1; }
+set -a; . ./.env; set +a
+dc() { docker compose "$@"; }
+ok()   { printf '  \033[32m✔\033[0m %s\n' "$*"; }
+bad()  { printf '  \033[31m✘\033[0m %s\n      → %s\n' "$1" "$2"; FAIL=1; }
+FAIL=0
+
+doctor() {
+  echo "Host"
+  [ "$(sysctl -n net.ipv4.ip_forward)" = 1 ] && ok "IP forwarding on" || bad "IP forwarding is off" "sudo sysctl -w net.ipv4.ip_forward=1 (install.sh makes it permanent)"
+  if [ "$XG_NETWORK_MODE" = gateway ]; then
+    nft list table inet xephyguard >/dev/null 2>&1 && ok "nftables gateway rules loaded" || bad "nftables rules missing" "sudo nft -f /etc/nftables.d/xephyguard.nft"
+    ip -4 addr show dev "$XG_LAN_IF" | grep -q "inet $XG_CCC_IP/" && ok "$XG_CCC_IP on $XG_LAN_IF" || bad "$XG_CCC_IP is not configured on $XG_LAN_IF" "set a fixed IP with netplan, then sudo netplan apply"
+  fi
+  timedatectl show -p NTPSynchronized --value | grep -q yes && ok "Clock synchronised (NTP)" || bad "Clock not synchronised" "sudo systemctl restart chrony; lab PCs use the CCC as time authority"
+  free=$(df -BG --output=avail /var/lib/xephyguard | tail -1 | tr -dc 0-9)
+  [ "${free:-0}" -gt 5 ] && ok "${free} GB free on /var/lib/xephyguard" || bad "Low disk space (${free} GB)" "shorten raw-event retention in Settings or add disk"
+  echo "Services"
+  for s in mysql web reverb worker scheduler netpolicy proxy analysis discovery; do
+    st=$(dc ps --format '{{.Service}} {{.State}}' 2>/dev/null | awk -v s=$s '$1==s{print $2}')
+    [ "$st" = running ] && ok "$s running" || bad "$s is ${st:-not running}" "sudo xephyguard-ccc logs $s"
+  done
+  dig +time=2 +tries=1 @127.0.0.1 example.com A +short >/dev/null && ok "DNS resolver answers" || bad "DNS resolver not answering" "sudo xephyguard-ccc logs netpolicy (is something else using port 53?)"
+  [ -z "$(dig +short @127.0.0.1 dns.google A)" ] && ok "DoH resolvers are sinkholed" || bad "dns.google still resolves" "check /var/lib/xephyguard/net/unbound-xephyguard.conf"
+  (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null && ok "Transparent proxy listening on 8080" || bad "Proxy not listening" "sudo xephyguard-ccc logs proxy"
+  curl -sk --max-time 3 "https://127.0.0.1/up" >/dev/null && ok "Dashboard reachable" || bad "Dashboard not reachable on 443" "sudo xephyguard-ccc logs web"
+  echo "Application"
+  dc exec -T web php artisan xephyguard:doctor || FAIL=1
+  exit $FAIL
+}
+
+case "${1:-}" in
+  doctor) doctor ;;
+  status) dc ps ;;
+  logs) shift; dc logs -f --tail=200 "$@" ;;
+  enroll-key) shift; dc exec -T web php artisan xephyguard:enroll-key "$@" ;;
+  backup)
+    out=${2:?usage: xephyguard-ccc backup DIR}; mkdir -p "$out"; ts=$(date +%Y%m%d-%H%M)
+    dc exec -T mysql mysqldump -uroot -p"$DB_ROOT_PASSWORD" --single-transaction xephyguard | gzip > "$out/xephyguard-db-$ts.sql.gz"
+    tar -czf "$out/xephyguard-ca-$ts.tgz" -C /var/lib/xephyguard ca && cp .env "$out/xephyguard-env-$ts" && chmod 0600 "$out"/xephyguard-*
+    echo "Backup written to $out (contains the CA private key and secrets: store it safely)" ;;
+  update) dc build && dc run --rm -T web artisan migrate --force && dc up -d ;;
+  artisan) shift; dc exec web php artisan "$@" ;;
+  *) sed -n '2,10p' "$0" ;;
+esac

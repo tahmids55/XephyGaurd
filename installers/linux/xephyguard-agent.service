@@ -1,0 +1,32 @@
+[Unit]
+Description=XephyGuard lab monitoring agent
+Documentation=http://ccc/notice
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/lib/xephyguard/xephyguard-agent run
+Restart=always
+RestartSec=2
+WatchdogSec=30
+NotifyAccess=main
+# Hardening that keeps the access the agent needs (/proc of all users, evdev, netlink, kill).
+ProtectSystem=strict
+ReadWritePaths=/var/lib/xephyguard /var/log/xephyguard /etc/xephyguard /run/xephyguard
+RuntimeDirectory=xephyguard
+RuntimeDirectoryMode=0755
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CPUQuota=20%
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

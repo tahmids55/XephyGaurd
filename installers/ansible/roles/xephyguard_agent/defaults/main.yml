@@ -1,0 +1,6 @@
+xephyguard_ccc: "192.168.10.2"
+xephyguard_enroll_key: ""            # from the dashboard "Add a PC" page (vault it)
+xephyguard_ca_fingerprint: ""        # SHA-256 hex, from the same page
+xephyguard_package_url: "http://{{ xephyguard_ccc }}/downloads/xephyguard-agent_latest_amd64.deb"
+xephyguard_harden: true              # root-owned VS Code extensions dir, no sudo for lab users, etc.
+xephyguard_lab_group: "students"

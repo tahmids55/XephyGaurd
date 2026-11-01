@@ -1,0 +1,64 @@
+---
+- name: Fetch lab CA
+  ansible.builtin.get_url:
+    url: "http://{{ xephyguard_ccc }}/ca.crt"
+    dest: /etc/xephyguard/ca.crt
+    mode: "0644"
+    force: true
+  register: ca
+
+- name: Verify CA fingerprint
+  ansible.builtin.shell: "openssl x509 -in /etc/xephyguard/ca.crt -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f'"
+  register: fp
+  changed_when: false
+  failed_when: fp.stdout != xephyguard_ca_fingerprint | lower
+
+- name: Install prerequisites
+  ansible.builtin.apt:
+    name: [libnss3-tools, libnotify-bin, ca-certificates]
+    state: present
+    update_cache: true
+
+- name: Download agent package
+  ansible.builtin.get_url:
+    url: "{{ xephyguard_package_url }}"
+    dest: /tmp/xephyguard-agent.deb
+    mode: "0644"
+
+- name: Install agent package
+  ansible.builtin.apt:
+    deb: /tmp/xephyguard-agent.deb
+  notify: restart xephyguard
+
+- name: Enroll (no-op when already enrolled)
+  ansible.builtin.command: >
+    xephyguard-agent enroll --key {{ xephyguard_enroll_key }} --ccc {{ xephyguard_ccc }}
+    --ca-fingerprint {{ xephyguard_ca_fingerprint }} --no-wait
+  args:
+    creates: /etc/xephyguard/agent.crt
+  no_log: true
+
+- name: Lab hardening
+  when: xephyguard_harden
+  block:
+    - name: Root-owned shared VS Code extensions directory
+      ansible.builtin.file: { path: /opt/xephyguard/vscode-extensions, state: directory, owner: root, mode: "0755" }
+    - name: Force VS Code to the shared extensions dir
+      ansible.builtin.copy:
+        dest: /usr/local/bin/code
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          exec /usr/share/code/bin/code --extensions-dir /opt/xephyguard/vscode-extensions "$@"
+    - name: No sudo for lab users
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/00-xephyguard-lab
+        mode: "0440"
+        content: "%{{ xephyguard_lab_group }} ALL=(ALL) !ALL\n"
+        validate: "visudo -cf %s"
+    - name: Prefer X11 sessions (full window/clipboard visibility) on GDM
+      ansible.builtin.lineinfile: { path: /etc/gdm3/custom.conf, regexp: '^#?WaylandEnable=', line: 'WaylandEnable=false', insertafter: '\[daemon\]' }
+      failed_when: false
+
+- name: Agent running
+  ansible.builtin.systemd: { name: xephyguard-agent, state: started, enabled: true }

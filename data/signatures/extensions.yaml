@@ -1,0 +1,26 @@
+# IDE / editor / browser extension signatures. IDs are compared lowercase.
+version: 1
+rules:
+  - { id: ext.copilot,        severity: high,   ide: vscode, ext_ids: [github.copilot, github.copilot-chat], description: "GitHub Copilot" }
+  - { id: ext.claude_code,    severity: high,   ide: vscode, ext_ids: [anthropic.claude-code], description: "Claude Code" }
+  - { id: ext.continue,       severity: high,   ide: vscode, ext_ids: [continue.continue], description: "Continue" }
+  - { id: ext.codeium,        severity: high,   ide: vscode, ext_ids: [codeium.codeium, codeium.windsurfpyright], description: "Codeium / Windsurf plugin" }
+  - { id: ext.tabnine,        severity: high,   ide: vscode, ext_ids: [tabnine.tabnine-vscode], description: "Tabnine" }
+  - { id: ext.cody,           severity: high,   ide: vscode, ext_ids: [sourcegraph.cody-ai], description: "Sourcegraph Cody" }
+  - { id: ext.cline,          severity: high,   ide: vscode, ext_ids: [saoudrizwan.claude-dev], description: "Cline" }
+  - { id: ext.roo,            severity: high,   ide: vscode, ext_ids: [rooveterinaryinc.roo-cline], description: "Roo Code" }
+  - { id: ext.amazon_q,       severity: high,   ide: vscode, ext_ids: [amazonwebservices.amazon-q-vscode, amazonwebservices.codewhisperer-for-command-line-companion], description: "Amazon Q" }
+  - { id: ext.gemini_assist,  severity: high,   ide: vscode, ext_ids: [google.geminicodeassist], description: "Gemini Code Assist" }
+  - { id: ext.chatgpt,        severity: high,   ide: vscode, ext_ids: [openai.chatgpt, genieai.chatgpt-vscode, danielsanmedium.dscodegpt], description: "ChatGPT-based extensions" }
+  - { id: ext.blackbox,       severity: high,   ide: vscode, ext_ids: [blackboxapp.blackbox, blackboxapp.blackboxagent], description: "Blackbox AI" }
+  # JetBrains plugin directory names (lowercase)
+  - { id: ext.jb.ai_assistant, severity: high,  ide: jetbrains, ext_ids: [ml-llm, fullline, aiassistant], description: "JetBrains AI Assistant" }
+  - { id: ext.jb.copilot,      severity: high,  ide: jetbrains, ext_ids: [github-copilot-intellij, copilot], description: "Copilot for JetBrains" }
+  - { id: ext.jb.misc,         severity: high,  ide: jetbrains, ext_ids: [tabnine, codeium, continue, sourcegraph-cody, amazon-q], description: "Other JetBrains AI plugins" }
+  # Chromium extension IDs (Chrome Web Store)
+  - { id: ext.browser.ai,      severity: medium, ide: browser, ext_ids: [
+        "jgjaeacdkonaoafenlfkkkmbaopkbilf",   # Merlin
+        "camppjleccjaphfdbohjdohecfnoikec",   # Monica / ChatGPT sidebar (sample)
+        "becfinhbfclcgokjlobojlnldbfillpf",   # ChatGPT for Google (sample)
+        "ofpnmcalabcbjgholdjcjblkibolbppb"    # Monica AI (sample)
+      ], description: "Browser AI sidebar extensions (verify IDs against store before relying on them)" }

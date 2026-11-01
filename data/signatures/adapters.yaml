@@ -1,0 +1,8 @@
+# Network adapter classification. Matched against driver name, interface name and description.
+version: 1
+rules:
+  - { id: net.tether_usb,  severity: high,   kind: tethering, drivers: [rndis_host, cdc_ether, cdc_ncm, ipheth, "remote ndis", "rndis"], description: "Phone tethering via USB (RNDIS / CDC / iPhone)" }
+  - { id: net.wifi_new,    severity: medium, kind: wifi,      name_prefixes: [wlan, wlp, wlx, "wi-fi"], description: "Wi-Fi adapter came up (possible hotspot)" }
+  - { id: net.vpn_adapter, severity: high,   kind: vpn,       name_prefixes: [tun, tap, wg, ppp, utun, "wireguard", "openvpn", "tailscale", "zt"], drivers: [tun, wireguard, "tap-windows", "wintun"], description: "VPN / tunnel adapter" }
+  - { id: net.second_route, severity: high,  kind: route,     description: "Second default route (traffic can bypass the lab gateway)" }
+  - { id: net.usb_ethernet, severity: medium, kind: usb_eth,  drivers: [r8152, ax88179_178a, asix, cdc_mbim, qmi_wwan], description: "USB Ethernet / LTE modem" }

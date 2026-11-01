@@ -1,0 +1,8 @@
+{
+  "policies": {
+    "DNSOverHTTPS": { "Enabled": false, "Locked": true },
+    "GenerativeAI": { "Enabled": false, "Locked": true },
+    "Certificates": { "ImportEnterpriseRoots": true, "Install": ["/usr/local/share/ca-certificates/xephyguard-lab-ca.crt", "C:\\ProgramData\\XephyGuard\\ca.crt"] },
+    "DisableTelemetry": true
+  }
+}

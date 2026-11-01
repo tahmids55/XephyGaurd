@@ -1,0 +1,9 @@
+# Extension marketplaces (blocked in Test mode so AI extensions cannot be installed mid-test).
+marketplace.visualstudio.com   [ide]
+gallery.vsassets.io            [ide]
+gallerycdn.vsassets.io         [ide]
+vscode.blob.core.windows.net   [ide]
+open-vsx.org                   [ide]
+plugins.jetbrains.com          [ide]
+chromewebstore.google.com      [ide]
+addons.mozilla.org             [ide]

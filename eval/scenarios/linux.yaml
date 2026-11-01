@@ -1,0 +1,232 @@
+# Red-team bypass scenarios for a Linux lab PC (spec section 12).
+# The harness runs on the CCC, executes `run` on the target PC over SSH while a Test session is
+# active, then records:
+#   blocked   - the attempt failed on the PC (`blocked_if` check true)
+#   detected  - the CCC recorded an alert / blocked network event matching `expect`
+#   missed    - neither
+# `cleanup` always runs. Commands use only stock tools so they work on a fresh lab image.
+version: 1
+platform: linux
+scenarios:
+  # ---------------------------------------------------------------- web / search AI
+  - id: web.chatgpt
+    layer: network
+    title: Open a chatbot site
+    run: |-
+      curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://chatgpt.com/
+    blocked_if: { stdout_not_in: ["200", "301", "302", "403"] }   # DNS NXDOMAIN / reset => curl prints 000
+    expect: { net_blocked_host: chatgpt.com }
+  - id: web.claude
+    layer: network
+    title: Open claude.ai
+    run: |-
+      curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://claude.ai/
+    blocked_if: { stdout_not_in: ["200", "301", "302", "403"] }
+    expect: { net_blocked_host: claude.ai }
+  - id: web.copilot
+    layer: network
+    title: Open a Copilot-style page
+    run: |-
+      curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://copilot.microsoft.com/
+    blocked_if: { stdout_not_in: ["200", "301", "302", "403"] }
+    expect: { net_blocked_host: copilot.microsoft.com }
+  - id: search.ai_overview
+    layer: proxy
+    title: Google search that normally shows an AI Overview
+    run: |-
+      curl -s -L --max-time 10 -A 'Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0' -o /tmp/xg-g.html -w '%{url_effective}' 'https://www.google.com/search?q=how+to+reverse+a+linked+list+in+c'
+    blocked_if: { stdout_contains: "udm=14" }
+    expect: { net_event: { layer: search-ai, action: rewritten } }
+  - id: api.openai
+    layer: network
+    title: Call an LLM API directly
+    run: |-
+      curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://api.openai.com/v1/models
+    blocked_if: { stdout_not_in: ["200", "401", "403"] }
+    expect: { net_blocked_host: api.openai.com }
+  - id: path.hf_chat
+    layer: proxy
+    title: Hugging Face chat (path rule on an allowed host)
+    run: |-
+      curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://huggingface.co/chat/
+    blocked_if: { stdout_in: ["403", "000"] }
+    expect: { net_blocked_host: huggingface.co }
+
+  # ---------------------------------------------------------------- bypass attempts
+  - id: bypass.proxy_env
+    layer: network
+    title: Point the browser at an external proxy
+    run: |-
+      https_proxy=http://203.0.113.10:3128 curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://chatgpt.com/
+    blocked_if: { stdout_in: ["000"] }
+    expect: { any: true }
+  - id: bypass.doh
+    layer: dns
+    title: DNS-over-HTTPS to a public resolver
+    run: |-
+      curl -s --max-time 8 -H 'accept: application/dns-json' 'https://cloudflare-dns.com/dns-query?name=chatgpt.com&type=A' | head -c 200
+    blocked_if: { stdout_not_contains: '"Answer"' }
+    expect: { net_blocked_host: cloudflare-dns.com }
+  - id: bypass.dot
+    layer: dns
+    title: DNS-over-TLS (port 853)
+    run: |-
+      timeout 6 bash -c 'echo > /dev/tcp/1.1.1.1/853' && echo open || echo closed
+    blocked_if: { stdout_contains: closed }
+    expect: { any: true }
+  - id: bypass.public_dns
+    layer: dns
+    title: Plain DNS to 8.8.8.8
+    run: |-
+      dig +short +time=3 +tries=1 @8.8.8.8 chatgpt.com A || true
+    blocked_if: { stdout_empty: true }
+    expect: { any: true }
+  - id: bypass.quic
+    layer: network
+    title: HTTP/3 (QUIC, UDP 443)
+    run: |-
+      curl -s --http3-only -o /dev/null -w '%{http_code}' --max-time 8 https://www.google.com/ 2>&1 || true
+    blocked_if: { stdout_not_in: ["200", "301", "302"] }
+    expect: { any: true }
+  - id: bypass.hosts_file
+    layer: dns
+    title: Edit /etc/hosts to reach a blocked site by IP (needs sudo; lab users have none)
+    run: |-
+      sudo -n sh -c 'echo "104.18.32.47 chatgpt.com" >> /etc/hosts' 2>&1; curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://chatgpt.com/
+    cleanup: |-
+      sudo -n sed -i '/chatgpt.com/d' /etc/hosts 2>/dev/null || true
+    blocked_if: { stdout_not_in: ["200", "301", "302", "403"] }
+    expect: { net_blocked_host: chatgpt.com }
+  - id: bypass.vpn_tun
+    layer: agent
+    title: Bring up a VPN tunnel interface
+    run: |-
+      sudo -n ip tuntap add dev tun9 mode tun && sudo -n ip link set tun9 up && sleep 12; echo done
+    cleanup: |-
+      sudo -n ip link del tun9 2>/dev/null || true
+    expect: { alert_rule: net.vpn_adapter }
+  - id: bypass.tor
+    layer: network
+    title: Reach the Tor project / bridges
+    run: |-
+      curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://bridges.torproject.org/
+    blocked_if: { stdout_not_in: ["200", "301", "302"] }
+    expect: { net_blocked_host: bridges.torproject.org }
+
+  # ---------------------------------------------------------------- local AI
+  - id: local.ollama
+    layer: agent
+    title: Run an Ollama binary
+    run: |-
+      cp /bin/sleep /tmp/ollama && (/tmp/ollama 20 &) ; sleep 10; echo started
+    cleanup: |-
+      pkill -f '/tmp/ollama' || true; rm -f /tmp/ollama
+    expect: { alert_rule: proc.ollama }
+  - id: local.llamacpp
+    layer: agent
+    title: Run a llama.cpp server binary
+    run: |-
+      cp /bin/sleep /tmp/llama-server && (/tmp/llama-server 20 &) ; sleep 10; echo started
+    cleanup: |-
+      pkill -f '/tmp/llama-server' || true; rm -f /tmp/llama-server
+    expect: { alert_rule: proc.llamacpp }
+  - id: local.ollama_port
+    layer: agent
+    title: OpenAI-compatible server on localhost:11434
+    run: |-
+      (timeout 25 python3 -m http.server 11434 --bind 127.0.0.1 >/dev/null 2>&1 &) ; sleep 20; echo listening
+    expect: { alert_rule: port.ollama }
+  - id: local.gguf_file
+    layer: agent
+    title: Model weights in the home directory (detected by the scheduled scan)
+    run: |-
+      truncate -s 10M ~/model-q4.gguf && echo created
+    cleanup: |-
+      rm -f ~/model-q4.gguf
+    manual_trigger: rescan       # harness sends a "rescan" command instead of waiting for the schedule
+    expect: { alert_rule: file.gguf }
+  - id: local.container
+    layer: agent
+    title: Run a local model inside a container
+    run: |-
+      (docker run --rm alpine sleep 15 >/dev/null 2>&1 &) ; sleep 10; echo started
+    expect: { alert_rule: vm.container }
+
+  # ---------------------------------------------------------------- IDE / CLI agents
+  - id: ide.copilot_ext
+    layer: agent
+    title: Install an AI VS Code extension (marketplace is blocked; side-load a folder)
+    run: |-
+      mkdir -p ~/.vscode/extensions/github.copilot-1.250.0 && echo '{}' > ~/.vscode/extensions/github.copilot-1.250.0/package.json && echo ok
+    cleanup: |-
+      rm -rf ~/.vscode/extensions/github.copilot-1.250.0
+    manual_trigger: rescan
+    expect: { alert_rule: ext.copilot }
+  - id: ide.marketplace
+    layer: network
+    title: Download from the VS Code marketplace
+    run: |-
+      curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://marketplace.visualstudio.com/
+    blocked_if: { stdout_not_in: ["200", "301", "302", "403"] }
+    expect: { net_blocked_host: marketplace.visualstudio.com }
+  - id: cli.claude_code
+    layer: agent
+    title: Run a CLI agent through node
+    run: |-
+      mkdir -p /tmp/node_modules/@anthropic-ai/claude-code && cp /bin/sleep /tmp/node && (/tmp/node 20 /tmp/node_modules/@anthropic-ai/claude-code/cli.js &) ; sleep 10; echo started
+    cleanup: |-
+      pkill -f '/tmp/node 20' || true; rm -rf /tmp/node /tmp/node_modules
+    expect: { alert_rule: proc.cli.claude_code }
+  - id: usb.portable_editor
+    layer: agent
+    title: Portable AI editor started from a USB stick (simulated path)
+    run: |-
+      mkdir -p /tmp/usb && cp /bin/sleep /tmp/usb/cursor && (/tmp/usb/cursor 20 &) ; sleep 10; echo started
+    cleanup: |-
+      pkill -f '/tmp/usb/cursor' || true; rm -rf /tmp/usb
+    expect: { alert_rule: proc.editor.cursor }
+
+  # ---------------------------------------------------------------- tamper
+  - id: tamper.stop_agent
+    layer: tamper
+    title: Stop the agent service (needs sudo; lab users have none)
+    run: |-
+      sudo -n systemctl stop xephyguard-agent 2>&1 || echo denied
+    cleanup: |-
+      sudo -n systemctl start xephyguard-agent 2>/dev/null || true
+    blocked_if: { stdout_contains: denied }
+    expect: { alert_rule_prefix: tamper. }
+  - id: tamper.clock
+    layer: tamper
+    title: Change the system clock
+    run: |-
+      sudo -n date -s '-2 hours' 2>&1 || echo denied
+    cleanup: |-
+      sudo -n chronyc makestep >/dev/null 2>&1 || sudo -n date -s '+2 hours' >/dev/null 2>&1 || true
+    blocked_if: { stdout_contains: denied }
+    expect: { alert_rule: tamper.clock_change }
+  - id: tamper.kill_helper
+    layer: tamper
+    title: Kill the session helper as the student
+    run: |-
+      systemctl --user stop xephyguard-helper 2>/dev/null; pkill -u "$(id -u)" xephyguard-help; sleep 100; echo killed
+    expect: { alert_rule: tamper.helper_missing }
+    timeout_s: 150
+
+  # ---------------------------------------------------------------- behavior
+  - id: behavior.large_paste
+    layer: behavior
+    title: Paste a large generated code block (requires an X11 session; uses xdotool)
+    run: |-
+      python3 -c "print('\n'.join(f'int f{i}(int x) {{ return x*{i}; }}' for i in range(120)))" | xclip -selection clipboard && xdotool key ctrl+v && sleep 5 && echo pasted
+    expect: { alert_rule: behavior.large_paste }
+    requires: [xclip, xdotool, DISPLAY]
+  - id: behavior.phone_hotspot
+    layer: manual
+    title: Phone hotspot / USB tethering
+    manual: |
+      1. Start a Test session. 2. On the target PC connect a phone by USB and enable USB tethering
+      (or join the phone's Wi-Fi hotspot). 3. Within 10 s the dashboard should show
+      net.tether_usb (USB) or net.wifi_new + net.second_route (Wi-Fi). 4. Record the outcome with
+      `redteam.py record behavior.phone_hotspot detected|missed`.
+    expect: { alert_rule_prefix: net. }

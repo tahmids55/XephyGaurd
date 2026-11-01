@@ -1,0 +1,12 @@
+{
+  "DnsOverHttpsMode": "off",
+  "HubsSidebarEnabled": false,
+  "CopilotPageContext": false,
+  "CopilotCDPPageContext": false,
+  "EdgeEntraCopilotPageContext": false,
+  "ComposeInlineEnabled": false,
+  "Microsoft365CopilotChatIconEnabled": false,
+  "EdgeHistoryAISearchEnabled": false,
+  "GenAILocalFoundationalModelSettings": 1,
+  "QuicAllowed": false
+}

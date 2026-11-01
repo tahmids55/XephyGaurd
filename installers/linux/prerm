@@ -1,0 +1,10 @@
+#!/bin/sh
+# Stopping the agent sends a clean "agent_stopping" event; during a session the CCC raises an alert.
+set -e
+[ -d /run/systemd/system ] || exit 0
+case "$1" in remove|deconfigure)
+  systemctl stop xephyguard-agent.service || true
+  systemctl disable xephyguard-agent.service >/dev/null || true
+  systemctl --global disable xephyguard-helper.service >/dev/null 2>&1 || true
+;; esac
+exit 0

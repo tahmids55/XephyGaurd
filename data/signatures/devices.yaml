@@ -1,0 +1,4 @@
+version: 1
+rules:
+  - { id: dev.usb_storage, severity: low,    classes: [usb_storage, disk], description: "USB storage attached" }
+  - { id: dev.phone,       severity: medium, vendors: ["05ac", "18d1", "04e8", "2717", "22b8", "12d1", "2a70"], description: "Phone attached (Apple, Google, Samsung, Xiaomi, Motorola, Huawei, OnePlus)" }

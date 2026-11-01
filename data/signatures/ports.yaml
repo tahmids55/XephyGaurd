@@ -1,0 +1,16 @@
+# Local listening ports typical for LLM servers. probe_paths are tried with a short HTTP GET/POST on localhost.
+version: 1
+rules:
+  - { id: port.ollama,    severity: high,   port: 11434, description: "Ollama API" }
+  - { id: port.lmstudio,  severity: high,   port: 1234,  description: "LM Studio server" }
+  - { id: port.koboldcpp, severity: high,   port: 5001,  requires_probe: true, description: "KoboldCpp" }
+  - { id: port.textgen,   severity: medium, port: 7860,  requires_probe: true, description: "Gradio / text-generation-webui" }
+  - { id: port.vllm,      severity: medium, port: 8000,  requires_probe: true, description: "vLLM / generic OpenAI-compatible server, verified by probe" }
+  - { id: port.llamacpp,  severity: medium, port: 8080,  requires_probe: true, description: "llama-server default port, verified by probe" }
+probe:
+  enabled: true
+  # Any localhost listener that answers one of these with HTTP 200/400/405/422 is reported as port.generic_llm_api.
+  paths: ["/v1/models", "/api/tags", "/v1/chat/completions", "/api/generate"]
+  severity: high
+  # Only probe listeners owned by processes using more than this much RSS (keeps probing cheap).
+  min_rss_mb: 300

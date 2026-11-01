@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=XephyGuard indicator
+Comment=Shows that this lab computer is monitored
+Exec=sh -c 'systemctl --user start xephyguard-helper.service || exec /usr/lib/xephyguard/xephyguard-helper'
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
