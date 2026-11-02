@@ -32,6 +32,9 @@ reports and research data. Specification: [`XephyGUARD_PROJECT_SPEC.md`](XephyGU
 | `docs/` | setup guides, protocol, threat model, ethics/consent, lab-assistant guide, decisions |
 
 ## Quick start
+**Complete lab setup (server, installers, Linux and Windows PCs, acceptance test):
+[guide_setup.md](guide_setup.md).**
+
 1. **CCC:** `sudo ./ccc-deploy/install.sh` on Ubuntu Server with two NICs → open `https://<ccc>/` →
    setup wizard → `sudo xephyguard-ccc doctor`. ([guide](docs/SETUP_CCC.md))
    Running the server on a **Windows** PC, or natively without Docker: [RUNNING_THE_SERVER.md](docs/RUNNING_THE_SERVER.md).
