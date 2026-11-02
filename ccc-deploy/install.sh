@@ -34,11 +34,11 @@ done
 [ "${ID:-}" = ubuntu ] || warn "tested on Ubuntu 22.04/24.04; continuing on $PRETTY_NAME"
 
 # ---------------------------------------------------------------- network questions
-ifaces=$(ls /sys/class/net | grep -v -E '^(lo|docker|veth|br-)' | tr '\n' ' ')
+ifaces=$(ls /sys/class/net | grep -v -E '^(lo|docker|veth|br-)' | tr '\n' ' ' || true)
 say "Network interfaces: $ifaces"
-default_wan=$(ip route show default | awk '{print $5; exit}')
+default_wan=$(ip route show default | awk '{print $5; exit}' || true)
 WAN_IF=${WAN_IF:-$(ask "Internet-facing interface (WAN)" "$default_wan")}
-default_lan=$(for i in $ifaces; do [ "$i" != "$WAN_IF" ] && echo "$i" && break; done)
+default_lan=$(for i in $ifaces; do if [ "$i" != "$WAN_IF" ]; then echo "$i"; break; fi; done)
 MODE=$(ask "Network mode (gateway|proxy_only)" "$MODE")
 if [ "$MODE" = gateway ]; then
   LAN_IF=${LAN_IF:-$(ask "Lab-facing interface (LAN)" "${default_lan:-}")}
@@ -46,7 +46,7 @@ if [ "$MODE" = gateway ]; then
 else
   LAN_IF=${LAN_IF:-$WAN_IF}
 fi
-cur_ip=$(ip -4 -o addr show dev "$LAN_IF" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+cur_ip=$(ip -4 -o addr show dev "$LAN_IF" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1 || true)
 CCC_IP=${CCC_IP:-$(ask "CCC address on the lab network" "${cur_ip:-192.168.10.2}")}
 SUBNET=${SUBNET:-$(ask "Lab subnet" "$(echo "$CCC_IP" | cut -d. -f1-3).0/24")}
 LAB_NAME=$(ask "Lab name" "$LAB_NAME")
@@ -85,11 +85,13 @@ if systemctl is-active -q systemd-resolved; then
   printf '[Resolve]\nDNSStubListener=no\n' > /etc/systemd/resolved.conf.d/xephyguard.conf
   systemctl restart systemd-resolved
   ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+  systemctl restart docker      # dockerd caches resolv.conf: it must not keep pointing at the disabled stub
 fi
 
 # ---------------------------------------------------------------- state + secrets
 say "Preparing $STATE"
-install -d -m 0755 "$STATE" "$STATE/net" "$STATE/storage" "$STATE/mysql" /var/log/xephyguard
+install -d -m 0755 "$STATE" "$STATE/mysql"
+install -d -m 0755 -o 33 -g 33 "$STATE/net" "$STATE/storage" /var/log/xephyguard   # web app runs as www-data (uid 33) and writes here
 install -d -m 0711 "$STATE/ca"
 install -d -m 0700 -o 1500 -g 1500 "$STATE/mitmproxy"          # proxy container runs as uid 1500
 install -d -m 0750 -o 1500 -g 1500 /var/log/xephyguard/proxy
