@@ -81,3 +81,21 @@ def test_pilot_governance_summary_and_fairness():
     assert gov["passes_fairness_gate"] is True
     assert gov["max_fpr_gap"] == 0.0
     assert gov["low_precision_rules"] == []
+
+
+import unittest  # noqa: E402
+
+
+class EvalHarnessTests(unittest.TestCase):
+    def test_scenarios_valid(self):
+        test_scenario_files_are_valid()
+
+    def test_spec_scenarios(self):
+        test_spec_scenarios_are_covered()
+
+    def test_blocked(self):
+        test_blocked_checks()
+
+    def test_pilot_gov(self):
+        test_pilot_governance_summary_and_fairness()
+
