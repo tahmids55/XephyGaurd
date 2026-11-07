@@ -45,6 +45,7 @@ class Bootstrap
         }
         $out[] = 'blocklist entries added: '.$this->blocklists->importSeed();
         $out[] = 'rules added: '.$this->signatures->importSeed();
+        \Database\Seeders\Phase0PolicySeeder::sync();
         if (CertificateAuthority::fromConfig()->exists()) {
             $v = $this->signatures->publish(null, 'bootstrap');
             $out[] = 'signatures: '.$v->version;

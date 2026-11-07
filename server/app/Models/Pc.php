@@ -20,6 +20,23 @@ class Pc extends Model
         'silent_alerted_at' => 'datetime',
     ];
 
+    protected $appends = ['isolation_expires_at'];
+
+    public function getIsolationExpiresAtAttribute(): ?string
+    {
+        if (! $this->isolated) {
+            return null;
+        }
+        $leaseS = (int) config('xephyguard.isolation_lease_seconds', 600);
+        $base = $this->last_seen_at;
+        if ($this->updated_at && (! $base || $this->updated_at->gt($base))) {
+            $base = $this->updated_at;
+        }
+        $base ??= now();
+
+        return $base->copy()->addSeconds($leaseS)->toIso8601String();
+    }
+
     public function lab(): BelongsTo { return $this->belongsTo(Lab::class); }
     public function seat(): BelongsTo { return $this->belongsTo(Seat::class); }
     public function agent(): HasOne { return $this->hasOne(Agent::class)->whereNull('revoked_at')->latestOfMany(); }
@@ -49,6 +66,7 @@ class Pc extends Model
             'last_event' => $this->last_event,
             'score' => $this->live_score,
             'isolated' => $this->isolated,
+            'isolation_expires_at' => $this->isolation_expires_at,
             'os' => $this->os,
             'last_seen' => $this->last_seen_at?->toIso8601String(),
         ];

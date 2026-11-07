@@ -32,4 +32,15 @@ class CommandBus
 
         return $n;
     }
+
+    /** Broadcasts policy_updated to all active PCs (optionally scoped to one lab). */
+    public static function broadcastPolicyUpdated(?int $labId = null, ?User $by = null): int
+    {
+        $query = Pc::query()->active();
+        if ($labId !== null) {
+            $query->where('lab_id', $labId);
+        }
+
+        return app(self::class)->sendMany($query->get(), 'policy_updated', [], $by);
+    }
 }

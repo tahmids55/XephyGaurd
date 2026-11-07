@@ -53,9 +53,10 @@ class DashboardController extends Controller
             'pc' => $pc->tile() + ['hostname' => $pc->hostname, 'os_version' => $pc->os_version, 'ip' => $pc->ip,
                 'capabilities' => $pc->capabilities, 'usage' => $pc->usage, 'agent_version' => $pc->agent?->version],
             'alerts' => Alert::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)->latest('occurred_at')
-                ->limit(50)->get(['id', 'rule_id', 'severity', 'title', 'occurred_at', 'acknowledged_at']),
+                ->limit(50)->get(['id', 'rule_id', 'severity', 'title', 'details', 'occurred_at', 'acknowledged_at']),
             'timeline' => $events->map(fn ($e) => ['type' => $e->type, 'at' => $e->occurred_at->format('H:i:s'),
-                'summary' => self::summarize($e->type, $e->data), 'user' => $e->user]),
+                'summary' => self::summarize($e->type, $e->data), 'user' => $e->user,
+                'meaning' => $e->data['meaning'] ?? null, 'not_meaning' => $e->data['not_meaning'] ?? null]),
             'processes' => $events->whereIn('type', ['process_start', 'process_stop'])->values()
                 ->map(fn ($e) => ['at' => $e->occurred_at->format('H:i:s'), 'type' => $e->type, 'exe' => $e->data['exe'] ?? '', 'rule' => $e->data['rule_id'] ?? '']),
             'network' => NetEvent::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)->latest('occurred_at')
@@ -83,6 +84,10 @@ class DashboardController extends Controller
             'agent_started' => 'agent started (previous exit: '.($d['previous_exit'] ?? '?').')',
             'agent_stopping' => 'agent stopping',
             'command_result' => 'command '.($d['command_id'] ?? '').': '.($d['status'] ?? ''),
+            'ide_ai_activity' => 'IDE AI ('.($d['confidence'] ?? 'medium').'): '.($d['tool'] ?? '?').' in '.($d['ide'] ?? '?')
+                .(isset($d['meaning']) ? ' — '.$d['meaning'] : '')
+                .(isset($d['not_meaning']) ? ' (Note: '.$d['not_meaning'].')' : ''),
+            'isolation_lease_expired' => 'isolation lease expired after '.($d['lease_s'] ?? '?').'s (network restored)',
             default => $type,
         };
     }

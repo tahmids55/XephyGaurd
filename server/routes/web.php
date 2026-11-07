@@ -32,6 +32,7 @@ Route::group([], function () {
         // assistant: live view, enroll PCs, start/stop sessions
         Route::middleware('role:assistant,instructor')->group(function () {
             Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
+            Route::get('/downloads', [PublicController::class, 'downloadsIndex'])->name('downloads.index');
             Route::get('/pcs/{pc}', [DashboardController::class, 'pc'])->name('pcs.show');
             Route::get('/alerts', [AlertController::class, 'index'])->name('alerts.index');
             Route::post('/alerts/{alert}/ack', [AlertController::class, 'acknowledge'])->name('alerts.ack');

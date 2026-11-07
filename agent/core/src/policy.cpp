@@ -112,7 +112,9 @@ Policy Policy::from_json(const json& j, std::string* err) {
             auto b = [&](const char* k, bool& dst) { if (c.contains(k) && c[k].is_boolean()) dst = c[k].get<bool>(); };
             b("processes", p.collect.processes); b("ports", p.collect.ports); b("extensions", p.collect.extensions);
             b("network", p.collect.network); b("devices", p.collect.devices); b("artifacts", p.collect.artifacts);
-            b("window", p.collect.window); b("clipboard", p.collect.clipboard); b("keys", p.collect.keys);
+            b("window", p.collect.window);
+            b("paste", p.collect.clipboard); b("clipboard", p.collect.clipboard);
+            b("keystats", p.collect.keys); b("keys", p.collect.keys);
             b("files", p.collect.files); b("gpu", p.collect.gpu);
         }
         if (j.contains("intervals") && j["intervals"].is_object()) {
@@ -148,12 +150,33 @@ Policy Policy::from_json(const json& j, std::string* err) {
         for (const auto& r : j.value("disabled_rules", json::array())) p.disabled_rules.insert(r.get<std::string>());
         for (const auto& d : j.value("work_dirs", json::array())) p.work_dirs.push_back(d.get<std::string>());
         for (const auto& k : j.value("kill_exempt", json::array())) p.kill_exempt.insert(normalize_exe(k.get<std::string>()));
+        for (const auto& bd : j.value("blocked_domains", json::array()))
+            if (bd.is_string()) p.blocked_domains.push_back(to_lower(trim(bd.get<std::string>())));
         p.signatures_version = j.value("signatures_version", std::string{});
         if (j.contains("notice_text") && j["notice_text"].is_string()) p.notice_text = j["notice_text"].get<std::string>();
     } catch (const std::exception& e) {
         if (err) *err = e.what();
     }
+    p.clamp_for_mode();
     return p;
+}
+
+void Policy::clamp_for_mode() {
+    switch (mode) {
+        case Mode::always_on:
+            collect.window = false;
+            collect.clipboard = false;
+            collect.keys = false;
+            collect.files = false;
+            title_capture = TitleCapture::off;
+            break;
+        case Mode::practice:
+            collect.files = false;
+            if (title_capture == TitleCapture::full) title_capture = TitleCapture::app_only;
+            break;
+        case Mode::test:
+            break;
+    }
 }
 
 json Policy::to_json() const {
@@ -188,6 +211,7 @@ json Policy::to_json() const {
         {"disabled_rules", disabled_rules},
         {"work_dirs", work_dirs},
         {"kill_exempt", kill_exempt},
+        {"blocked_domains", blocked_domains},
         {"signatures_version", signatures_version},
         {"notice_text", notice_text},
     };
@@ -201,7 +225,10 @@ std::vector<Action> Policy::actions_for(const std::string& rule_id, Severity sev
 }
 
 std::string Policy::filter_title(const std::string& app, const std::string& title) const {
-    switch (title_capture) {
+    if (mode == Mode::always_on) return {};
+    TitleCapture tc = title_capture;
+    if (mode == Mode::practice && tc == TitleCapture::full) tc = TitleCapture::app_only;
+    switch (tc) {
         case TitleCapture::off: return {};
         case TitleCapture::app_only: return app;
         case TitleCapture::full: return title.size() > 256 ? title.substr(0, 256) : title;

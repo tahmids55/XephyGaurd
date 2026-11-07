@@ -44,4 +44,12 @@ long long tcp_connect(const std::string& host, uint16_t port, int timeout_ms, st
 void socket_close(long long s);
 bool net_init();  // WSAStartup on Windows, no-op elsewhere
 
+/// Returns true when peer certificate and SAN hostname/IP verification must be enforced.
+/// Verification is ALWAYS required unless insecure_skip_verify is explicitly set.
+inline bool should_verify_peer(const TlsOptions& o) { return !o.insecure_skip_verify; }
+
+/// Configures SAN hostname/IP verification on an OpenSSL SSL* handle according to `opts`.
+/// Returns true if hostname/IP verification was enabled on the handle.
+bool configure_verify_host(void* ssl_handle, const std::string& host, const TlsOptions& opts);
+
 }  // namespace xg::net

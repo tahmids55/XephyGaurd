@@ -10,6 +10,7 @@ use App\Models\Command;
 use App\Models\Event;
 use App\Models\KeyStat;
 use App\Models\LabSession;
+use App\Models\NetEvent;
 use App\Models\PasteEvent;
 use App\Models\Pc;
 use App\Models\SessionPc;
@@ -31,7 +32,7 @@ class EventIngestor
     public const TYPES = ['heartbeat', 'agent_started', 'agent_stopping', 'process_start', 'process_stop',
         'process_snapshot', 'rule_hit', 'listening_port', 'window_focus', 'paste', 'copy', 'key_stats', 'net_adapter',
         'device', 'extension_scan', 'artifact_scan', 'file_activity', 'gpu_sample', 'tamper', 'capabilities',
-        'command_result', 'helper_status'];
+        'command_result', 'helper_status', 'ide_ai_activity', 'isolation_lease_expired'];
 
     private const TAMPER_TITLES = [
         'binary_hash_mismatch' => 'Agent binary does not match the installed package',
@@ -45,7 +46,11 @@ class EventIngestor
         'signature_invalid' => 'Agent received an invalid signature bundle',
     ];
 
-    public function __construct(private readonly SessionManager $sessions, private readonly PolicyBuilder $policies) {}
+    public function __construct(
+        private readonly SessionManager $sessions,
+        private readonly PolicyBuilder $policies,
+        private readonly CommandBus $commands,
+    ) {}
 
     public function ingest(Agent $agent, array $batch, string $ip): array
     {
@@ -103,12 +108,26 @@ class EventIngestor
             broadcast(new PcUpdated($pc));
         }
 
+        // Re-deliver any recent unacknowledged commands (e.g. if sent while WebSocket was reconnecting).
+        $pendingCmds = Command::query()
+            ->where('pc_id', $pc->id)
+            ->where('status', 'sent')
+            ->whereNull('acked_at')
+            ->where('created_at', '>', now()->subMinutes(10))
+            ->where('created_at', '<', now()->subSeconds(10))
+            ->get();
+        foreach ($pendingCmds as $cmd) {
+            broadcast(new \App\Events\AgentCommand($cmd));
+        }
+
         return [
+            'pc_id' => $agent->pc_id,
             'ack_seq' => $agent->last_seq,
             'server_time_ms' => now()->getTimestampMs(),
             'policy_version' => $this->policies->forPc($pc)['version'],
             'signatures_version' => SignatureVersion::active()?->version ?? '',
             'isolated' => $pc->isolated,
+            'isolation_lease_s' => (int) config('xephyguard.isolation_lease_seconds', 600),
         ];
     }
 
@@ -180,24 +199,83 @@ class EventIngestor
         switch ($type) {
             case 'rule_hit':
                 $actions = is_array($d['actions'] ?? null) ? $d['actions'] : [];
-                $pc->last_event = mb_substr(($d['description'] ?? $d['rule_id'] ?? 'rule hit').' ('.($d['subject'] ?? '').')', 0, 160);
-                if (in_array('isolate', $actions, true) && ! $pc->isolated) {
-                    $this->sessions->isolate($pc, true, null, 'rule '.$str('rule_id'));
+                $sev = $str('severity', 16) ?? 'medium';
+                $ruleId = $str('rule_id') ?? 'rule';
+                $cat = $str('category', 32) ?? '';
+                $desc = (string) ($d['description'] ?? $ruleId);
+                $subject = $str('subject', 120) ?? '';
+                $mode = $session?->mode ?? 'always_on';
+                $isInventory = str_starts_with($ruleId, 'ext.')
+                    || str_starts_with($ruleId, 'artifact.')
+                    || in_array($cat, ['extension', 'artifact'], true)
+                    || ($d['evidence'] ?? '') === 'extension_installed';
+
+                $pc->last_event = mb_substr($desc.' ('.$subject.')', 0, 160);
+
+                // C4 / R6: Isolate and kill only in active Test sessions when the profile action includes it.
+                if ($mode === 'test' && ! $isInventory && in_array('isolate', $actions, true) && ! $pc->isolated) {
+                    $this->sessions->isolate($pc, true, null, 'rule '.$ruleId);
                 }
-                if (! in_array('alert', $actions, true)) {
+                if ($mode === 'test' && ! $isInventory && in_array('kill', $actions, true) && $this->profileActionIncludesKill($pc, $ruleId, $sev)) {
+                    $browsers = ['chrome', 'msedge', 'firefox', 'brave', 'opera', 'vivaldi', 'arc'];
+                    if ($subject !== '' && ! in_array(mb_strtolower($subject), $browsers, true)) {
+                        $this->commands->send($pc, 'kill', ['exe' => $subject]);
+                    }
+                }
+
+                // C4 / R5: Popups only in Test, or for active use in Practice when blocking AI; never for inventory or always_on.
+                $canWarn = ! $isInventory && in_array('warn', $actions, true) && (
+                    $mode === 'test' || ($mode === 'practice' && $this->profileBlocksAi($pc, $session))
+                );
+                if ($canWarn) {
+                    $recentWarn = Command::query()
+                        ->where('pc_id', $pc->id)
+                        ->where('type', 'message')
+                        ->where('created_at', '>', now()->subSeconds(30))
+                        ->exists();
+                    if (! $recentWarn) {
+                        $this->commands->send($pc, 'message', [
+                            'title' => 'XephyGuard Notice — AI Tool Activity',
+                            'text' => "{$desc} was detected on this PC and logged for your instructor.",
+                            'urgent' => $mode === 'test',
+                        ]);
+                    }
+                }
+
+                if ($mode === 'always_on' || ! in_array('alert', $actions, true)) {
                     return null;
                 }
-                $title = ($d['description'] ?? 'Rule matched').': '.($str('subject', 120) ?? '');
-                // An agent restart resets its local de-duplication; do not raise the same alert twice.
-                $dup = Alert::query()->where('pc_id', $pc->id)->where('lab_session_id', $sid)
-                    ->where('rule_id', $str('rule_id') ?? 'rule')->where('title', mb_substr($title, 0, 200))
-                    ->where('occurred_at', '>', $at->subMinutes(30))->exists();
+
+                $title = mb_substr(($d['description'] ?? 'Rule matched').': '.$subject, 0, 200);
+                // R5: Installed-only inventory items are reported at most once per session / 24h per subject.
+                if ($isInventory) {
+                    $dup = Alert::query()
+                        ->where('pc_id', $pc->id)
+                        ->where('rule_id', $ruleId)
+                        ->where('title', $title)
+                        ->where(function ($q) use ($sid, $at) {
+                            $q->where('occurred_at', '>', $at->subHours(24));
+                            if ($sid !== null) {
+                                $q->orWhere('lab_session_id', $sid);
+                            }
+                        })
+                        ->exists();
+                } else {
+                    // An agent restart resets its local de-duplication; do not raise the same alert twice.
+                    $dup = Alert::query()
+                        ->where('pc_id', $pc->id)
+                        ->where('lab_session_id', $sid)
+                        ->where('rule_id', $ruleId)
+                        ->where('title', $title)
+                        ->where('occurred_at', '>', $at->subMinutes(30))
+                        ->exists();
+                }
                 if ($dup) {
                     return null;
                 }
 
-                return $this->alert($pc, $sid, $str('rule_id') ?? 'rule', $str('severity', 16) ?? 'medium',
-                    $str('category', 32), ($d['description'] ?? 'Rule matched').': '.($str('subject', 120) ?? ''), $d, $at, $str('user'));
+                return $this->alert($pc, $sid, $ruleId, $sev,
+                    $cat ?: null, $title, $d, $at, $str('user'));
 
             case 'tamper':
                 $kind = $str('kind', 48) ?? 'unknown';
@@ -223,6 +301,9 @@ class EventIngestor
                         'Agent service was stopped during the session', $d, $at, null);
                 }
 
+                return null;
+
+            case 'process_snapshot':
                 return null;
 
             case 'key_stats':
@@ -257,7 +338,74 @@ class EventIngestor
                 return null;
 
             case 'window_focus':
-                $pc->active_app = $str('app');
+                $app = $str('app') ?? '';
+                $winTitle = $str('title', 200) ?? '';
+                $pc->active_app = $app;
+
+                // R7 / C4: Window-title keyword match is weak corroborating evidence only:
+                // logged event + optional low-severity alert in Test only; never kill, never isolate, no popup.
+                if ($winTitle !== '' && mb_strtolower($winTitle) !== mb_strtolower($app) && ($match = $this->matchWindowAi($app, $winTitle))) {
+                    $pc->last_event = mb_substr("Window title keyword (weak): {$match['name']} ({$winTitle})", 0, 160);
+                    if ($session && $session->mode === 'test' && config('xephyguard.window_title_alerts', true)) {
+                        $alertTitle = mb_substr("Window title keyword (weak): {$match['name']} in {$app} ({$winTitle})", 0, 200);
+                        $dup = Alert::query()
+                            ->where('pc_id', $pc->id)
+                            ->where('lab_session_id', $sid)
+                            ->where('rule_id', $match['id'])
+                            ->where('occurred_at', '>', $at->subMinutes(5))
+                            ->exists();
+                        if (! $dup) {
+                            return $this->alert($pc, $sid, $match['id'], 'low', 'web_ai', $alertTitle, $d + $match, $at, $str('user'));
+                        }
+                    }
+                }
+
+                return null;
+
+            case 'ide_ai_activity':
+                // C2: Truthful IDE AI activity signal (file_activity, process, extension_installed).
+                // Agent-side signals are at most medium confidence; alert only during a Test session.
+                $tool = $str('tool', 64) ?? 'ide-ai';
+                $ide = $str('ide', 32) ?? 'ide';
+                $evidence = $str('evidence', 32) ?? 'file_activity';
+                $confidence = ($d['confidence'] ?? 'medium') === 'weak' ? 'weak' : 'medium';
+                $detail = $str('detail', 200);
+                $meaning = $str('meaning', 255) ?? 'IDE AI extension activity was observed';
+                $notMeaning = $str('not_meaning', 255) ?? 'Does not prove chat use; inline completions, sign-in or telemetry produce the same signal';
+
+                $pc->last_event = mb_substr("IDE AI ({$confidence}): {$tool} in {$ide} [{$evidence}]", 0, 160);
+
+                if (! $session || $session->mode !== 'test') {
+                    return null;
+                }
+
+                $ruleId = 'ide.ai.'.preg_replace('/[^a-z0-9_.-]/', '_', strtolower($tool));
+                $sev = ($confidence === 'weak' || $evidence === 'extension_installed') ? 'low' : 'medium';
+                $title = mb_substr("IDE AI ({$confidence}): {$tool} in {$ide}".($detail ? " ({$detail})" : ''), 0, 200);
+                $dedupSince = $evidence === 'extension_installed' ? $at->subHours(24) : $at->subMinutes(10);
+                $dup = Alert::query()
+                    ->where('pc_id', $pc->id)
+                    ->where('lab_session_id', $sid)
+                    ->where('rule_id', $ruleId)
+                    ->where('occurred_at', '>', $dedupSince)
+                    ->exists();
+                if ($dup) {
+                    return null;
+                }
+
+                return $this->alert($pc, $sid, $ruleId, $sev, 'ide_ai', $title, array_merge($d, [
+                    'tool' => $tool,
+                    'ide' => $ide,
+                    'evidence' => $evidence,
+                    'detail' => $detail,
+                    'confidence' => $confidence,
+                    'meaning' => $meaning,
+                    'not_meaning' => $notMeaning,
+                ]), $at, $str('user'));
+
+            case 'isolation_lease_expired':
+                $pc->isolated = false;
+                $pc->last_event = 'Isolation lease expired (network restored)';
 
                 return null;
 
@@ -317,5 +465,100 @@ class EventIngestor
         $open = $alerts->whereNull('acknowledged_at');
         $pc->status = $open->whereIn('severity', ['high', 'critical'])->isNotEmpty() ? 'alert'
             : ($open->where('severity', 'medium')->isNotEmpty() ? 'warning' : 'clean');
+    }
+
+    /**
+     * Matches active window/browser titles against known AI web services & assistants (R7).
+     * Treated strictly as weak, corroborating evidence (never kills or isolates; subject to allowlist).
+     *
+     * @return ?array{id: string, name: string, host: string, confidence: string, meaning: string, not_meaning: string}
+     */
+    private function matchWindowAi(string $app, string $title): ?array
+    {
+        $t = trim(mb_strtolower($title));
+        if ($t === '' || $t === mb_strtolower(trim($app))) {
+            return null;
+        }
+        foreach (config('xephyguard.window_title_allowlist', []) as $allowed) {
+            $needle = trim(mb_strtolower((string) $allowed));
+            if ($needle !== '' && str_contains($t, $needle)) {
+                return null;
+            }
+        }
+        $patterns = [
+            ['keywords' => ['chatgpt', 'openai'], 'id' => 'web.ai.chatgpt', 'name' => 'ChatGPT', 'host' => 'chatgpt.com'],
+            ['keywords' => ['claude', 'anthropic'], 'id' => 'web.ai.claude', 'name' => 'Claude AI', 'host' => 'claude.ai'],
+            ['keywords' => ['gemini', 'google ai studio', 'aistudio.google', 'notebooklm'], 'id' => 'web.ai.gemini', 'name' => 'Google Gemini', 'host' => 'gemini.google.com'],
+            ['keywords' => ['perplexity'], 'id' => 'web.ai.perplexity', 'name' => 'Perplexity AI', 'host' => 'www.perplexity.ai'],
+            ['keywords' => ['deepseek'], 'id' => 'web.ai.deepseek', 'name' => 'DeepSeek AI', 'host' => 'chat.deepseek.com'],
+            ['keywords' => ['github copilot', 'copilot chat', 'github.com/copilot'], 'id' => 'web.ai.github_copilot', 'name' => 'GitHub Copilot Chat', 'host' => 'githubcopilot.com'],
+            ['keywords' => ['copilot'], 'id' => 'web.ai.copilot', 'name' => 'Copilot AI', 'host' => 'copilot.microsoft.com'],
+            ['keywords' => ['grok'], 'id' => 'web.ai.grok', 'name' => 'Grok AI', 'host' => 'grok.com'],
+            ['keywords' => ['blackbox ai', 'blackbox.ai'], 'id' => 'web.ai.blackbox', 'name' => 'Blackbox AI', 'host' => 'www.blackbox.ai'],
+            ['keywords' => ['phind'], 'id' => 'web.ai.phind', 'name' => 'Phind AI', 'host' => 'www.phind.com'],
+            ['keywords' => ['poe - ', ' - poe', 'poe.com'], 'id' => 'web.ai.poe', 'name' => 'Poe AI', 'host' => 'poe.com'],
+            ['keywords' => ['huggingchat', 'huggingface'], 'id' => 'web.ai.huggingchat', 'name' => 'HuggingChat', 'host' => 'huggingface.co'],
+            ['keywords' => ['v0 by vercel', 'v0.dev'], 'id' => 'web.ai.v0', 'name' => 'Vercel v0', 'host' => 'v0.dev'],
+            ['keywords' => ['bolt.new'], 'id' => 'web.ai.bolt', 'name' => 'Bolt.new', 'host' => 'bolt.new'],
+            ['keywords' => ['lovable.dev', 'lovable ai'], 'id' => 'web.ai.lovable', 'name' => 'Lovable AI', 'host' => 'lovable.dev'],
+            ['keywords' => ['meta ai', 'meta.ai'], 'id' => 'web.ai.meta', 'name' => 'Meta AI', 'host' => 'www.meta.ai'],
+            ['keywords' => ['mistral', 'le chat'], 'id' => 'web.ai.mistral', 'name' => 'Mistral Le Chat', 'host' => 'chat.mistral.ai'],
+        ];
+        $meta = [
+            'confidence' => 'weak',
+            'meaning' => 'Window title matched an AI-related keyword',
+            'not_meaning' => 'Does not prove AI use; an article, video, document or search result with this word in the title produces the same signal',
+        ];
+        foreach ($patterns as $p) {
+            foreach ($p['keywords'] as $kw) {
+                if (str_contains($t, $kw)) {
+                    return ['id' => $p['id'], 'name' => $p['name'], 'host' => $p['host']] + $meta;
+                }
+            }
+        }
+
+        // Also match any enabled custom domain in the Blocklist whose full domain appears in the window title.
+        foreach (\App\Models\BlocklistEntry::query()->where('enabled', true)->where('kind', 'domain')->get(['category', 'value']) as $entry) {
+            $domain = mb_strtolower($entry->value);
+            if ($domain !== '' && str_contains($t, $domain)) {
+                $stem = preg_replace('/\.(com|ai|org|net|io|dev|co|app|chat)$/i', '', $domain);
+
+                return ['id' => 'web.'.$entry->category.'.'.$stem, 'name' => $entry->value, 'host' => $entry->value] + $meta;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Determines whether the active session profile blocks AI categories.
+     */
+    private function profileBlocksAi(Pc $pc, ?LabSession $session): bool
+    {
+        if (! $session) {
+            return false;
+        }
+        ['profile' => $profile] = $this->policies->effective($pc);
+        $cats = $profile->network['block_categories'] ?? [];
+
+        return ! empty($cats) || $profile->mode === 'test';
+    }
+
+    /**
+     * Checks whether the effective policy for this PC in Test mode permits `kill` for the given rule/severity.
+     */
+    private function profileActionIncludesKill(Pc $pc, string $ruleId, string $severity): bool
+    {
+        $policy = $this->policies->forPc($pc);
+        if (($policy['mode'] ?? '') !== 'test') {
+            return false;
+        }
+        $ruleActs = $policy['actions']['rules'][$ruleId] ?? null;
+        if (is_array($ruleActs)) {
+            return in_array('kill', $ruleActs, true);
+        }
+        $defActs = $policy['actions']['default'][$severity] ?? [];
+
+        return is_array($defActs) && in_array('kill', $defActs, true);
     }
 }

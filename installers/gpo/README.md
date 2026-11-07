@@ -1,9 +1,12 @@
 # Group Policy deployment notes (Windows lab PCs)
 
-1. Put `XephyGuard-Setup-<ver>.exe` on a share readable by *Domain Computers*.
+1. Put `XephyGuard-Setup-<ver>.exe` on a network share readable by *Domain Computers* (restrict read access to lab OUs/security groups so the enrollment key in startup script arguments is not exposed outside the lab).
 2. GPO → Computer Configuration → Policies → Windows Settings → Scripts (Startup) → add
-   `\\fileserver\xephyguard\XephyGuard-Setup-<ver>.exe` with parameters
-   `/S /KEY=<lab key> /CCC=<CCC IP> /CAFP=<CA SHA-256>`. Re-running is harmless (upgrade in place).
+   `\\fileserver\xephyguard\XephyGuard-Setup-<ver>.exe` with parameters:
+   ```
+   /S /ENROLLKEY=<lab key> /CAFP=<CA SHA-256> /CCC=<CCC IP>
+   ```
+   Re-running is harmless (upgrades in place while preserving an already-approved PC identity).
 3. Recommended lab hardening in the same GPO:
    * Lab users are standard users (no local admin).
    * Computer Configuration → Administrative Templates → Windows Components → **Windows Copilot**: Turn off.

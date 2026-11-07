@@ -53,7 +53,7 @@
                   <div class="truncate text-slate-600" x-text="cell(x-1,y-1).user || '—'"></div>
                   <div class="truncate" x-text="cell(x-1,y-1).app || ''"></div>
                   <div class="truncate text-[11px] text-slate-500" x-text="cell(x-1,y-1).last_event || ''"></div>
-                  <span x-show="cell(x-1,y-1).isolated" class="badge absolute top-1 right-1 bg-red-600 text-white">isolated</span>
+                  <span x-show="cell(x-1,y-1).isolated" class="badge absolute top-1 right-1 bg-red-600 text-white" :title="cell(x-1,y-1).isolation_expires_at ? 'Lease expires ' + cell(x-1,y-1).isolation_expires_at : ''">isolated</span>
                 </div>
               </template>
               <template x-if="!cell(x-1, y-1)"><div class="text-slate-300" x-text="String.fromCharCode(64+y) + x"></div></template>
@@ -117,8 +117,8 @@
               <button class="-mb-px border-b-2 px-3 py-1.5 capitalize" :class="tab===t ? 'border-indigo-600 font-semibold' : 'border-transparent text-slate-500'" @click="tab=t" x-text="t"></button>
             </template>
           </div>
-          <div x-show="tab==='timeline'"><table class="tbl"><template x-for="e in drawer.timeline"><tr><td class="w-16 font-mono text-xs" x-text="e.at"></td><td class="text-xs text-slate-500" x-text="e.type"></td><td x-text="e.summary"></td></tr></template></table></div>
-          <div x-show="tab==='alerts'"><table class="tbl"><template x-for="a in drawer.alerts"><tr><td><span class="badge" :class="'sev-'+a.severity" x-text="a.severity"></span></td><td x-text="a.title"></td>
+          <div x-show="tab==='timeline'"><table class="tbl"><template x-for="e in drawer.timeline"><tr><td class="w-16 font-mono text-xs" x-text="e.at"></td><td class="text-xs text-slate-500" x-text="e.type"></td><td><div x-text="e.summary"></div><div x-show="e.meaning" class="text-xs text-slate-600" x-text="'Means: ' + e.meaning"></div><div x-show="e.not_meaning" class="text-xs text-slate-400" x-text="'Does not mean: ' + e.not_meaning"></div></td></tr></template></table></div>
+          <div x-show="tab==='alerts'"><table class="tbl"><template x-for="a in drawer.alerts"><tr><td><span class="badge" :class="'sev-'+a.severity" x-text="a.severity"></span></td><td><div x-text="a.title"></div><div x-show="a.details?.meaning" class="text-xs text-slate-600" x-text="'Means: ' + a.details.meaning"></div><div x-show="a.details?.not_meaning" class="text-xs text-slate-400" x-text="'Does not mean: ' + a.details.not_meaning"></div></td>
             <td class="text-xs" x-text="(a.occurred_at||'').substring(11,19)"></td><td><button class="btn btn-sm" x-show="!a.acknowledged_at" @click="ack(a)">Ack</button><span x-show="a.acknowledged_at" class="text-xs text-slate-400">acked</span></td></tr></template></table></div>
           <div x-show="tab==='processes'"><table class="tbl"><template x-for="p in drawer.processes"><tr><td class="font-mono text-xs" x-text="p.at"></td><td x-text="p.type.replace('process_','')"></td><td class="font-semibold" x-text="p.exe"></td><td class="text-xs" x-text="p.rule"></td>
             <td><button class="btn btn-sm" x-show="p.type==='process_start' && p.exe" @click="kill(drawer.pc, p.exe)">Close</button></td></tr></template></table>

@@ -145,6 +145,19 @@ static std::string ssl_errors() {
     return out.empty() ? "unknown TLS error" : out;
 }
 
+bool configure_verify_host(void* ssl_handle, const std::string& host, const TlsOptions& o) {
+    if (!ssl_handle || !should_verify_peer(o)) return false;
+    SSL* ssl = static_cast<SSL*>(ssl_handle);
+    const std::string& vhost = o.expected_host.empty() ? host : o.expected_host;
+    if (vhost.empty()) return false;
+    X509_VERIFY_PARAM* param = SSL_get0_param(ssl);
+    in6_addr a6{};
+    in_addr a4{};
+    if (inet_pton(AF_INET, vhost.c_str(), &a4) == 1 || inet_pton(AF_INET6, vhost.c_str(), &a6) == 1)
+        return X509_VERIFY_PARAM_set1_ip_asc(param, vhost.c_str()) == 1;
+    return X509_VERIFY_PARAM_set1_host(param, vhost.c_str(), 0) == 1;
+}
+
 bool TlsConnection::connect(const std::string& host, uint16_t port, const TlsOptions& o, std::string* err) {
     impl_->reset();
     impl_->ctx = SSL_CTX_new(TLS_client_method());
@@ -176,13 +189,7 @@ bool TlsConnection::connect(const std::string& host, uint16_t port, const TlsOpt
     SSL_set_fd(impl_->ssl, int(impl_->sock));
     const std::string& vhost = o.expected_host.empty() ? host : o.expected_host;
     if (!o.insecure_skip_verify) {
-        X509_VERIFY_PARAM* param = SSL_get0_param(impl_->ssl);
-        in6_addr a6{};
-        in_addr a4{};
-        if (inet_pton(AF_INET, vhost.c_str(), &a4) == 1 || inet_pton(AF_INET6, vhost.c_str(), &a6) == 1)
-            X509_VERIFY_PARAM_set1_ip_asc(param, vhost.c_str());
-        else
-            X509_VERIFY_PARAM_set1_host(param, vhost.c_str(), 0);
+        configure_verify_host(impl_->ssl, host, o);
     }
     SSL_set_tlsext_host_name(impl_->ssl, vhost.c_str());
     if (SSL_connect(impl_->ssl) != 1) {

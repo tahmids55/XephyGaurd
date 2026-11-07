@@ -27,9 +27,24 @@ return [
 
     // Agent behaviour
     'heartbeat_timeout_s' => (int) env('XG_HEARTBEAT_TIMEOUT', 15),   // 3 missed heartbeats (5 s)
+    'isolation_lease_seconds' => (int) env('XG_ISOLATION_LEASE_SECONDS', 600),
     'max_events_per_batch' => 500,
     'max_batch_bytes' => 1024 * 1024,
     'agent_rate_limit_per_minute' => (int) env('XG_AGENT_RATE', 120),
+
+    // Window-title keyword matching (R7): weak corroborating signal only; allowlist suppresses known false positives.
+    'window_title_alerts' => (bool) env('XG_WINDOW_TITLE_ALERTS', true),
+    'window_title_allowlist' => [
+        'xephyguard',
+        'claude shannon',
+        'shannon entropy',
+        'gemini observatory',
+        'project gemini',
+        'gemini North',
+        'gemini south',
+        'gemini protocol',
+        'mistral wind',
+    ],
 
     // Defaults for Settings
     'retention_days_raw' => (int) env('XG_RETENTION_RAW_DAYS', 140),     // ~ one semester

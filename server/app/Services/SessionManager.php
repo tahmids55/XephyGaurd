@@ -98,7 +98,12 @@ class SessionManager
         $pc->forceFill(['isolated' => $isolated])->save();
         Audit::log($isolated ? 'pc.isolate' : 'pc.unisolate', $pc, ['reason' => $reason]);
         $this->network()->write();
-        $this->commands->send($pc, 'isolate_notice', ['isolated' => $isolated], $by);
+        $leaseS = (int) config('xephyguard.isolation_lease_seconds', 600);
+        $this->commands->send($pc, 'isolate_notice', [
+            'isolated' => $isolated,
+            'lease_s' => $leaseS,
+            'reason' => $reason,
+        ], $by);
         broadcast(new PcUpdated($pc));
     }
 
@@ -106,8 +111,7 @@ class SessionManager
     private function propagate(LabSession $session): void
     {
         $this->network()->write();
-        $pcs = Pc::query()->active()->where('lab_id', $session->lab_id)->get();
-        $this->commands->sendMany($pcs, 'policy_updated');
+        $this->commands->broadcastPolicyUpdated($session->lab_id);
         broadcast(new SessionChanged($session));
     }
 

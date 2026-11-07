@@ -106,8 +106,9 @@ private:
 // ------------------------------------------------------------------------------ window monitor
 std::function<void(const WindowInfo&)> g_window_cb;
 
-void CALLBACK win_event(HWINEVENTHOOK, DWORD, HWND hwnd, LONG id_object, LONG, DWORD, DWORD) {
-    if (id_object != OBJID_WINDOW || !hwnd || !g_window_cb) return;
+void CALLBACK win_event(HWINEVENTHOOK, DWORD event, HWND hwnd, LONG id_object, LONG id_child, DWORD, DWORD) {
+    if (id_object != OBJID_WINDOW || id_child != CHILDID_SELF || !hwnd || !g_window_cb) return;
+    if (event == EVENT_OBJECT_NAMECHANGE && hwnd != GetForegroundWindow()) return;
     wchar_t title[512];
     int n = GetWindowTextW(hwnd, title, 512);
     DWORD pid = 0;
@@ -129,13 +130,18 @@ private:
     void on_thread_start() override {
         hook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, win_event, 0, 0,
                                 WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
-        if (HWND fg = GetForegroundWindow()) win_event(nullptr, 0, fg, OBJID_WINDOW, 0, 0, 0);
+        name_hook_ = SetWinEventHook(EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_NAMECHANGE, nullptr, win_event, 0, 0,
+                                     WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+        if (HWND fg = GetForegroundWindow()) win_event(nullptr, EVENT_SYSTEM_FOREGROUND, fg, OBJID_WINDOW, CHILDID_SELF, 0, 0);
     }
     void on_thread_stop() override {
         if (hook_) UnhookWinEvent(hook_);
+        if (name_hook_) UnhookWinEvent(name_hook_);
         hook_ = nullptr;
+        name_hook_ = nullptr;
     }
     HWINEVENTHOOK hook_ = nullptr;
+    HWINEVENTHOOK name_hook_ = nullptr;
 };
 
 // --------------------------------------------------------------------------- clipboard monitor

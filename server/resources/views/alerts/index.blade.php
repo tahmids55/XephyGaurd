@@ -16,7 +16,16 @@
       <tr>
         <td class="font-mono text-xs whitespace-nowrap">{{ $a->occurred_at->format('M d H:i:s') }}</td>
         <td><span class="badge sev-{{ $a->severity }}">{{ $a->severity }}</span></td>
-        <td>{{ $a->pc?->name }}</td><td>{{ $a->user }}</td><td>{{ $a->title }}</td>
+        <td>{{ $a->pc?->name }}</td><td>{{ $a->user }}</td>
+        <td>
+          <div>{{ $a->title }}</div>
+          @if (!empty($a->details['meaning']))
+            <div class="text-xs text-slate-600">Means: {{ $a->details['meaning'] }}</div>
+          @endif
+          @if (!empty($a->details['not_meaning']))
+            <div class="text-xs text-slate-400">Does not mean: {{ $a->details['not_meaning'] }}</div>
+          @endif
+        </td>
         <td class="font-mono text-xs">{{ $a->rule_id }}</td>
         <td class="w-80">
           @if ($a->acknowledged_at)

@@ -103,7 +103,7 @@ class SignatureController extends Controller
     public function publish(Request $request, SignatureCompiler $compiler, CommandBus $bus)
     {
         $v = $compiler->publish($request->user()->id, $request->string('note')->toString() ?: null);
-        $n = $bus->sendMany(Pc::query()->active()->get(), 'policy_updated');
+        $n = $bus->broadcastPolicyUpdated(null, $request->user());
         Audit::log('signatures.publish', $v, ['version' => $v->version, 'agents' => $n]);
 
         return back()->with('status', "Published {$v->version}; $n agents notified.");
@@ -113,7 +113,7 @@ class SignatureController extends Controller
     {
         SignatureVersion::query()->update(['active' => false]);
         $version->update(['active' => true]);
-        $bus->sendMany(Pc::query()->active()->get(), 'policy_updated');
+        $bus->broadcastPolicyUpdated();
         Audit::log('signatures.rollback', $version, ['version' => $version->version]);
 
         return back()->with('status', "Rolled back to {$version->version}.");

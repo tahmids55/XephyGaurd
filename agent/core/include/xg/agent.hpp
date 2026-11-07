@@ -23,6 +23,19 @@
 
 namespace xg {
 
+struct WindowsDefaultRoute {
+    std::string gateway;
+    std::string interface_ip;
+    std::string metric;
+};
+
+/// Pure helpers exposed for unit testing.
+std::vector<WindowsDefaultRoute> parse_windows_default_routes(const std::string& route_print_output);
+std::vector<std::string> parse_linux_default_routes(const std::string& ip_route_output);
+std::string update_hosts_blocklist_content(const std::string& existing_content,
+                                           const std::vector<std::string>& domains,
+                                           const std::string& nl = "\n");
+
 /// Runtime state shared between the agent threads and reported in heartbeats.
 struct AgentStatus {
     std::atomic<bool> online{false};
@@ -52,10 +65,20 @@ public:
     void scan_ports();
     void scan_network();
     void scan_extensions();
+    void scan_copilot_activity(int64_t now_steady = 0);
     void on_helper_message(const IIpcServer::Peer& peer, const std::string& line);
     void on_process_started(const ProcessInfo& p);
     /// Re-evaluates everything already present (called automatically after a mode change).
     void reevaluate_all();
+    void renew_isolation(int64_t now_steady, int lease_s, const std::string& reason = {});
+    void check_isolation_lease(int64_t now_steady);
+    std::string isolation_state_path() const;
+    bool is_isolated() const { return isolation_enforced_; }
+    int isolation_lease_s() const { return isolation_lease_s_; }
+    int64_t isolation_renewed_ms() const { return isolation_renewed_ms_; }
+    const json& last_restored_isolation_state() const { return last_restored_isolation_; }
+    void set_hosts_path_for_tests(std::string path) { hosts_path_override_ = std::move(path); }
+    const std::vector<std::string>& active_blocked_domains() const { return active_blocked_domains_; }
     json build_heartbeat();
     Policy policy() const;
     IEventSink& sink() { return *sink_; }
@@ -83,6 +106,9 @@ private:
     void flush_file_activity();
     void push_helper_config();
     void notify_student(const std::string& title, const std::string& body, bool urgent);
+    void apply_network_isolation(bool isolated);
+    void restore_isolation_from_disk();
+    void apply_hosts_blocklist(const std::vector<std::string>& domains);
     void restart_watchers();
     std::string active_user();
     std::vector<std::string> user_homes();
@@ -116,6 +142,16 @@ private:
     bool warned_not_enrolled_ = false;
     std::map<std::string, std::string> reported_tamper_;
     std::set<std::string> known_ports_, known_adapters_, known_extensions_;
+    std::vector<std::string> active_blocked_domains_;
+    std::string hosts_path_override_;
+    bool isolation_enforced_ = false;
+    int64_t isolation_renewed_ms_ = 0;
+    int isolation_lease_s_ = 600;
+    std::string isolation_reason_;
+    json last_restored_isolation_;
+    bool copilot_scan_initialized_ = false;
+    std::map<std::string, uint64_t> copilot_file_state_;
+    HitDeduper inventory_dedup_{24 * 3600 * 1000LL};
     std::map<std::string, AdapterInfo> adapters_;
     int default_routes_ = -1;
     std::atomic<bool> network_dirty_{true};

@@ -20,6 +20,15 @@ class EnrollmentService
     {
         $pollToken = Str::random(48);
         $macs = array_values(array_unique(array_map('strtolower', $data['macs'] ?? [])));
+
+        // Supersede any older pending enrollments from the same machine so approving a stale request
+        // later cannot accidentally revoke the active agent's credentials.
+        Enrollment::query()
+            ->where('lab_id', $lab->id)
+            ->where('status', 'pending')
+            ->where('hostname', $data['hostname'])
+            ->update(['status' => 'rejected', 'decided_at' => now()]);
+
         $enrollment = Enrollment::create([
             'lab_id' => $lab->id,
             'hostname' => $data['hostname'],
@@ -43,8 +52,8 @@ class EnrollmentService
         return DB::transaction(function () use ($e, $by, $name) {
             $signed = $this->ca->signClientCsr($e->csr_pem, config('xephyguard.agent_cert_days'));
             $token = Str::random(64);
-            // Re-enrolling a known machine (same MAC) keeps its history and seat.
-            $pc = Pc::query()->where('lab_id', $e->lab_id)->whereNull('retired_at')->get()
+            // Re-enrolling a known machine (same MAC) keeps its history and seat (even if previously retired).
+            $pc = Pc::query()->where('lab_id', $e->lab_id)->get()
                 ->first(fn (Pc $p) => array_intersect($p->macs ?? [], $e->macs ?? []));
             $pc ??= Pc::create([
                 'lab_id' => $e->lab_id,
@@ -52,7 +61,7 @@ class EnrollmentService
                 'hostname' => $e->hostname,
                 'status' => 'offline',
             ]);
-            $pc->fill(['hostname' => $e->hostname, 'os' => $e->os, 'os_version' => $e->os_version, 'macs' => $e->macs, 'ip' => $e->ip]);
+            $pc->fill(['hostname' => $e->hostname, 'os' => $e->os, 'os_version' => $e->os_version, 'macs' => $e->macs, 'ip' => $e->ip, 'retired_at' => null]);
             if ($name) {
                 $pc->name = $name;
             }

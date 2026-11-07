@@ -1,12 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
+#include <openssl/ssl.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 #include "xg/crypto.hpp"
 #include "xg/discovery.hpp"
 #include "xg/http.hpp"
 #include "xg/pusher.hpp"
+#include "xg/tls.hpp"
 #include "xg/websocket.hpp"
 
 using namespace xg;
@@ -101,4 +104,81 @@ TEST_CASE("discovery reply parsing") {
     CHECK(r->host == "192.168.10.2");
     CHECK(r->ca_fingerprint == "ab12");
     CHECK_FALSE(net::parse_discovery_reply(R"({"service":"other"})", "x"));
+}
+
+TEST_CASE("TLS hostname/IP verification is always enabled even when ca_file is set (R9)") {
+    net::TlsOptions opts;
+    opts.ca_file = "/etc/xephyguard/ca.crt";
+    opts.expected_host = "ccc.university.edu";
+    opts.insecure_skip_verify = false;
+    CHECK(net::should_verify_peer(opts));
+
+    // Mint a self-signed certificate for "wrong.university.edu" and verify that
+    // configure_verify_host enforces hostname matching even when ca_file is non-empty.
+    EVP_PKEY* key = EVP_EC_gen("P-256");
+    X509* cert = X509_new();
+    X509_set_version(cert, 2);
+    ASN1_INTEGER_set(X509_get_serialNumber(cert), 1);
+    X509_gmtime_adj(X509_getm_notBefore(cert), 0);
+    X509_gmtime_adj(X509_getm_notAfter(cert), 3600);
+    X509_set_pubkey(cert, key);
+    X509_NAME_add_entry_by_txt(X509_get_subject_name(cert), "CN", MBSTRING_ASC,
+                               reinterpret_cast<const unsigned char*>("wrong.university.edu"), -1, -1, 0);
+    X509_set_issuer_name(cert, X509_get_subject_name(cert));
+    X509_sign(cert, key, EVP_sha256());
+
+    X509_STORE* store = X509_STORE_new();
+    X509_STORE_add_cert(store, cert);
+
+    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+    REQUIRE(ctx != nullptr);
+    SSL* ssl = SSL_new(ctx);
+    REQUIRE(ssl != nullptr);
+
+    CHECK(net::configure_verify_host(ssl, "ccc.university.edu", opts));
+
+    X509_STORE_CTX* sctx = X509_STORE_CTX_new();
+    REQUIRE(X509_STORE_CTX_init(sctx, store, cert, nullptr) == 1);
+    X509_VERIFY_PARAM_set1(X509_STORE_CTX_get0_param(sctx), SSL_get0_param(ssl));
+    CHECK(X509_verify_cert(sctx) == 0);
+    CHECK(X509_STORE_CTX_get_error(sctx) == X509_V_ERR_HOSTNAME_MISMATCH);
+    X509_STORE_CTX_free(sctx);
+    SSL_free(ssl);
+
+    // Matching hostname succeeds even with ca_file set.
+    SSL* ssl_match = SSL_new(ctx);
+    opts.expected_host = "wrong.university.edu";
+    CHECK(net::configure_verify_host(ssl_match, "wrong.university.edu", opts));
+    X509_STORE_CTX* sctx_ok = X509_STORE_CTX_new();
+    REQUIRE(X509_STORE_CTX_init(sctx_ok, store, cert, nullptr) == 1);
+    X509_VERIFY_PARAM_set1(X509_STORE_CTX_get0_param(sctx_ok), SSL_get0_param(ssl_match));
+    CHECK(X509_verify_cert(sctx_ok) == 1);
+    X509_STORE_CTX_free(sctx_ok);
+    SSL_free(ssl_match);
+
+    // IP literal verification also configures IP matching when ca_file is set.
+    SSL* ssl_ip = SSL_new(ctx);
+    REQUIRE(ssl_ip != nullptr);
+    opts.expected_host = "192.168.10.2";
+    CHECK(net::configure_verify_host(ssl_ip, "192.168.10.2", opts));
+    X509_STORE_CTX* sctx_ip = X509_STORE_CTX_new();
+    REQUIRE(X509_STORE_CTX_init(sctx_ip, store, cert, nullptr) == 1);
+    X509_VERIFY_PARAM_set1(X509_STORE_CTX_get0_param(sctx_ip), SSL_get0_param(ssl_ip));
+    CHECK(X509_verify_cert(sctx_ip) == 0);
+    CHECK(X509_STORE_CTX_get_error(sctx_ip) == X509_V_ERR_IP_ADDRESS_MISMATCH);
+    X509_STORE_CTX_free(sctx_ip);
+    SSL_free(ssl_ip);
+
+    // Only insecure_skip_verify disables peer/host verification.
+    SSL* ssl_insecure = SSL_new(ctx);
+    REQUIRE(ssl_insecure != nullptr);
+    opts.insecure_skip_verify = true;
+    CHECK_FALSE(net::should_verify_peer(opts));
+    CHECK_FALSE(net::configure_verify_host(ssl_insecure, "ccc.university.edu", opts));
+    SSL_free(ssl_insecure);
+
+    SSL_CTX_free(ctx);
+    X509_STORE_free(store);
+    X509_free(cert);
+    EVP_PKEY_free(key);
 }

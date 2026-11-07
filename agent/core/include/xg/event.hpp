@@ -31,6 +31,8 @@ inline constexpr const char* tamper = "tamper";
 inline constexpr const char* capabilities = "capabilities";
 inline constexpr const char* command_result = "command_result";
 inline constexpr const char* helper_status = "helper_status";
+inline constexpr const char* ide_ai_activity = "ide_ai_activity";
+inline constexpr const char* isolation_lease_expired = "isolation_lease_expired";
 }  // namespace ev
 
 struct Event {

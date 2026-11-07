@@ -3,6 +3,7 @@
 #include <filesystem>
 
 #include "fakes.hpp"
+#include "xg/agent.hpp"
 #include "xg/config.hpp"
 #include "xg/event_queue.hpp"
 #include "xg/keystats.hpp"
@@ -108,6 +109,48 @@ TEST_CASE("policy defaults and JSON round trip") {
     CHECK(app_only.filter_title("firefox", "My private mail") == "firefox");
 }
 
+TEST_CASE("policy clamps collectors and title_capture by mode (Contract C1 / R4)") {
+    // Always-on: window, keystats, paste/clipboard, files forced off; title_capture forced off.
+    json always_json = {
+        {"version", 10},
+        {"mode", "always_on"},
+        {"title_capture", "full"},
+        {"collect", {{"processes", true}, {"window", true}, {"clipboard", true}, {"paste", true},
+                     {"keys", true}, {"keystats", true}, {"files", true}}},
+    };
+    Policy ao = Policy::from_json(always_json);
+    CHECK(ao.mode == Mode::always_on);
+    CHECK(ao.collect.processes);
+    CHECK_FALSE(ao.collect.window);
+    CHECK_FALSE(ao.collect.clipboard);
+    CHECK_FALSE(ao.collect.keys);
+    CHECK_FALSE(ao.collect.files);
+    CHECK(ao.title_capture == TitleCapture::off);
+    CHECK(ao.filter_title("code", "secret.py - Visual Studio Code").empty());
+
+    // Practice: title_capture=full clamped to app_only; files forced off; window/paste/keystats allowed.
+    json practice_full = {
+        {"version", 11},
+        {"mode", "practice"},
+        {"title_capture", "full"},
+        {"collect", {{"window", true}, {"paste", true}, {"keystats", true}, {"files", true}}},
+    };
+    Policy pr = Policy::from_json(practice_full);
+    CHECK(pr.mode == Mode::practice);
+    CHECK(pr.collect.window);
+    CHECK(pr.collect.clipboard);
+    CHECK(pr.collect.keys);
+    CHECK_FALSE(pr.collect.files);
+    CHECK(pr.title_capture == TitleCapture::app_only);
+    CHECK(pr.filter_title("firefox", "Claude Shannon - Wikipedia") == "firefox");
+
+    // Practice with title_capture=off stays off.
+    json practice_off = {{"mode", "practice"}, {"title_capture", "off"}};
+    Policy pr_off = Policy::from_json(practice_off);
+    CHECK(pr_off.title_capture == TitleCapture::off);
+    CHECK(pr_off.filter_title("firefox", "Title").empty());
+}
+
 TEST_CASE("event queue persists, acks and keeps sequence monotonic") {
     auto dir = fs::temp_directory_path() / ("xgq-" + random_hex(4));
     auto db = (dir / "q.db").string();
@@ -149,6 +192,12 @@ TEST_CASE("protocol batch and command validation") {
     REQUIRE(ack);
     CHECK(ack->ack_seq == 3);
     CHECK(ack->isolated);
+    CHECK(ack->isolation_lease_s == 600);
+
+    auto ack_lease = protocol::parse_batch_ack(
+        R"({"ack_seq":4,"server_time_ms":6000,"policy_version":9,"isolated":true,"isolation_lease_s":180})");
+    REQUIRE(ack_lease);
+    CHECK(ack_lease->isolation_lease_s == 180);
     CHECK_FALSE(protocol::parse_batch_ack("not json"));
     CHECK(protocol::clock_offset(1000, 1100, 2050) == 1000);
 
@@ -217,4 +266,32 @@ TEST_CASE("config round trip") {
     CHECK(d.ccc_host == "192.168.10.2");
     CHECK(d.enrolled());
     fs::remove(path);
+}
+
+TEST_CASE("route parsing and hosts blocklist helpers") {
+    const std::string win_out =
+        "IPv4 Route Table\r\n"
+        "===========================================================================\r\n"
+        "Active Routes:\r\n"
+        "Network Destination        Netmask          Gateway       Interface  Metric\r\n"
+        "          0.0.0.0          0.0.0.0    172.16.40.254    172.16.40.19     25\r\n"
+        "        127.0.0.0        255.0.0.0         On-link         127.0.0.1    331\r\n";
+    auto wr = parse_windows_default_routes(win_out);
+    REQUIRE(wr.size() == 1);
+    CHECK(wr[0].gateway == "172.16.40.254");
+    CHECK(wr[0].interface_ip == "172.16.40.19");
+    CHECK(wr[0].metric == "25");
+
+    const std::string lnx_out =
+        "default via 10.20.30.254 dev enp3s0 proto dhcp src 10.20.30.15 metric 100\n";
+    auto lr = parse_linux_default_routes(lnx_out);
+    REQUIRE(lr.size() == 1);
+    CHECK(lr[0] == "default via 10.20.30.254 dev enp3s0 proto dhcp src 10.20.30.15 metric 100");
+
+    const std::string base_hosts = "127.0.0.1 localhost\n";
+    const std::string with_block = update_hosts_blocklist_content(base_hosts, {"chatgpt.com"}, "\n");
+    CHECK(with_block.find("0.0.0.0 chatgpt.com") != std::string::npos);
+    CHECK(with_block.find("0.0.0.0 www.chatgpt.com") != std::string::npos);
+    const std::string restored = update_hosts_blocklist_content(with_block, {}, "\n");
+    CHECK(restored == base_hosts);
 }
