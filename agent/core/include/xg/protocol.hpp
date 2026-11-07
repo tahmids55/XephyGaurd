@@ -25,7 +25,6 @@ struct BatchAck {
     int64_t policy_version = 0;
     std::string signatures_version;
     bool isolated = false;
-    int isolation_lease_s = 600;
 };
 
 /// Builds the body of POST /events. Stops adding events once kMaxBatchBytes would be exceeded

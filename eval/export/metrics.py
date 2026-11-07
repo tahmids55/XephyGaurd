@@ -14,62 +14,13 @@ import argparse
 import json
 import pathlib
 import sys
-from typing import Any
 
-try:
-    import pandas as pd
-except ImportError:  # pragma: no cover - allows stdlib-only governance helpers
-    pd = None  # type: ignore[assignment]
+import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "analysis"))
-try:
-    from xg_analysis.db import Db, jload  # noqa: E402
-except ImportError:  # pragma: no cover
-    Db = Any  # type: ignore[assignment,misc]
-
-    def jload(v: Any) -> dict:
-        return json.loads(v) if isinstance(v, str) and v else (v if isinstance(v, dict) else {})
+from xg_analysis.db import Db, jload  # noqa: E402
 
 TARGETS = {"cpu_pct": 1.0, "rss_mb": 30.0, "uplink_mb_per_hour": 5.0}
-
-
-def summarize_pilot_governance(appeals: list[dict[str, Any]], fairness_report: dict[str, Any]) -> dict[str, Any]:
-    """Summarize pilot appeals overturn metrics and fairness gate status (pure stdlib)."""
-    total = len(appeals)
-    decided = 0
-    overturned = 0
-    upheld = 0
-    noted = 0
-    open_count = 0
-
-    for a in appeals:
-        st = str(a.get("status") or "open").strip().lower()
-        if st == "overturned":
-            decided += 1
-            overturned += 1
-        elif st == "upheld":
-            decided += 1
-            upheld += 1
-        elif st == "noted":
-            decided += 1
-            noted += 1
-        else:
-            open_count += 1
-
-    overturn_rate = round(overturned / decided, 4) if decided > 0 else 0.0
-    return {
-        "appeals_total": total,
-        "appeals_open": open_count,
-        "appeals_decided": decided,
-        "appeals_overturned": overturned,
-        "appeals_upheld": upheld,
-        "appeals_noted": noted,
-        "overturn_rate": overturn_rate,
-        "passes_fairness_gate": bool(fairness_report.get("passes_fairness_gate", False)),
-        "max_fpr_gap": float(fairness_report.get("max_fpr_gap", 0.0)),
-        "disparate_impact_ratio": float(fairness_report.get("disparate_impact_ratio", 1.0)),
-        "low_precision_rules": list(fairness_report.get("low_precision_rules", [])),
-    }
 
 
 def detection(db: Db, labels: pd.DataFrame, threshold: int) -> dict:

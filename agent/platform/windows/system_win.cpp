@@ -203,10 +203,7 @@ class HelperLauncher final : public IHelperLauncher {
 public:
     explicit HelperLauncher(std::string path) : path_(std::move(path)) {}
     ~HelperLauncher() override {
-        for (auto& [sid, h] : procs_) {
-            TerminateProcess(h, 0);
-            CloseHandle(h);
-        }
+        for (auto& [sid, h] : procs_) CloseHandle(h);
     }
     // Launches xephyguard-helper.exe into each interactive session with the user's own token
     // (WTSQueryUserToken + CreateProcessAsUser). No Run key or Startup shortcut exists to delete.

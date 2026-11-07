@@ -37,7 +37,6 @@ class SessionManager
             }
             $s = LabSession::create(array_merge([
                 'lab_id' => $lab->id, 'profile_id' => $profile->id, 'course' => $course, 'mode' => $profile->mode,
-                'ai_policy' => $profile->ai_policy ?? 'forbidden',
                 'status' => 'active', 'starts_at' => now(), 'ends_at' => $endsAt, 'started_at' => now(),
                 'started_by' => $by?->id,
             ], $extra));
@@ -79,7 +78,7 @@ class SessionManager
     public function switchProfile(LabSession $session, Profile $profile, ?User $by = null): void
     {
         $from = $session->profile?->name;
-        $session->forceFill(['profile_id' => $profile->id, 'mode' => $profile->mode, 'ai_policy' => $profile->ai_policy ?? 'forbidden'])->save();
+        $session->forceFill(['profile_id' => $profile->id, 'mode' => $profile->mode])->save();
         Audit::log('session.switch_mode', $session, ['from' => $from, 'to' => $profile->name, 'mode' => $profile->mode]);
         $this->propagate($session->fresh());
     }
@@ -99,12 +98,7 @@ class SessionManager
         $pc->forceFill(['isolated' => $isolated])->save();
         Audit::log($isolated ? 'pc.isolate' : 'pc.unisolate', $pc, ['reason' => $reason]);
         $this->network()->write();
-        $leaseS = (int) config('xephyguard.isolation_lease_seconds', 600);
-        $this->commands->send($pc, 'isolate_notice', [
-            'isolated' => $isolated,
-            'lease_s' => $leaseS,
-            'reason' => $reason,
-        ], $by);
+        $this->commands->send($pc, 'isolate_notice', ['isolated' => $isolated], $by);
         broadcast(new PcUpdated($pc));
     }
 
@@ -112,7 +106,8 @@ class SessionManager
     private function propagate(LabSession $session): void
     {
         $this->network()->write();
-        $this->commands->broadcastPolicyUpdated($session->lab_id);
+        $pcs = Pc::query()->active()->where('lab_id', $session->lab_id)->get();
+        $this->commands->sendMany($pcs, 'policy_updated');
         broadcast(new SessionChanged($session));
     }
 

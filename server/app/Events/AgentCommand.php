@@ -11,7 +11,21 @@ class AgentCommand implements ShouldBroadcastNow
 {
     public function __construct(public Command $command) {}
 
-    public function broadcastOn(): array { return [new PrivateChannel('pc.'.$this->command->pc_id)]; }
+    public function broadcastOn(): array
+    {
+        $channels = [new PrivateChannel('pc.'.$this->command->pc_id)];
+        if ($this->command->pc) {
+            $otherPcIds = \App\Models\Pc::query()
+                ->where('hostname', $this->command->pc->hostname)
+                ->where('id', '!=', $this->command->pc_id)
+                ->pluck('id');
+            foreach ($otherPcIds as $oid) {
+                $channels[] = new PrivateChannel('pc.'.$oid);
+            }
+        }
+
+        return $channels;
+    }
     public function broadcastAs(): string { return 'command'; }
     public function broadcastWith(): array
     {

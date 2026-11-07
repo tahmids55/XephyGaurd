@@ -1,6 +1,5 @@
 #include "xg/protocol.hpp"
 
-#include <algorithm>
 #include <regex>
 
 namespace xg::protocol {
@@ -38,9 +37,6 @@ std::optional<BatchAck> parse_batch_ack(const std::string& body, std::string* er
     a.policy_version = j.value("policy_version", int64_t(0));
     a.signatures_version = j.value("signatures_version", std::string{});
     a.isolated = j.value("isolated", false);
-    if (j.contains("isolation_lease_s") && j["isolation_lease_s"].is_number_integer()) {
-        a.isolation_lease_s = std::clamp(j["isolation_lease_s"].get<int>(), 1, 86400);
-    }
     return a;
 }
 

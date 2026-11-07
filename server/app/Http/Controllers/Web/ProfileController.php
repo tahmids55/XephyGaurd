@@ -25,8 +25,6 @@ class ProfileController extends Controller
         $d = $request->validate([
             'name' => 'required|string|max:64|unique:profiles,name'.($profile?->exists ? ','.$profile->id : ''),
             'mode' => 'required|in:'.implode(',', Profile::MODES),
-            'ai_policy' => 'nullable|in:'.implode(',', Profile::AI_POLICIES),
-            'target_agent_version' => 'nullable|string|max:32',
             'description' => 'nullable|string|max:500',
             'block_categories' => 'nullable|array', 'block_categories.*' => 'in:'.implode(',', Profile::CATEGORIES),
             'strict_egress' => 'nullable|boolean', 'google_udm14' => 'nullable|boolean',
@@ -43,10 +41,7 @@ class ProfileController extends Controller
             $ruleActions[$rid] = ['log', 'warn', 'kill', 'alert'];
         }
         $data = [
-            'name' => $d['name'], 'mode' => $d['mode'],
-            'ai_policy' => $d['ai_policy'] ?? ($d['mode'] === 'always_on' ? 'open' : (empty($d['block_categories']) ? 'permitted_with_disclosure' : 'forbidden')),
-            'target_agent_version' => $d['target_agent_version'] ?? null,
-            'description' => $d['description'] ?? null,
+            'name' => $d['name'], 'mode' => $d['mode'], 'description' => $d['description'] ?? null,
             'network' => ['block_categories' => array_values($d['block_categories'] ?? []),
                 'strict_egress' => (bool) ($d['strict_egress'] ?? false), 'google_udm14' => (bool) ($d['google_udm14'] ?? true)],
             'agent' => array_filter(['title_capture' => $d['title_capture'], 'collect' => $collect,

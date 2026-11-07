@@ -106,9 +106,8 @@ private:
 // ------------------------------------------------------------------------------ window monitor
 std::function<void(const WindowInfo&)> g_window_cb;
 
-void CALLBACK win_event(HWINEVENTHOOK, DWORD event, HWND hwnd, LONG id_object, LONG id_child, DWORD, DWORD) {
-    if (id_object != OBJID_WINDOW || id_child != CHILDID_SELF || !hwnd || !g_window_cb) return;
-    if (event == EVENT_OBJECT_NAMECHANGE && hwnd != GetForegroundWindow()) return;
+void CALLBACK win_event(HWINEVENTHOOK, DWORD, HWND hwnd, LONG id_object, LONG, DWORD, DWORD) {
+    if (id_object != OBJID_WINDOW || !hwnd || !g_window_cb) return;
     wchar_t title[512];
     int n = GetWindowTextW(hwnd, title, 512);
     DWORD pid = 0;
@@ -130,18 +129,13 @@ private:
     void on_thread_start() override {
         hook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, win_event, 0, 0,
                                 WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
-        name_hook_ = SetWinEventHook(EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_NAMECHANGE, nullptr, win_event, 0, 0,
-                                     WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
-        if (HWND fg = GetForegroundWindow()) win_event(nullptr, EVENT_SYSTEM_FOREGROUND, fg, OBJID_WINDOW, CHILDID_SELF, 0, 0);
+        if (HWND fg = GetForegroundWindow()) win_event(nullptr, 0, fg, OBJID_WINDOW, 0, 0, 0);
     }
     void on_thread_stop() override {
         if (hook_) UnhookWinEvent(hook_);
-        if (name_hook_) UnhookWinEvent(name_hook_);
         hook_ = nullptr;
-        name_hook_ = nullptr;
     }
     HWINEVENTHOOK hook_ = nullptr;
-    HWINEVENTHOOK name_hook_ = nullptr;
 };
 
 // --------------------------------------------------------------------------- clipboard monitor
@@ -235,11 +229,21 @@ public:
         Shell_NotifyIconW(NIM_MODIFY, &nid_);
     }
     void notify(const std::string& title, const std::string& body, bool urgent) override {
-        nid_.uFlags = NIF_INFO;
+        nid_.uFlags = NIF_INFO | NIF_ICON | NIF_TIP;
         wcsncpy_s(nid_.szInfoTitle, to_wide(title).c_str(), _TRUNCATE);
         wcsncpy_s(nid_.szInfo, to_wide(body).c_str(), _TRUNCATE);
-        nid_.dwInfoFlags = urgent ? NIIF_WARNING : NIIF_INFO;
+        nid_.dwInfoFlags = urgent ? (NIIF_WARNING | NIIF_LARGE_ICON) : (NIIF_INFO | NIIF_LARGE_ICON);
         Shell_NotifyIconW(NIM_MODIFY, &nid_);
+
+        // Also display an unmistakable modal message dialog directly in the student's desktop session
+        // in a detached thread so it does not block the helper message pump.
+        const auto wtitle = to_wide(title.empty() ? "Message from your instructor" : title);
+        const auto wbody = to_wide(body);
+        std::thread([wtitle, wbody, urgent]() {
+            UINT flags = MB_OK | MB_TOPMOST | MB_SETFOREGROUND;
+            flags |= urgent ? (MB_ICONWARNING | MB_SYSTEMMODAL) : MB_ICONINFORMATION;
+            MessageBoxW(nullptr, wbody.c_str(), wtitle.c_str(), flags);
+        }).detach();
     }
     void pump(int ms) override {
         MsgWaitForMultipleObjects(0, nullptr, FALSE, DWORD(ms), QS_ALLINPUT);

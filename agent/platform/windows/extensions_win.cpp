@@ -38,15 +38,6 @@ public:
                 out.push_back({ide, id, ver, user, dir.string()});
             }
         };
-        auto vsc_global = [&](const fs::path& dir, const char* ide, const std::string& user) {
-            for (const auto& d : ls(dir)) {
-                if (d.starts_with(".") || d.starts_with("state.vscdb") || d == "storage.json") continue;
-                const auto lower = to_lower(d);
-                if (lower.find('.') != std::string::npos) {
-                    out.push_back({ide, lower, "global", user, dir.string()});
-                }
-            }
-        };
         vsc("C:\\ProgramData\\XephyGuard\\vscode-extensions", "vscode", "(shared)");
         for (const auto& user : ls(users)) {
             if (user == "Public" || user == "Default" || user == "Default User" || user == "All Users") continue;
@@ -58,22 +49,6 @@ public:
             vsc(home / ".windsurf" / "extensions", "windsurf", user);
             const fs::path roaming = home / "AppData" / "Roaming";
             const fs::path local = home / "AppData" / "Local";
-            vsc_global(roaming / "Code" / "User" / "globalStorage", "vscode", user);
-            vsc_global(roaming / "Code - Insiders" / "User" / "globalStorage", "vscode-insiders", user);
-            vsc_global(roaming / "Cursor" / "User" / "globalStorage", "cursor", user);
-            vsc_global(roaming / "Windsurf" / "User" / "globalStorage", "windsurf", user);
-            const fs::path vsc_prog = local / "Programs" / "Microsoft VS Code";
-            std::error_code ec;
-            if (fs::is_directory(vsc_prog / "resources" / "app" / "extensions" / "copilot", ec)) {
-                out.push_back({"vscode", "github.copilot-chat", "builtin", user, vsc_prog.string()});
-            } else {
-                for (const auto& sub : ls(vsc_prog)) {
-                    if (fs::is_directory(vsc_prog / sub / "resources" / "app" / "extensions" / "copilot", ec)) {
-                        out.push_back({"vscode", "github.copilot-chat", "builtin", user, (vsc_prog / sub).string()});
-                        break;
-                    }
-                }
-            }
             for (const auto& prod : ls(roaming / "JetBrains"))
                 for (const auto& plugin : ls(roaming / "JetBrains" / prod / "plugins"))
                     out.push_back({"jetbrains", to_lower(plugin), prod, user, (roaming / "JetBrains" / prod).string()});

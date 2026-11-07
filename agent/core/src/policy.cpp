@@ -112,9 +112,7 @@ Policy Policy::from_json(const json& j, std::string* err) {
             auto b = [&](const char* k, bool& dst) { if (c.contains(k) && c[k].is_boolean()) dst = c[k].get<bool>(); };
             b("processes", p.collect.processes); b("ports", p.collect.ports); b("extensions", p.collect.extensions);
             b("network", p.collect.network); b("devices", p.collect.devices); b("artifacts", p.collect.artifacts);
-            b("window", p.collect.window);
-            b("paste", p.collect.clipboard); b("clipboard", p.collect.clipboard);
-            b("keystats", p.collect.keys); b("keys", p.collect.keys);
+            b("window", p.collect.window); b("clipboard", p.collect.clipboard); b("keys", p.collect.keys);
             b("files", p.collect.files); b("gpu", p.collect.gpu);
         }
         if (j.contains("intervals") && j["intervals"].is_object()) {
@@ -150,67 +148,12 @@ Policy Policy::from_json(const json& j, std::string* err) {
         for (const auto& r : j.value("disabled_rules", json::array())) p.disabled_rules.insert(r.get<std::string>());
         for (const auto& d : j.value("work_dirs", json::array())) p.work_dirs.push_back(d.get<std::string>());
         for (const auto& k : j.value("kill_exempt", json::array())) p.kill_exempt.insert(normalize_exe(k.get<std::string>()));
-        for (const auto& bd : j.value("blocked_domains", json::array()))
-            if (bd.is_string()) p.blocked_domains.push_back(to_lower(trim(bd.get<std::string>())));
         p.signatures_version = j.value("signatures_version", std::string{});
         if (j.contains("notice_text") && j["notice_text"].is_string()) p.notice_text = j["notice_text"].get<std::string>();
-        if (j.contains("ai_policy") && j["ai_policy"].is_string()) {
-            const auto ap = to_lower(trim(j["ai_policy"].get<std::string>()));
-            if (ap == "forbidden" || ap == "permitted_with_disclosure" || ap == "open") {
-                p.ai_policy = ap;
-            }
-        }
-        if (j.contains("target_agent_version") && j["target_agent_version"].is_string()) {
-            p.target_agent_version = trim(j["target_agent_version"].get<std::string>());
-        }
     } catch (const std::exception& e) {
         if (err) *err = e.what();
     }
-    p.clamp_for_mode();
     return p;
-}
-
-namespace {
-bool is_ai_rule_id(const std::string& rule_id) {
-    return rule_id.starts_with("proc.") || rule_id.starts_with("ext.") || rule_id.starts_with("ide.") ||
-           rule_id.starts_with("port.") || rule_id.starts_with("file.");
-}
-
-std::vector<Action> strip_punitive_actions(std::vector<Action> actions) {
-    actions.erase(std::remove_if(actions.begin(), actions.end(),
-                                 [](Action a) { return a == Action::kill || a == Action::warn; }),
-                  actions.end());
-    if (actions.empty()) actions.push_back(Action::log);
-    return actions;
-}
-}  // namespace
-
-void Policy::clamp_for_mode() {
-    switch (mode) {
-        case Mode::always_on:
-            collect.window = false;
-            collect.clipboard = false;
-            collect.keys = false;
-            collect.files = false;
-            title_capture = TitleCapture::off;
-            break;
-        case Mode::practice:
-            collect.files = false;
-            if (title_capture == TitleCapture::full) title_capture = TitleCapture::app_only;
-            break;
-        case Mode::test:
-            break;
-    }
-    if (ai_policy == "permitted_with_disclosure" || ai_policy == "open") {
-        for (auto& [sev, list] : default_actions) {
-            list = strip_punitive_actions(std::move(list));
-        }
-        for (auto& [rid, list] : rule_actions) {
-            if (is_ai_rule_id(rid)) {
-                list = strip_punitive_actions(std::move(list));
-            }
-        }
-    }
 }
 
 json Policy::to_json() const {
@@ -245,30 +188,20 @@ json Policy::to_json() const {
         {"disabled_rules", disabled_rules},
         {"work_dirs", work_dirs},
         {"kill_exempt", kill_exempt},
-        {"blocked_domains", blocked_domains},
         {"signatures_version", signatures_version},
         {"notice_text", notice_text},
-        {"ai_policy", ai_policy},
-        {"target_agent_version", target_agent_version},
     };
 }
 
 std::vector<Action> Policy::actions_for(const std::string& rule_id, Severity sev) const {
     if (!rule_enabled(rule_id)) return {};
-    std::vector<Action> out = {Action::log};
-    if (auto it = rule_actions.find(rule_id); it != rule_actions.end()) out = it->second;
-    else if (auto it = default_actions.find(sev); it != default_actions.end()) out = it->second;
-    if ((ai_policy == "permitted_with_disclosure" || ai_policy == "open") && is_ai_rule_id(rule_id)) {
-        out = strip_punitive_actions(std::move(out));
-    }
-    return out;
+    if (auto it = rule_actions.find(rule_id); it != rule_actions.end()) return it->second;
+    if (auto it = default_actions.find(sev); it != default_actions.end()) return it->second;
+    return {Action::log};
 }
 
 std::string Policy::filter_title(const std::string& app, const std::string& title) const {
-    if (mode == Mode::always_on) return {};
-    TitleCapture tc = title_capture;
-    if (mode == Mode::practice && tc == TitleCapture::full) tc = TitleCapture::app_only;
-    switch (tc) {
+    switch (title_capture) {
         case TitleCapture::off: return {};
         case TitleCapture::app_only: return app;
         case TitleCapture::full: return title.size() > 256 ? title.substr(0, 256) : title;

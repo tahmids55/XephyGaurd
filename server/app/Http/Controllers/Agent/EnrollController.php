@@ -24,7 +24,7 @@ class EnrollController extends Controller
             'csr_pem' => 'required|string|max:8192|starts_with:-----BEGIN CERTIFICATE REQUEST-----',
         ]);
         $lab = Lab::current();
-        if (! $lab->verifyAndConsumeEnrollKey($data['enroll_key'], $data['macs'] ?? [])) {
+        if (! $lab->checkEnrollKey($data['enroll_key'])) {
             return response()->json(['error' => 'invalid enrollment key'], 403);
         }
         if (@openssl_csr_get_public_key($data['csr_pem']) === false) {

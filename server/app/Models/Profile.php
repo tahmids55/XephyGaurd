@@ -10,10 +10,9 @@ use Illuminate\Database\Eloquent\Model;
  */
 class Profile extends Model
 {
-    protected $fillable = ['name', 'mode', 'ai_policy', 'target_agent_version', 'description', 'network', 'agent', 'builtin'];
+    protected $fillable = ['name', 'mode', 'description', 'network', 'agent', 'builtin'];
     protected $casts = ['network' => 'array', 'agent' => 'array', 'builtin' => 'boolean'];
 
     public const MODES = ['always_on', 'practice', 'test'];
-    public const AI_POLICIES = ['forbidden', 'permitted_with_disclosure', 'open'];
     public const CATEGORIES = ['ai', 'ide', 'marketplace', 'vpn', 'custom'];
 }

@@ -2,33 +2,6 @@
 @section('title', 'Sessions')
 @section('content')
 <div class="grid gap-4 lg:grid-cols-2">
-  @if (isset($preflight))
-    <div class="card lg:col-span-2 space-y-2">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <div class="flex items-center gap-2">
-          <h2 class="font-semibold">Session Pre-Flight Check</h2>
-          <span class="badge {{ $preflight['ready'] ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800' }}">
-            {{ $preflight['ready'] ? 'READY' : 'ATTENTION NEEDED' }}
-          </span>
-        </div>
-        <div class="text-xs text-slate-600">
-          Online: <b>{{ $preflight['pcs_online'] }}/{{ $preflight['pcs_total'] }}</b>
-          · Agents Current: <b>{{ $preflight['agents_current'] }}</b> ({{ $preflight['agents_outdated'] }} outdated)
-          · CA: <b>{{ $preflight['ca_healthy'] ? 'Healthy' : 'Degraded' }}</b>
-          · Signatures: <code class="font-mono">{{ $preflight['active_signature_version'] ?? 'none' }}</code>
-          · Isolated: <b>{{ $preflight['isolated_pcs'] }}</b>
-        </div>
-      </div>
-      <div class="grid gap-2 sm:grid-cols-5 text-xs">
-        @foreach ($preflight['checks'] as $chk)
-          <div class="rounded border p-2 {{ $chk['ok'] ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-amber-200 bg-amber-50 text-amber-900' }}">
-            <div class="font-semibold">{{ $chk['check'] }}</div>
-            <div>{{ $chk['detail'] }}</div>
-          </div>
-        @endforeach
-      </div>
-    </div>
-  @endif
   <div class="card space-y-3">
     <h2 class="font-semibold">Current session</h2>
     @if ($active)

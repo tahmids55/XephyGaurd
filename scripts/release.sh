@@ -37,10 +37,6 @@ tar -C "$ROOT" --exclude='server/vendor' --exclude='server/node_modules' --exclu
     --exclude='server/storage/app/*' --exclude='server/database/*.sqlite' --exclude='ccc-deploy/.env' \
     -czf "$OUT/xephyguard-ccc-$VER.tar.gz" server ccc-deploy proxy analysis data scripts eval docs
 
-echo "==> CycloneDX 1.5 SBOM"
-python3 "$ROOT/scripts/generate-sbom.py" --version "$VER" --output "$OUT/sbom.cdx.json"
-cp "$OUT/sbom.cdx.json" "$ROOT/dist/sbom.cdx.json"
-
 echo "==> Checksums and manifest"
 (cd "$OUT" && sha256sum ./* > SHA256SUMS)
 python3 - "$OUT" "$VER" <<'PY'
@@ -54,7 +50,7 @@ if [ -n "$SIGN" ]; then
   echo "    signed: verify with  openssl dgst -sha256 -verify <(openssl x509 -in ca.crt -pubkey -noout) -signature SHA256SUMS.sig SHA256SUMS"
 fi
 if [ -n "$PUB" ]; then
-  mkdir -p "$PUB" && cp "$OUT"/*.deb "$OUT"/*.exe "$OUT"/sbom.cdx.json "$OUT"/SHA256SUMS* "$PUB"/ 2>/dev/null || true
-  echo "    published installers and SBOM to $PUB (served at http://<ccc>/downloads/)"
+  mkdir -p "$PUB" && cp "$OUT"/*.deb "$OUT"/*.exe "$OUT"/SHA256SUMS* "$PUB"/ 2>/dev/null || true
+  echo "    published installers to $PUB (served at http://<ccc>/downloads/)"
 fi
 ls -la "$OUT"

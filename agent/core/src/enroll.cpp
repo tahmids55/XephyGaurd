@@ -20,14 +20,7 @@ int enroll(Config& cfg, const std::string& config_path, const EnrollOptions& o, 
     }
     // 1. Locate the CCC.
     std::string fp = to_lower(o.ca_fingerprint);
-    if (!o.ccc_host.empty()) {
-        std::string h = trim(o.ccc_host);
-        if (h.rfind("https://", 0) == 0) h = h.substr(8);
-        else if (h.rfind("http://", 0) == 0) h = h.substr(7);
-        if (auto sl = h.find('/'); sl != std::string::npos) h = h.substr(0, sl);
-        if (auto col = h.find(':'); col != std::string::npos) h = h.substr(0, col);
-        cfg.ccc_host = trim(h);
-    }
+    if (!o.ccc_host.empty()) cfg.ccc_host = o.ccc_host;
     if (cfg.ccc_host.empty()) {
         std::cout << "Looking for the CCC on the lab network (UDP " << cfg.discovery_port << ")...\n";
         auto d = net::discover_ccc(cfg.discovery_port, 6000);

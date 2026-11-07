@@ -2,11 +2,9 @@
 
 use App\Http\Controllers\Web\AdminController;
 use App\Http\Controllers\Web\AlertController;
-use App\Http\Controllers\Web\AppealController;
 use App\Http\Controllers\Web\AuthController;
 use App\Http\Controllers\Web\DashboardController;
 use App\Http\Controllers\Web\EnrollmentController;
-use App\Http\Controllers\Web\HealthController;
 use App\Http\Controllers\Web\ProfileController;
 use App\Http\Controllers\Web\PublicController;
 use App\Http\Controllers\Web\ReportController;
@@ -14,20 +12,14 @@ use App\Http\Controllers\Web\RosterController;
 use App\Http\Controllers\Web\SessionController;
 use App\Http\Controllers\Web\SetupController;
 use App\Http\Controllers\Web\SignatureController;
-use App\Http\Controllers\Web\StudentPortalController;
 use Illuminate\Support\Facades\Route;
 
-// ---- public (no login): student notice, student portal, CA certificate, agent installers, observability -----
+// ---- public (no login): student notice, CA certificate, agent installers -------------------
 Route::get('/notice', [PublicController::class, 'notice'])->name('notice');
-Route::get('/student-portal', [StudentPortalController::class, 'index'])->name('student.portal');
-Route::get('/student-portal/export', [StudentPortalController::class, 'export'])->name('student.portal.export');
-Route::post('/student-portal/appeals', [StudentPortalController::class, 'submitAppeal'])->name('student.portal.appeals');
-Route::post('/integrations/lti/roster', [RosterController::class, 'ltiSync'])->name('lti.roster');
 Route::get('/ca.crt', [PublicController::class, 'caCert'])->name('ca.cert');
 Route::get('/install/linux.sh', [PublicController::class, 'linuxInstaller'])->name('install.linux');
+Route::get('/downloads', [PublicController::class, 'downloadsIndex'])->name('downloads.index');
 Route::get('/downloads/{file}', [PublicController::class, 'download'])->name('downloads');
-Route::get('/healthz', [HealthController::class, 'healthz'])->name('healthz');
-Route::get('/metrics', [HealthController::class, 'metrics'])->name('metrics');
 
 Route::group([], function () {
     Route::get('/setup', [SetupController::class, 'show'])->name('setup.show');
@@ -41,13 +33,11 @@ Route::group([], function () {
         // assistant: live view, enroll PCs, start/stop sessions
         Route::middleware('role:assistant,instructor')->group(function () {
             Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
-            Route::get('/downloads', [PublicController::class, 'downloadsIndex'])->name('downloads.index');
             Route::get('/pcs/{pc}', [DashboardController::class, 'pc'])->name('pcs.show');
             Route::get('/alerts', [AlertController::class, 'index'])->name('alerts.index');
             Route::post('/alerts/{alert}/ack', [AlertController::class, 'acknowledge'])->name('alerts.ack');
 
             Route::get('/sessions', [SessionController::class, 'index'])->name('sessions.index');
-            Route::get('/sessions/preflight', [SessionController::class, 'preflight'])->name('sessions.preflight');
             Route::post('/sessions', [SessionController::class, 'start'])->name('sessions.start');
             Route::post('/sessions/{session}/stop', [SessionController::class, 'stop'])->name('sessions.stop');
             Route::post('/sessions/{session}/profile', [SessionController::class, 'switchProfile'])->name('sessions.switch');
@@ -83,18 +73,10 @@ Route::group([], function () {
             Route::post('/roster/import', [RosterController::class, 'import'])->name('roster.import');
             Route::post('/roster/{student}/consent', [RosterController::class, 'consent'])->name('roster.consent');
             Route::post('/roster/{student}/exempt', [RosterController::class, 'exempt'])->name('roster.exempt');
-
-            Route::get('/appeals', [AppealController::class, 'index'])->name('appeals.index');
-            Route::post('/appeals/{appeal}/decide', [AppealController::class, 'decide'])->name('appeals.decide');
-            Route::get('/sessions/{session}/pcs/{pc}/journal', [ReportController::class, 'journal'])->name('sessions.journal');
-
-            Route::post('/two-person/{twoPersonRequest}/approve', [AdminController::class, 'approveTwoPerson'])->name('two_person.approve');
-            Route::post('/two-person/{twoPersonRequest}/reject', [AdminController::class, 'rejectTwoPerson'])->name('two_person.reject');
         });
 
         // admin: setup, users, policy
         Route::middleware('role:admin')->group(function () {
-            Route::get('/ethics-pack', [AdminController::class, 'ethicsPack'])->name('admin.ethics_pack');
             Route::post('/profiles/{profile?}', [ProfileController::class, 'saveProfile'])->name('profiles.save');
             Route::delete('/profiles/{profile}', [ProfileController::class, 'deleteProfile'])->name('profiles.delete');
 
@@ -109,8 +91,6 @@ Route::group([], function () {
             Route::post('/signatures/{version}/activate', [SignatureController::class, 'activate'])->name('signatures.activate');
 
             Route::post('/enroll/rotate-key', [EnrollmentController::class, 'rotateKey'])->name('enroll.rotate');
-            Route::post('/enroll/keys', [EnrollmentController::class, 'createKey'])->name('enroll.keys.create');
-            Route::post('/enroll/keys/{enrollmentKey}/revoke', [EnrollmentController::class, 'revokeKey'])->name('enroll.keys.revoke');
             Route::post('/enroll/auto-approve', [EnrollmentController::class, 'autoApprove'])->name('enroll.auto');
             Route::post('/pcs/{pc}/retire', [EnrollmentController::class, 'retire'])->name('pcs.retire');
             Route::post('/roster/pseudonymize', [RosterController::class, 'pseudonymize'])->name('roster.pseudonymize');

@@ -3,9 +3,8 @@
 #   doctor        host + application checks with plain-language fixes
 #   status        container status
 #   logs [svc]    follow logs (web, worker, proxy, netpolicy, analysis, ...)
-#   enroll-key    show or manage lab enrollment keys (--create, --list, --revoke, --rotate)
-#   backup [DIR]  verified archive backup (DB + CA + manifest.json)
-#   restore FILE  verify and restore a backup archive (--verify-only for dry-run)
+#   enroll-key    show the lab enrollment key (--rotate to replace it)
+#   backup DIR    database dump + CA + settings into DIR
 #   update        rebuild images, migrate, restart
 #   artisan ...   run a Laravel artisan command
 set -uo pipefail
@@ -35,7 +34,7 @@ doctor() {
   dig +time=2 +tries=1 @127.0.0.1 example.com A +short >/dev/null && ok "DNS resolver answers" || bad "DNS resolver not answering" "sudo xephyguard-ccc logs netpolicy (is something else using port 53?)"
   [ -z "$(dig +short @127.0.0.1 dns.google A)" ] && ok "DoH resolvers are sinkholed" || bad "dns.google still resolves" "check /var/lib/xephyguard/net/unbound-xephyguard.conf"
   (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null && ok "Transparent proxy listening on 8080" || bad "Proxy not listening" "sudo xephyguard-ccc logs proxy"
-  (curl -skf --max-time 3 "https://127.0.0.1/healthz" >/dev/null || curl -sk --max-time 3 "https://127.0.0.1/up" >/dev/null) && ok "Dashboard & /healthz reachable" || bad "Dashboard not reachable on 443" "sudo xephyguard-ccc logs web"
+  curl -sk --max-time 3 "https://127.0.0.1/up" >/dev/null && ok "Dashboard reachable" || bad "Dashboard not reachable on 443" "sudo xephyguard-ccc logs web"
   echo "Application"
   dc exec -T web php artisan xephyguard:doctor || FAIL=1
   exit $FAIL
@@ -47,12 +46,10 @@ case "${1:-}" in
   logs) shift; dc logs -f --tail=200 "$@" ;;
   enroll-key) shift; dc exec -T web php artisan xephyguard:enroll-key "$@" ;;
   backup)
-    out=${2:-/var/lib/xephyguard/backups}; mkdir -p "$out"; ts=$(date +%Y%m%d-%H%M)
-    dc exec -T web php artisan xephyguard:backup || true
+    out=${2:?usage: xephyguard-ccc backup DIR}; mkdir -p "$out"; ts=$(date +%Y%m%d-%H%M)
     dc exec -T mysql mysqldump -uroot -p"$DB_ROOT_PASSWORD" --single-transaction xephyguard | gzip > "$out/xephyguard-db-$ts.sql.gz"
     tar -czf "$out/xephyguard-ca-$ts.tgz" -C /var/lib/xephyguard ca && cp .env "$out/xephyguard-env-$ts" && chmod 0600 "$out"/xephyguard-*
     echo "Backup written to $out (contains the CA private key and secrets: store it safely)" ;;
-  restore) shift; dc exec -T web php artisan xephyguard:restore "$@" ;;
   update) dc build && dc run --rm -T web artisan migrate --force && dc up -d ;;
   artisan) shift; dc exec web php artisan "$@" ;;
   *) sed -n '2,10p' "$0" ;;

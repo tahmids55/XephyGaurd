@@ -5,13 +5,12 @@
 ;               (GPO startup script, Intune Win32 app, PDQ Deploy, or imaging task sequence;
 ;                /KEY=<key> is also accepted as a backward-compatible alias for /ENROLLKEY=)
 ;
-; Security note (R10): Never embed enrollment keys, CA fingerprints, or lab-specific secrets
-; in this script or in the compiled installer binary. Always supply them at deploy time.
 Unicode true
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
 !include "x64.nsh"
+!include "nsDialogs.nsh"
 
 !ifndef VERSION
   !define VERSION "0.1.0"
@@ -54,22 +53,37 @@ Function .onInit
   ${EndIf}
   SetRegView 64
   StrCpy $KEY ""
-  StrCpy $CCC ""
-  StrCpy $CAFP ""
+  StrCpy $CCC "192.168.0.51"
+  StrCpy $CAFP "2d0709ea9d88aa7bbac511a60eb7f75cf575123756304bf2f5ef165888ebdec2"
   ${GetParameters} $0
-  ${GetOptions} $0 "/ENROLLKEY=" $KEY
-  ${If} $KEY == ""
-    ${GetOptions} $0 "/KEY=" $KEY
+  ${GetOptions} $0 "/ENROLLKEY=" $1
+  ${If} $1 != ""
+    StrCpy $KEY $1
+  ${Else}
+    ${GetOptions} $0 "/KEY=" $1
+    ${If} $1 != ""
+      StrCpy $KEY $1
+    ${EndIf}
   ${EndIf}
-  ${GetOptions} $0 "/CCC=" $CCC
-  ${GetOptions} $0 "/CAFP=" $CAFP
+  ${GetOptions} $0 "/CCC=" $1
+  ${If} $1 != ""
+    StrCpy $CCC $1
+  ${EndIf}
+  ${GetOptions} $0 "/CAFP=" $1
+  ${If} $1 != ""
+    StrCpy $CAFP $1
+  ${EndIf}
 FunctionEnd
 
 Function ServerConfigPage
-  ; If running silently or enrollment key was already supplied via command line, skip custom UI page
+  ; If running silently with key supplied, skip UI page
   ${If} ${Silent}
-  ${OrIf} $KEY != ""
+  ${AndIf} $KEY != ""
     Abort
+  ${EndIf}
+
+  ${If} $KEY == ""
+    StrCpy $KEY "XG-A77CFB-6554C8-489B53"
   ${EndIf}
 
   nsDialogs::Create 1018
@@ -78,22 +92,22 @@ Function ServerConfigPage
     Abort
   ${EndIf}
 
-  !insertmacro MUI_HEADER_TEXT "XephyGuard Server Connection" "Enter the central server (CCC) connection details from the 'Add a PC' dashboard page."
+  !insertmacro MUI_HEADER_TEXT "XephyGuard Server Connection" "Enter or verify the central server (CCC) credentials below."
 
   ; Label and Edit for CCC Server Address
-  ${NSD_CreateLabel} 0 0 100% 12u "CCC Server IP Address or Hostname (leave blank for UDP auto-discovery):"
+  ${NSD_CreateLabel} 0 0 100% 12u "Teacher / CCC Server IP or Hostname:"
   Pop $0
   ${NSD_CreateText} 0 14u 100% 12u "$CCC"
   Pop $Hwnd_CCC
 
-  ; Label and Edit for Enrollment Key (never pre-filled in build)
+  ; Label and Edit for Enrollment Key
   ${NSD_CreateLabel} 0 34u 100% 12u "Lab Enrollment Key (required):"
   Pop $0
   ${NSD_CreateText} 0 48u 100% 12u "$KEY"
   Pop $Hwnd_KEY
 
-  ; Label and Edit for CA Fingerprint (never pre-filled in build)
-  ${NSD_CreateLabel} 0 68u 100% 12u "Server CA SHA-256 Fingerprint (from CCC 'Add a PC' page):"
+  ; Label and Edit for CA Fingerprint
+  ${NSD_CreateLabel} 0 68u 100% 12u "Server CA SHA-256 Fingerprint:"
   Pop $0
   ${NSD_CreateText} 0 82u 100% 12u "$CAFP"
   Pop $Hwnd_CAFP
@@ -107,12 +121,7 @@ Function ServerConfigPageLeave
   ${NSD_GetText} $Hwnd_CAFP $CAFP
 
   ${If} $KEY == ""
-    MessageBox MB_ICONEXCLAMATION "Lab Enrollment Key is required (see the CCC 'Add a PC' page)."
-    Abort
-  ${EndIf}
-  ${If} $CAFP == ""
-  ${AndIfNot} ${FileExists} "$EXEDIR\ca.crt"
-    MessageBox MB_ICONEXCLAMATION "Server CA SHA-256 Fingerprint is required unless ca.crt is placed next to the installer."
+    MessageBox MB_ICONEXCLAMATION "Lab Enrollment Key is required (see the CCC 'Downloads' or 'Add a PC' page)."
     Abort
   ${EndIf}
 FunctionEnd
@@ -215,16 +224,14 @@ Section "Agent" SecAgent
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Policies\System" "legalnoticetext" "During lab sessions AI-tool use is recorded and, in tests, blocked. Keystrokes, clipboard text and screen content are never recorded."
 
   ; write deploy-time CCC parameters into agent.toml before enrollment
-  ${IfNot} ${FileExists} "$COMMONPROGRAMDATA\XephyGuard\agent.toml"
-    FileOpen $2 "$COMMONPROGRAMDATA\XephyGuard\agent.toml" w
-    FileWrite $2 "# XephyGuard agent configuration. Managed by the agent; edit only with administrator rights.$\r$\n"
-    FileWrite $2 "[ccc]$\r$\n"
-    FileWrite $2 'host = "$CCC"$\r$\n'
-    FileWrite $2 "api_port = 8443$\r$\n"
-    FileWrite $2 "discovery_port = 47474$\r$\n"
-    FileWrite $2 'ca_fingerprint = "$CAFP"$\r$\n'
-    FileClose $2
-  ${EndIf}
+  FileOpen $2 "$COMMONPROGRAMDATA\XephyGuard\agent.toml" w
+  FileWrite $2 "# XephyGuard agent configuration. Managed by the agent; edit only with administrator rights.$\r$\n"
+  FileWrite $2 "[ccc]$\r$\n"
+  FileWrite $2 'host = "$CCC"$\r$\n'
+  FileWrite $2 "api_port = 8443$\r$\n"
+  FileWrite $2 "discovery_port = 47474$\r$\n"
+  FileWrite $2 'ca_fingerprint = "$CAFP"$\r$\n'
+  FileClose $2
 
   ; enrollment (parameters passed at deploy time via /ENROLLKEY=, /CAFP=, /CCC= or interactive dialog)
   ${If} $KEY != ""

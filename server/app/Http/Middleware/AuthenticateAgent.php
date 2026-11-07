@@ -30,6 +30,7 @@ class AuthenticateAgent
             $pem = urldecode((string) $request->header('X-SSL-Client-Cert'));
             $fp = $pem ? @openssl_x509_fingerprint($pem, 'sha256') : false;
             if ($verify !== 'SUCCESS' || ! $fp || ! hash_equals((string) $agent->cert_fingerprint, $fp)) {
+                \Illuminate\Support\Facades\Log::warning("AuthAgent mTLS failed: verify={$verify}, fp={$fp}, agent_fp={$agent->cert_fingerprint}");
                 return response()->json(['error' => 'client certificate missing or does not match this agent'], 403);
             }
         }

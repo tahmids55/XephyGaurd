@@ -22,53 +22,6 @@
         <p class="text-xs text-slate-500">No installers uploaded yet. Copy the release artifacts into <code>storage/app/public/downloads/</code> (scripts/release.sh does this).</p>@endforelse
       <a class="ml-1 text-indigo-600 underline" href="{{ route('ca.cert') }}">xephyguard-ca.crt</a></div>
     <p class="text-sm text-slate-600">New PCs find this CCC automatically and appear below as <b>Pending</b>. Click <b>Approve</b> — nothing else to configure.</p>
-    @if (isset($issuedKey) && $issuedKey)
-      <div class="rounded border border-emerald-300 bg-emerald-50 p-3 text-xs text-emerald-900">
-        <div class="font-semibold">New short-lived enrollment key (copy now — shown once):</div>
-        <code class="mt-1 block font-mono text-base font-bold">{{ $issuedKey }}</code>
-      </div>
-    @endif
-    @if (auth()->user()->hasRole('admin'))
-      <div class="border-t border-slate-200 pt-3 space-y-2">
-        <div class="label">Short-lived revocable enrollment keys</div>
-        <form method="post" action="{{ route('enroll.keys.create') }}" class="grid grid-cols-1 gap-2 sm:grid-cols-4">@csrf
-          <input name="label" class="input sm:col-span-2" placeholder="Label (e.g. Lab 2 Row B)" required>
-          <input name="ttl_hours" type="number" min="1" max="8760" value="24" class="input" placeholder="TTL (hours)">
-          <input name="max_uses" type="number" min="1" max="10000" class="input" placeholder="Max uses (opt)">
-          <input name="allowed_macs" class="input sm:col-span-3 font-mono text-xs" placeholder="Optional allowed MACs (comma-separated)">
-          <button class="btn btn-primary btn-sm">Issue key</button>
-        </form>
-        @if (isset($enrollmentKeys) && $enrollmentKeys->isNotEmpty())
-          <table class="tbl text-xs">
-            <tr><th>Prefix</th><th>Label</th><th>Uses</th><th>Expires</th><th>Status</th><th></th></tr>
-            @foreach ($enrollmentKeys as $ek)
-              <tr>
-                <td class="font-mono">{{ $ek->key_prefix }}…</td>
-                <td>{{ $ek->label }}</td>
-                <td>{{ $ek->uses_count }}{{ $ek->max_uses ? '/'.$ek->max_uses : '' }}</td>
-                <td>{{ $ek->expires_at?->diffForHumans() ?? 'never' }}</td>
-                <td>
-                  @if ($ek->revoked_at)
-                    <span class="badge bg-red-100 text-red-700">revoked</span>
-                  @elseif ($ek->expires_at && $ek->expires_at->isPast())
-                    <span class="badge bg-slate-200 text-slate-600">expired</span>
-                  @elseif ($ek->max_uses && $ek->uses_count >= $ek->max_uses)
-                    <span class="badge bg-amber-100 text-amber-800">exhausted</span>
-                  @else
-                    <span class="badge bg-emerald-100 text-emerald-800">active</span>
-                  @endif
-                </td>
-                <td>
-                  @if (! $ek->revoked_at)
-                    <form method="post" action="{{ route('enroll.keys.revoke', $ek) }}">@csrf<button class="text-xs text-red-600">revoke</button></form>
-                  @endif
-                </td>
-              </tr>
-            @endforeach
-          </table>
-        @endif
-      </div>
-    @endif
   </div>
   <div class="card">
     <div class="mb-2 flex items-center justify-between"><h2 class="text-lg font-semibold">Pending approval ({{ $pending->count() }})</h2>

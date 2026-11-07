@@ -6,13 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\Pc;
 use App\Models\Setting;
-use App\Models\TwoPersonRequest;
 use App\Models\User;
 use App\Services\Audit;
 use App\Services\Doctor;
-use App\Services\EthicsPackGenerator;
 use App\Services\NetworkPolicyWriter;
-use App\Services\TwoPersonGate;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rules\Password;
 
@@ -108,48 +105,5 @@ class AdminController extends Controller
         return view('admin.audit', ['entries' => AuditLog::query()->with('user:id,name')
             ->when($request->string('action')->toString(), fn ($q, $a) => $q->where('action', 'like', "$a%"))
             ->latest('id')->paginate(100)->withQueryString()]);
-    }
-
-    public function ethicsPack(Request $request, EthicsPackGenerator $generator)
-    {
-        $data = $generator->buildData();
-        $markdown = $generator->toMarkdown($data);
-        Audit::log('ethics_pack.generate', null, ['lab_name' => $data['lab_name'], 'format' => $request->query('format', 'html')]);
-
-        if ($request->query('format') === 'md') {
-            return response($markdown, 200, [
-                'Content-Type' => 'text/markdown; charset=utf-8',
-                'Content-Disposition' => 'attachment; filename="xephyguard-dpia-ethics-pack.md"',
-            ]);
-        }
-
-        if ($request->expectsJson() || $request->query('format') === 'json') {
-            return response()->json($data + ['markdown' => $markdown]);
-        }
-
-        return view('admin.ethics-pack', $data + ['markdown' => $markdown]);
-    }
-
-    public function approveTwoPerson(Request $request, TwoPersonRequest $twoPersonRequest)
-    {
-        $decided = TwoPersonGate::approve($twoPersonRequest, $request->user());
-
-        if ($request->expectsJson()) {
-            return response()->json(['request' => $decided]);
-        }
-
-        return back()->with('status', "Two-person request #{$decided->id} approved and executed.");
-    }
-
-    public function rejectTwoPerson(Request $request, TwoPersonRequest $twoPersonRequest)
-    {
-        $reason = $request->input('reason');
-        $decided = TwoPersonGate::reject($twoPersonRequest, $request->user(), is_string($reason) ? $reason : null);
-
-        if ($request->expectsJson()) {
-            return response()->json(['request' => $decided]);
-        }
-
-        return back()->with('status', "Two-person request #{$decided->id} rejected.");
     }
 }

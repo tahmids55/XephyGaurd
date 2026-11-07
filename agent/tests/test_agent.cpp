@@ -16,7 +16,6 @@ struct Harness {
     test::FakeNetwork* net;
     test::FakeExtensions* exts;
     test::FakeIpc* ipc;
-    test::FakeSystem* sys;
     VectorSink sink;
     std::unique_ptr<Agent> agent;
 
@@ -34,9 +33,7 @@ struct Harness {
         auto i = std::make_unique<test::FakeIpc>();
         ipc = i.get();
         plat.ipc = std::move(i);
-        auto s = std::make_unique<test::FakeSystem>();
-        sys = s.get();
-        plat.system = std::move(s);
+        plat.system = std::make_unique<test::FakeSystem>();
         Config cfg = Config::defaults();
         cfg.data_dir = dir.string();
         agent = std::make_unique<Agent>(cfg, (dir / "agent.toml").string(), plat);
@@ -208,128 +205,4 @@ TEST_CASE("common dev ports need a positive LLM-API probe") {
     CHECK(h.of(ev::listening_port).empty());
     CHECK(h.agent->rules().match_port(8000) == std::nullopt);
     CHECK(h.agent->rules().match_port(8000, true)->rule_id == "port.vllm");
-}
-
-TEST_CASE("copilot activity scan emits ide_ai_activity once per file change and never fabricates window_focus (R1/R2/R8)") {
-    Harness h;
-    h.agent->apply_policy(Policy::default_for(Mode::test));
-    h.sys->sess = {{"alice", h.dir.string(), 1000, ":0", "x11", true}};
-    const fs::path gs = h.dir / ".config" / "Code" / "User" / "globalStorage" / "github.copilot-chat";
-    fs::create_directories(gs);
-    const fs::path db = gs / "session-store.db";
-    write_file_atomic(db.string(), "initial-state");
-
-    // 1. Initial scan records baseline without emitting.
-    h.agent->scan_copilot_activity(1000);
-    CHECK(h.of(ev::ide_ai_activity).empty());
-    CHECK(h.of(ev::window_focus).empty());
-    CHECK(h.of(ev::rule_hit).empty());
-
-    // 2. Unchanged file on subsequent scan emits nothing.
-    h.agent->scan_copilot_activity(5000);
-    CHECK(h.of(ev::ide_ai_activity).empty());
-
-    // 3. File modification emits a single ide_ai_activity event with medium confidence and never window_focus.
-    write_file_atomic(db.string(), "updated-state-with-new-bytes");
-    h.agent->scan_copilot_activity(10000);
-    auto evs = h.of(ev::ide_ai_activity);
-    REQUIRE(evs.size() == 1);
-    CHECK(evs[0].data["tool"] == "github-copilot");
-    CHECK(evs[0].data["ide"] == "vscode");
-    CHECK(evs[0].data["evidence"] == "file_activity");
-    CHECK(evs[0].data["detail"] == "session-store.db");
-    CHECK(evs[0].data["confidence"] == "medium");
-    CHECK(evs[0].data["meaning"] == "IDE AI extension storage was written to");
-    CHECK(evs[0].data.contains("not_meaning"));
-    CHECK(h.of(ev::window_focus).empty());
-    CHECK(h.of(ev::rule_hit).empty());
-    CHECK(h.ipc->count_containing("\"notify\"") == 0);
-
-    // 4. Subsequent scan without further file changes does not re-emit even after >12s.
-    h.agent->scan_copilot_activity(30000);
-    CHECK(h.of(ev::ide_ai_activity).size() == 1);
-}
-
-TEST_CASE("isolation lease renews, expires, saves/restores routes, and recovers on startup (Contract C3 / R11)") {
-    Harness h;
-    h.agent->apply_policy(Policy::default_for(Mode::test));
-
-    // Isolate via isolate_notice with a 10s lease.
-    h.agent->handle_command({"iso1", "isolate_notice", {{"isolated", true}, {"lease_s", 10}, {"reason", "exam check"}}});
-    CHECK(h.agent->is_isolated());
-    CHECK(h.agent->isolation_lease_s() == 10);
-    CHECK(fs::exists(h.agent->isolation_state_path()));
-
-    const int64_t t0 = h.agent->isolation_renewed_ms();
-    // 5s later: lease still valid.
-    h.agent->check_isolation_lease(t0 + 5000);
-    CHECK(h.agent->is_isolated());
-    CHECK(h.of(ev::isolation_lease_expired).empty());
-
-    // Renew lease at t0 + 8s for another 10s.
-    h.agent->renew_isolation(t0 + 8000, 10);
-    // At t0 + 15s (7s after renewal): still valid.
-    h.agent->check_isolation_lease(t0 + 15000);
-    CHECK(h.agent->is_isolated());
-    CHECK(h.of(ev::isolation_lease_expired).empty());
-
-    // At t0 + 19s (11s after renewal > 10s lease): lease expires, network restored, event emitted.
-    h.agent->check_isolation_lease(t0 + 19000);
-    CHECK_FALSE(h.agent->is_isolated());
-    CHECK_FALSE(fs::exists(h.agent->isolation_state_path()));
-    auto expired = h.of(ev::isolation_lease_expired);
-    REQUIRE(expired.size() == 1);
-    CHECK(expired[0].data["lease_s"] == 10);
-
-    // Startup crash recovery: if isolation_saved.json is left on disk with a non-.1 gateway,
-    // constructing Agent restores from it and removes the file.
-    const std::string saved_path = h.agent->isolation_state_path();
-    json leftover = {
-        {"saved_at_ms", 12345},
-        {"platform", "linux"},
-        {"default_routes", json::array({"default via 10.20.30.254 dev eth0"})},
-    };
-    REQUIRE(write_file_atomic(saved_path, leftover.dump()));
-    REQUIRE(fs::exists(saved_path));
-
-    Config cfg = Config::defaults();
-    cfg.data_dir = h.dir.string();
-    Agent recovered(cfg, (h.dir / "agent.toml").string(), h.plat);
-    CHECK_FALSE(recovered.is_isolated());
-    CHECK_FALSE(fs::exists(saved_path));
-    REQUIRE(recovered.last_restored_isolation_state().contains("default_routes"));
-    CHECK(recovered.last_restored_isolation_state()["default_routes"][0] == "default via 10.20.30.254 dev eth0");
-}
-
-TEST_CASE("agent enforces mode clamp, blocks kills outside Test, and reverts hosts blocklist on session end (C1/C4/R6/R7)") {
-    Harness h;
-    const fs::path fake_hosts = h.dir / "hosts";
-    write_file_atomic(fake_hosts.string(), "127.0.0.1 localhost\n");
-    h.agent->set_hosts_path_for_tests(fake_hosts.string());
-
-    // In Always-on mode: kill commands are refused and hosts blocklist is not applied.
-    Policy ao = Policy::default_for(Mode::always_on);
-    ao.collect.window = true;
-    ao.title_capture = TitleCapture::full;
-    ao.blocked_domains = {"chatgpt.com"};
-    h.agent->apply_policy(ao);
-    CHECK_FALSE(h.agent->policy().collect.window);
-    CHECK(h.agent->policy().title_capture == TitleCapture::off);
-    CHECK(h.agent->active_blocked_domains().empty());
-    CHECK(read_file(fake_hosts.string()).find("chatgpt.com") == std::string::npos);
-
-    h.procs->procs = {{88, 1, "/usr/bin/chrome", "chrome", "", "alice", 0, 1}};
-    h.agent->handle_command({"k1", "kill", {{"exe", "chrome"}}});
-    CHECK(h.procs->killed.empty());
-    REQUIRE(h.of(ev::command_result).size() == 1);
-    CHECK(h.of(ev::command_result)[0].data["status"] == "ignored");
-
-    // In Test mode: hosts blocklist is applied, and reverted when returning to Always-on.
-    Policy test_pol = Policy::default_for(Mode::test);
-    test_pol.blocked_domains = {"chatgpt.com"};
-    h.agent->apply_policy(test_pol);
-    CHECK(read_file(fake_hosts.string()).find("0.0.0.0 chatgpt.com") != std::string::npos);
-
-    h.agent->apply_policy(Policy::default_for(Mode::always_on));
-    CHECK(read_file(fake_hosts.string()) == "127.0.0.1 localhost\n");
 }

@@ -23,25 +23,6 @@ class CertificateAuthority
     public function keyPath(): string { return $this->dir.'/ca.key'; }
     public function exists(): bool { return is_file($this->certPath()) && is_file($this->keyPath()); }
 
-    public function signingCertPath(): string { return $this->dir.'/signing.crt'; }
-    public function signingKeyPath(): string { return $this->dir.'/signing.key'; }
-    public function hasSigningCert(): bool { return is_file($this->signingCertPath()) && is_file($this->signingKeyPath()); }
-
-    public function signingCertPem(): ?string
-    {
-        if (! $this->hasSigningCert()) {
-            return null;
-        }
-        $pem = @file_get_contents($this->signingCertPath());
-
-        return $pem !== false ? $pem : null;
-    }
-
-    public function interceptionCaCertPath(): string { return $this->dir.'/interception-ca.crt'; }
-    public function interceptionCaKeyPath(): string { return $this->dir.'/interception-ca.key'; }
-    public function mitmproxyPemPath(): string { return $this->dir.'/mitmproxy-ca.pem'; }
-    public function hasInterceptionCa(): bool { return is_file($this->interceptionCaCertPath()) && is_file($this->interceptionCaKeyPath()); }
-
     public function certPem(): string
     {
         $pem = @file_get_contents($this->certPath());
@@ -81,65 +62,6 @@ class CertificateAuthority
         openssl_pkey_export($key, $keyPem);
         $this->writeSecret($this->keyPath(), $keyPem);
         file_put_contents($this->certPath(), $certPem);
-        @unlink($conf);
-    }
-
-    /**
-     * Issues a dedicated EC P-256 leaf certificate for signing detection signature bundles
-     * (basicConstraints=CA:false, keyUsage=digitalSignature, extendedKeyUsage=codeSigning).
-     */
-    public function issueSigningCert(bool $force = false, int $days = 1825): void
-    {
-        if ($this->hasSigningCert() && ! $force) {
-            return;
-        }
-        if (! $this->exists()) {
-            throw new RuntimeException('CA certificate not found; run php artisan xephyguard:ca:init');
-        }
-        $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
-        $conf = $this->opensslConfig();
-        $csr = openssl_csr_new(
-            ['commonName' => 'XephyGuard Signature Signer', 'organizationName' => 'XephyGuard'],
-            $key,
-            ['digest_alg' => 'sha256', 'config' => $conf]
-        );
-        openssl_csr_export($csr, $csrPem);
-        $signed = $this->sign($csrPem, $days, 'signing_ext', $conf);
-        openssl_pkey_export($key, $keyPem);
-        $this->writeSecret($this->signingKeyPath(), $keyPem);
-        file_put_contents($this->signingCertPath(), $signed['pem']);
-        @unlink($conf);
-    }
-
-    /**
-     * Issues a name-constrained sub-CA for mitmproxy search inspection.
-     * Cryptographically restricted via X.509 Name Constraints to $permittedDomains and
-     * explicitly excludes all IPv4 and IPv6 address SANs so it can never spoof the CCC IP.
-     */
-    public function issueInterceptionCa(
-        array $permittedDomains = ['.google.com', 'google.com', '.bing.com', 'bing.com', '.duckduckgo.com', 'duckduckgo.com'],
-        bool $force = false,
-        int $days = 1095
-    ): void {
-        if ($this->hasInterceptionCa() && ! $force) {
-            return;
-        }
-        if (! $this->exists()) {
-            throw new RuntimeException('CA certificate not found; run php artisan xephyguard:ca:init');
-        }
-        $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
-        $conf = $this->opensslConfig('DNS.1 = localhost', $permittedDomains);
-        $csr = openssl_csr_new(
-            ['commonName' => 'XephyGuard Search Inspection Sub-CA', 'organizationName' => 'XephyGuard Proxy'],
-            $key,
-            ['digest_alg' => 'sha256', 'config' => $conf]
-        );
-        openssl_csr_export($csr, $csrPem);
-        $signed = $this->sign($csrPem, $days, 'interception_ca_ext', $conf);
-        openssl_pkey_export($key, $keyPem);
-        $this->writeSecret($this->interceptionCaKeyPath(), $keyPem);
-        file_put_contents($this->interceptionCaCertPath(), $signed['pem']);
-        $this->writeSecret($this->mitmproxyPemPath(), $keyPem.$signed['pem'].$this->certPem());
         @unlink($conf);
     }
 
@@ -188,8 +110,7 @@ class CertificateAuthority
     /** Detached signature (base64) used for signature bundles and other agent-verified data. */
     public function signData(string $data): string
     {
-        $keyFile = $this->hasSigningCert() ? $this->signingKeyPath() : $this->keyPath();
-        $key = openssl_pkey_get_private(file_get_contents($keyFile));
+        $key = openssl_pkey_get_private(file_get_contents($this->keyPath()));
         if (! openssl_sign($data, $sig, $key, OPENSSL_ALGO_SHA256)) {
             throw new RuntimeException('signing failed');
         }
@@ -197,52 +118,9 @@ class CertificateAuthority
         return base64_encode($sig);
     }
 
-    public function verifyData(string $data, string $sigB64, ?string $signerCertPem = null): bool
+    public function verifyData(string $data, string $sigB64): bool
     {
-        $rawSig = base64_decode($sigB64, true);
-        if ($rawSig === false) {
-            return false;
-        }
-        $caPub = @openssl_pkey_get_public($this->certPem());
-        if ($caPub === false) {
-            return false;
-        }
-
-        $signerPem = $signerCertPem ?? $this->signingCertPem();
-        if ($signerPem !== null && trim($signerPem) !== '') {
-            if (@openssl_x509_verify($signerPem, $caPub) !== 1) {
-                return false;
-            }
-            $info = @openssl_x509_parse($signerPem);
-            if (! is_array($info)) {
-                return false;
-            }
-            $now = time();
-            if (($info['validFrom_time_t'] ?? PHP_INT_MAX) > $now || ($info['validTo_time_t'] ?? 0) < $now) {
-                return false;
-            }
-            $bc = strtoupper((string) ($info['extensions']['basicConstraints'] ?? ''));
-            if (! str_contains($bc, 'CA:FALSE')) {
-                return false;
-            }
-            $eku = strtolower((string) ($info['extensions']['extendedKeyUsage'] ?? ''));
-            if (! str_contains($eku, 'code signing') && ! str_contains($eku, 'codesigning')) {
-                return false;
-            }
-            $signerPub = @openssl_pkey_get_public($signerPem);
-            if ($signerPub === false) {
-                return false;
-            }
-            if (@openssl_verify($data, $rawSig, $signerPub, OPENSSL_ALGO_SHA256) === 1) {
-                return true;
-            }
-            // If no explicit $signerCertPem was forced, allow fallback verification against root CA for legacy bundles
-            if ($signerCertPem !== null) {
-                return false;
-            }
-        }
-
-        return @openssl_verify($data, $rawSig, $caPub, OPENSSL_ALGO_SHA256) === 1;
+        return openssl_verify($data, base64_decode($sigB64), openssl_pkey_get_public($this->certPem()), OPENSSL_ALGO_SHA256) === 1;
     }
 
     /** @return array{pem: string, serial: string, fingerprint: string, expires_at: \DateTimeImmutable} */
@@ -270,25 +148,15 @@ class CertificateAuthority
         ];
     }
 
-    private function opensslConfig(
-        string $altNames = 'DNS.1 = localhost',
-        array $permittedDomains = ['.google.com', 'google.com', '.bing.com', 'bing.com', '.duckduckgo.com', 'duckduckgo.com']
-    ): string {
-        $ncLines = [];
-        foreach (array_values($permittedDomains) as $i => $domain) {
-            $ncLines[] = 'permitted;DNS.'.($i + 1).' = '.$domain;
-        }
-        $ncLines[] = 'excluded;IP.1 = 0.0.0.0/0.0.0.0';
-        $ncLines[] = 'excluded;IP.2 = 0:0:0:0:0:0:0:0/0:0:0:0:0:0:0:0';
-        $ncSect = implode("\n", $ncLines);
-
+    private function opensslConfig(string $altNames = 'DNS.1 = localhost'): string
+    {
         $path = tempnam(sys_get_temp_dir(), 'xgssl');
         file_put_contents($path, <<<CONF
         [ req ]
         distinguished_name = req_dn
         [ req_dn ]
         [ v3_ca ]
-        basicConstraints = critical,CA:true,pathlen:1
+        basicConstraints = critical,CA:true,pathlen:0
         keyUsage = critical,keyCertSign,cRLSign,digitalSignature
         subjectKeyIdentifier = hash
         [ agent_ext ]
@@ -304,20 +172,6 @@ class CertificateAuthority
         subjectKeyIdentifier = hash
         authorityKeyIdentifier = keyid
         subjectAltName = @alt
-        [ signing_ext ]
-        basicConstraints = critical,CA:false
-        keyUsage = critical,digitalSignature
-        extendedKeyUsage = critical,codeSigning
-        subjectKeyIdentifier = hash
-        authorityKeyIdentifier = keyid
-        [ interception_ca_ext ]
-        basicConstraints = critical,CA:true,pathlen:0
-        keyUsage = critical,keyCertSign,cRLSign,digitalSignature
-        subjectKeyIdentifier = hash
-        authorityKeyIdentifier = keyid
-        nameConstraints = critical,@nc_sect
-        [ nc_sect ]
-        $ncSect
         [ alt ]
         $altNames
         CONF);

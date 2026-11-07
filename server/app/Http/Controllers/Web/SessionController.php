@@ -8,89 +8,15 @@ use App\Models\Lab;
 use App\Models\LabSession;
 use App\Models\Pc;
 use App\Models\Profile;
-use App\Models\Setting;
-use App\Models\SignatureVersion;
 use App\Services\Audit;
-use App\Services\CertificateAuthority;
 use App\Services\CommandBus;
 use App\Services\SessionManager;
 use Illuminate\Http\Request;
 
-/** Session control: start/stop, switch mode, broadcast message, isolate, kill, per-PC override, preflight check. */
+/** Session control: start/stop, switch mode, broadcast message, isolate, kill, per-PC override. */
 class SessionController extends Controller
 {
     public function __construct(private readonly SessionManager $sessions, private readonly CommandBus $commands) {}
-
-    public function buildPreflight(?Lab $lab = null): array
-    {
-        $lab ??= Lab::current();
-        $pcs = Pc::query()->active()->where('lab_id', $lab->id)->with('agent')->get();
-        $pcsTotal = $pcs->count();
-        $pcsOnline = $pcs->filter(fn (Pc $p) => $p->online())->count();
-        $pcsOffline = $pcsTotal - $pcsOnline;
-        $isolatedPcs = $pcs->where('isolated', true)->count();
-
-        $targetVersion = (string) (Setting::get('target_agent_version') ?: config('xephyguard.agent_current_version', '0.2.0'));
-        $agentsOutdated = $pcs->filter(function (Pc $p) use ($targetVersion) {
-            $v = $p->agent?->version;
-
-            return is_string($v) && $v !== '' && version_compare($v, $targetVersion, '<');
-        })->count();
-        $agentsCurrent = $pcsTotal - $agentsOutdated;
-
-        $ca = CertificateAuthority::fromConfig();
-        $caHealthy = $ca->exists() && $ca->hasSigningCert() && $ca->hasInterceptionCa();
-        $sig = SignatureVersion::active();
-        $activeSigVersion = $sig?->version;
-
-        $checks = [
-            [
-                'check' => 'ca_hierarchy',
-                'ok' => $caHealthy,
-                'detail' => $caHealthy ? 'Root CA, code-signing leaf, and Name-Constrained interception CA verified' : 'CA hierarchy incomplete; run php artisan xephyguard:ca:init',
-            ],
-            [
-                'check' => 'signature_bundle',
-                'ok' => $activeSigVersion !== null,
-                'detail' => $activeSigVersion ? "Active signature bundle {$activeSigVersion}" : 'No active signature bundle published',
-            ],
-            [
-                'check' => 'pcs_online',
-                'ok' => $pcsTotal === 0 || $pcsOnline > 0,
-                'detail' => "{$pcsOnline}/{$pcsTotal} lab PCs online ({$pcsOffline} offline)",
-            ],
-            [
-                'check' => 'agent_versions',
-                'ok' => $agentsOutdated === 0,
-                'detail' => $agentsOutdated === 0 ? "All {$agentsCurrent} agents at or above {$targetVersion}" : "{$agentsOutdated} agent(s) below target {$targetVersion}",
-            ],
-            [
-                'check' => 'isolated_pcs',
-                'ok' => $isolatedPcs === 0,
-                'detail' => $isolatedPcs === 0 ? 'No PCs currently isolated' : "{$isolatedPcs} PC(s) currently isolated",
-            ],
-        ];
-
-        $ready = $caHealthy && $activeSigVersion !== null && ($pcsTotal === 0 || $pcsOnline > 0) && $agentsOutdated === 0;
-
-        return [
-            'ready' => $ready,
-            'pcs_total' => $pcsTotal,
-            'pcs_online' => $pcsOnline,
-            'pcs_offline' => $pcsOffline,
-            'agents_current' => $agentsCurrent,
-            'agents_outdated' => $agentsOutdated,
-            'ca_healthy' => $caHealthy,
-            'active_signature_version' => $activeSigVersion,
-            'isolated_pcs' => $isolatedPcs,
-            'checks' => $checks,
-        ];
-    }
-
-    public function preflight()
-    {
-        return response()->json($this->buildPreflight());
-    }
 
     public function index()
     {
@@ -101,7 +27,6 @@ class SessionController extends Controller
             'history' => LabSession::query()->with('profile')->where('lab_id', $lab->id)->latest('starts_at')->paginate(20),
             'profiles' => Profile::query()->orderBy('mode')->get(),
             'commands' => Command::query()->with('pc:id,name')->latest()->limit(20)->get(),
-            'preflight' => $this->buildPreflight($lab),
         ]);
     }
 

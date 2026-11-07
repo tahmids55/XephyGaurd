@@ -1,18 +1,8 @@
 #include "xg/agent.hpp"
 
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <windows.h>
-#else
-#include <cstdio>
-#include <cstdlib>
-#endif
-
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
-#include <sstream>
 #include <thread>
 
 #include "xg/artifact_scan.hpp"
@@ -39,162 +29,7 @@ const char* mode_label(Mode m) {
 }
 
 std::string limit(const std::string& s, size_t n) { return s.size() > n ? s.substr(0, n) : s; }
-
-#ifdef _WIN32
-std::wstring utf8_to_wide(const std::string& s) {
-    if (s.empty()) return {};
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0);
-    std::wstring w(size_t(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), n);
-    return w;
-}
-
-void run_cmd_silent(const std::string& cmd, DWORD timeout_ms = 8000) {
-    std::wstring wcmd = L"cmd.exe /C " + utf8_to_wide(cmd);
-    STARTUPINFOW si{};
-    si.cb = sizeof si;
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi{};
-    if (CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        WaitForSingleObject(pi.hProcess, timeout_ms);
-        CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
-    }
-}
-
-std::string run_cmd_capture(const std::string& cmd, DWORD timeout_ms = 5000) {
-    SECURITY_ATTRIBUTES sa{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
-    HANDLE r_pipe = nullptr, w_pipe = nullptr;
-    if (!CreatePipe(&r_pipe, &w_pipe, &sa, 0)) return {};
-    SetHandleInformation(r_pipe, HANDLE_FLAG_INHERIT, 0);
-    STARTUPINFOW si{};
-    si.cb = sizeof si;
-    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-    si.hStdOutput = w_pipe;
-    si.hStdError = w_pipe;
-    si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi{};
-    std::wstring wcmd = L"cmd.exe /C " + utf8_to_wide(cmd);
-    std::string out;
-    if (CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        CloseHandle(w_pipe);
-        w_pipe = nullptr;
-        char buf[1024];
-        DWORD n = 0;
-        while (ReadFile(r_pipe, buf, sizeof buf, &n, nullptr) && n > 0 && out.size() < 65536) {
-            out.append(buf, n);
-        }
-        WaitForSingleObject(pi.hProcess, timeout_ms);
-        CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
-    }
-    if (w_pipe) CloseHandle(w_pipe);
-    CloseHandle(r_pipe);
-    return out;
-}
-#else
-void run_cmd_silent(const std::string& cmd) {
-    [[maybe_unused]] int rc = std::system((cmd + " >/dev/null 2>&1").c_str());
-}
-
-std::string run_cmd_capture(const std::string& cmd) {
-    std::string out;
-    FILE* fp = popen((cmd + " 2>/dev/null").c_str(), "r");
-    if (!fp) return out;
-    char buf[512];
-    while (fgets(buf, sizeof buf, fp) && out.size() < 65536) {
-        out += buf;
-    }
-    pclose(fp);
-    return out;
-}
-#endif
-
-bool is_safe_linux_route(const std::string& r) {
-    if (!r.starts_with("default ")) return false;
-    return std::all_of(r.begin(), r.end(), [](unsigned char c) {
-        return std::isalnum(c) || c == ' ' || c == '.' || c == ':' || c == '/' || c == '_' || c == '-';
-    });
-}
-
-bool is_safe_ip_token(const std::string& s) {
-    if (s.empty()) return false;
-    return std::all_of(s.begin(), s.end(), [](unsigned char c) {
-        return std::isdigit(c) || c == '.' || c == ':';
-    });
-}
 }  // namespace
-
-std::vector<WindowsDefaultRoute> parse_windows_default_routes(const std::string& route_print_output) {
-    std::vector<WindowsDefaultRoute> routes;
-    for (const auto& raw_line : split(route_print_output, '\n')) {
-        std::istringstream iss(raw_line);
-        std::string dest, mask, next_hop, iface, metric;
-        if ((iss >> dest >> mask >> next_hop) && dest == "0.0.0.0" && mask == "0.0.0.0") {
-            next_hop = trim(next_hop);
-            if (next_hop.empty() || next_hop == "0.0.0.0" || icontains(next_hop, "on-link") ||
-                !is_safe_ip_token(next_hop)) {
-                continue;
-            }
-            iss >> iface >> metric;
-            iface = trim(iface);
-            metric = trim(metric);
-            if (!is_safe_ip_token(iface)) iface.clear();
-            if (!std::all_of(metric.begin(), metric.end(), [](unsigned char c) { return std::isdigit(c); })) {
-                metric.clear();
-            }
-            bool dup = false;
-            for (const auto& existing : routes) {
-                if (existing.gateway == next_hop && existing.interface_ip == iface) {
-                    dup = true;
-                    break;
-                }
-            }
-            if (!dup) routes.push_back({next_hop, iface, metric});
-        }
-    }
-    return routes;
-}
-
-std::vector<std::string> parse_linux_default_routes(const std::string& ip_route_output) {
-    std::vector<std::string> routes;
-    for (const auto& raw_line : split(ip_route_output, '\n')) {
-        std::string line = trim(raw_line);
-        if (is_safe_linux_route(line)) {
-            if (std::find(routes.begin(), routes.end(), line) == routes.end()) {
-                routes.push_back(std::move(line));
-            }
-        }
-    }
-    return routes;
-}
-
-std::string update_hosts_blocklist_content(const std::string& existing_content,
-                                           const std::vector<std::string>& domains,
-                                           const std::string& nl) {
-    const std::string begin_marker = "# BEGIN XEPHYGUARD BLOCKLIST";
-    const std::string end_marker = "# END XEPHYGUARD BLOCKLIST";
-    std::ostringstream cleaned;
-    bool inside = false;
-    for (const auto& raw_line : split(existing_content, '\n')) {
-        std::string line = raw_line;
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (trim(line) == begin_marker) { inside = true; continue; }
-        if (trim(line) == end_marker) { inside = false; continue; }
-        if (!inside) cleaned << line << nl;
-    }
-    if (!domains.empty()) {
-        cleaned << begin_marker << nl;
-        for (const auto& d : domains) {
-            if (d.empty() || d.find_first_of(" \t\r\n#") != std::string::npos) continue;
-            cleaned << "0.0.0.0 " << d << nl;
-            if (!d.starts_with("www.")) cleaned << "0.0.0.0 www." << d << nl;
-        }
-        cleaned << end_marker << nl;
-    }
-    return cleaned.str();
-}
 
 Agent::Agent(Config cfg, std::string config_path, ServicePlatform& plat)
     : cfg_(std::move(cfg)), config_path_(std::move(config_path)), plat_(plat) {
@@ -229,18 +64,9 @@ Agent::Agent(Config cfg, std::string config_path, ServicePlatform& plat)
         auto j = json::parse(*r, nullptr, false);
         if (!j.is_discarded()) realtime_cfg_ = j;
     }
-    // Fail-safe (Contract C3 / R11): if a saved isolation state exists on startup (e.g. after a crash),
-    // restore the saved routes/firewall state immediately and remove the file.
-    std::error_code ec;
-    if (fs::exists(isolation_state_path(), ec)) {
-        log::warn("network: found leftover isolation_saved.json on startup; restoring network state");
-        restore_isolation_from_disk();
-    }
 }
 
-Agent::~Agent() {
-    if (!active_blocked_domains_.empty()) apply_hosts_blocklist({});
-}
+Agent::~Agent() = default;
 
 Policy Agent::policy() const {
     std::lock_guard lk(policy_mu_);
@@ -248,9 +74,7 @@ Policy Agent::policy() const {
 }
 
 // ------------------------------------------------------------------------------------- policy
-void Agent::apply_policy(const Policy& raw_policy) {
-    Policy p = raw_policy;
-    p.clamp_for_mode();
+void Agent::apply_policy(const Policy& p) {
     Mode old_mode;
     {
         std::lock_guard lk(policy_mu_);
@@ -267,11 +91,9 @@ void Agent::apply_policy(const Policy& raw_policy) {
                   p.profile_name);
         std::lock_guard lk(hit_mu_);
         dedup_.reset();  // a new session should re-report what is already running
-        inventory_dedup_.reset();
         reevaluate_ = true;
     }
     next_run_.clear();
-    apply_hosts_blocklist(p.mode == Mode::test ? p.blocked_domains : std::vector<std::string>{});
     push_helper_config();
     if (stop_) restart_watchers();
 }
@@ -282,9 +104,7 @@ bool Agent::apply_signatures(const json& env, bool require_signature) {
     if (require_signature) {
         bool ok = false;
         const std::string ca = read_file(cfg_.ca_file, &ok);
-        const std::string signer_cert =
-            (env.contains("signer_cert") && env["signer_cert"].is_string()) ? env.value("signer_cert", "") : "";
-        if (!ok || !crypto::verify_signature_with_chain(bundle, env.value("signature", ""), ca, signer_cert)) {
+        if (!ok || !crypto::verify_signature(bundle, env.value("signature", ""), ca)) {
             log::error("signatures: bundle {} has an invalid signature; keeping {}", env.value("version", "?"),
                        rules_.version());
             sink_->emit(ev::tamper, {{"kind", "signature_invalid"}, {"bundle_version", env.value("version", "")}});
@@ -317,16 +137,7 @@ void Agent::handle_rule_hit(const RuleHit& hit, const std::string& subject, json
     const Policy pol = policy();
     if (!pol.rule_enabled(hit.rule_id)) return;
     const auto actions = pol.actions_for(hit.rule_id, hit.severity);
-    const bool is_inventory =
-        hit.rule_id.starts_with("ext.") || hit.rule_id.starts_with("file.") || hit.category == "local_model";
-    const bool is_ai_rule = hit.rule_id.starts_with("proc.") || hit.rule_id.starts_with("ext.") ||
-                            hit.rule_id.starts_with("ide.") || hit.rule_id.starts_with("port.") ||
-                            hit.rule_id.starts_with("file.") || hit.category == "local_model";
-    const bool ai_permitted = (pol.ai_policy == "permitted_with_disclosure" || pol.ai_policy == "open");
-    // Contract C4 & P3-C2: Kills only when an active Test session exists, AI policy is forbidden,
-    // AND the profile action includes kill.
-    const bool wants_kill = (pol.mode == Mode::test) && !is_inventory && !(ai_permitted && is_ai_rule) &&
-                            (std::find(actions.begin(), actions.end(), Action::kill) != actions.end());
+    const bool wants_kill = std::find(actions.begin(), actions.end(), Action::kill) != actions.end();
 
     auto do_kill = [&]() -> json {
         if (!wants_kill || pid <= 0 || !plat_.processes) return nullptr;
@@ -340,9 +151,7 @@ void Agent::handle_rule_hit(const RuleHit& hit, const std::string& subject, json
     bool report;
     {
         std::lock_guard lk(hit_mu_);
-        const int64_t now = steady_ms();
-        report = is_inventory ? inventory_dedup_.should_report(hit.rule_id, subject, now)
-                              : dedup_.should_report(hit.rule_id, subject, now);
+        report = dedup_.should_report(hit.rule_id, subject, steady_ms());
         if (!report) ++suppressed_hits_;
     }
     if (!report) {
@@ -353,8 +162,6 @@ void Agent::handle_rule_hit(const RuleHit& hit, const std::string& subject, json
     json taken = json::array();
     json result = json::object();
     for (auto a : actions) {
-        if (a == Action::kill && !wants_kill) continue;
-        if (a == Action::warn && (pol.mode == Mode::always_on || is_inventory || (ai_permitted && is_ai_rule))) continue;
         taken.push_back(to_string(a));
         switch (a) {
             case Action::warn:
@@ -380,7 +187,6 @@ void Agent::handle_rule_hit(const RuleHit& hit, const std::string& subject, json
                                {"result", result},
                                {"context", std::move(context)},
                                {"mode", to_string(pol.mode)},
-                               {"ai_policy", pol.ai_policy},
                                {"session_id", pol.session_id},
                                {"user", active_user()}});
     wake_uplink();  // alerts should reach the CCC within seconds
@@ -608,310 +414,6 @@ void Agent::push_helper_config() {
 void Agent::notify_student(const std::string& title, const std::string& body, bool urgent) {
     if (!plat_.ipc) return;
     plat_.ipc->broadcast(ipc::line({{"t", "notify"}, {"title", title}, {"body", body}, {"urgent", urgent}}));
-}
-
-void Agent::apply_hosts_blocklist(const std::vector<std::string>& domains) {
-    if (domains == active_blocked_domains_) return;
-    active_blocked_domains_ = domains;
-#ifdef _WIN32
-    const std::string default_hosts_path = "C:\\Windows\\System32\\drivers\\etc\\hosts";
-    const std::string nl = "\r\n";
-#else
-    const std::string default_hosts_path = "/etc/hosts";
-    const std::string nl = "\n";
-#endif
-    const std::string& hosts_path = hosts_path_override_.empty() ? default_hosts_path : hosts_path_override_;
-    if (hosts_path_override_.empty() && !plat_.service_host) return;
-
-    bool ok = false;
-    const std::string content = read_file(hosts_path, &ok);
-    if (!ok && domains.empty()) return;
-    if (domains.empty() && content.find("# BEGIN XEPHYGUARD BLOCKLIST") == std::string::npos) return;
-
-    const std::string updated = update_hosts_blocklist_content(content, domains, nl);
-    if (write_file_atomic(hosts_path, updated)) {
-        log::info("hosts: updated DNS sinkhole ({} blocked domains)", domains.size());
-#ifndef _WIN32
-        if (plat_.service_host) {
-            run_cmd_silent("resolvectl flush-caches || systemd-resolve --flush-caches || true");
-        }
-#endif
-    }
-}
-
-std::string Agent::isolation_state_path() const {
-    return join(cfg_.data_dir, "isolation_saved.json");
-}
-
-void Agent::restore_isolation_from_disk() {
-    const std::string state_file = isolation_state_path();
-    bool ok = false;
-    const std::string raw = read_file(state_file, &ok);
-    json saved = json::object();
-    if (ok && !raw.empty()) {
-        auto parsed = json::parse(raw, nullptr, false);
-        if (!parsed.is_discarded() && parsed.is_object()) {
-            saved = std::move(parsed);
-        }
-    }
-    last_restored_isolation_ = saved;
-
-    if (plat_.service_host) {
-#ifdef _WIN32
-        run_cmd_silent("netsh advfirewall firewall delete rule name=\"XephyGuard_Isolate_Block\"");
-        bool restored_any = false;
-        if (saved.contains("windows_routes") && saved["windows_routes"].is_array()) {
-            for (const auto& r : saved["windows_routes"]) {
-                if (!r.is_object()) continue;
-                const std::string gw = trim(r.value("gateway", std::string{}));
-                const std::string metric = trim(r.value("metric", std::string{}));
-                if (!is_safe_ip_token(gw)) continue;
-                std::string cmd = "route.exe add 0.0.0.0 mask 0.0.0.0 " + gw;
-                if (!metric.empty() && std::all_of(metric.begin(), metric.end(), [](unsigned char c) { return std::isdigit(c); })) {
-                    cmd += " METRIC " + metric;
-                }
-                run_cmd_silent(cmd);
-                restored_any = true;
-            }
-        }
-        if (!restored_any && saved.contains("default_routes") && saved["default_routes"].is_array()) {
-            for (const auto& item : saved["default_routes"]) {
-                if (!item.is_string()) continue;
-                const std::string gw = trim(item.get<std::string>());
-                if (is_safe_ip_token(gw)) {
-                    run_cmd_silent("route.exe add 0.0.0.0 mask 0.0.0.0 " + gw);
-                }
-            }
-        }
-#else
-        run_cmd_silent("iptables -D OUTPUT -j XEPHYGUARD_ISOLATE 2>/dev/null || true");
-        run_cmd_silent("iptables -F XEPHYGUARD_ISOLATE 2>/dev/null || true");
-        run_cmd_silent("iptables -X XEPHYGUARD_ISOLATE 2>/dev/null || true");
-        if (saved.contains("default_routes") && saved["default_routes"].is_array()) {
-            for (const auto& item : saved["default_routes"]) {
-                if (!item.is_string()) continue;
-                const std::string route_line = trim(item.get<std::string>());
-                if (is_safe_linux_route(route_line)) {
-                    run_cmd_silent("ip -4 route replace " + route_line + " || true");
-                }
-            }
-        }
-        run_cmd_silent("nmcli networking connectivity check || true");
-#endif
-    }
-
-    std::error_code ec;
-    fs::remove(state_file, ec);
-    isolation_enforced_ = false;
-}
-
-void Agent::apply_network_isolation(bool isolated) {
-    if (isolated == isolation_enforced_) return;
-    log::info("network: setting OS-level network isolation -> {}", isolated ? "ISOLATED" : "RESTORED");
-    if (!isolated) {
-        restore_isolation_from_disk();
-        return;
-    }
-
-    const std::string state_file = isolation_state_path();
-    std::error_code ec;
-    if (!fs::exists(state_file, ec)) {
-        json saved = {
-            {"saved_at_ms", now_ms()},
-            {"ccc_host", cfg_.ccc_host},
-            {"firewall_active", true},
-            {"default_routes", json::array()},
-            {"windows_routes", json::array()},
-        };
-#ifdef _WIN32
-        saved["platform"] = "windows";
-        saved["firewall_rule"] = "XephyGuard_Isolate_Block";
-        if (plat_.service_host) {
-            const std::string route_out = run_cmd_capture("route.exe print 0.0.0.0");
-            for (const auto& r : parse_windows_default_routes(route_out)) {
-                saved["default_routes"].push_back(r.gateway);
-                saved["windows_routes"].push_back(
-                    {{"gateway", r.gateway}, {"interface", r.interface_ip}, {"metric", r.metric}});
-            }
-        }
-#else
-        saved["platform"] = "linux";
-        saved["firewall_rule"] = "XEPHYGUARD_ISOLATE";
-        if (plat_.service_host) {
-            const std::string route_out = run_cmd_capture("ip -4 route show default");
-            for (const auto& r : parse_linux_default_routes(route_out)) {
-                saved["default_routes"].push_back(r);
-            }
-        }
-#endif
-        write_file_atomic(state_file, saved.dump(2));
-    }
-
-    isolation_enforced_ = true;
-    if (!plat_.service_host) return;
-
-#ifdef _WIN32
-    in_addr addr{};
-    if (!cfg_.ccc_host.empty() && inet_pton(AF_INET, cfg_.ccc_host.c_str(), &addr) == 1) {
-        const uint32_t ip = ntohl(addr.s_addr);
-        auto ip_str = [](uint32_t v) {
-            return std::to_string((v >> 24) & 0xFF) + "." + std::to_string((v >> 16) & 0xFF) + "." +
-                   std::to_string((v >> 8) & 0xFF) + "." + std::to_string(v & 0xFF);
-        };
-        std::string remoteip;
-        if (ip > 0x80000000u) {
-            remoteip = "1.0.0.0-126.255.255.255,128.0.0.0-" + ip_str(ip - 1) + "," + ip_str(ip + 1) + "-255.255.255.254";
-        } else if (ip < 0x7F000000u && ip > 0x01000000u) {
-            remoteip = "1.0.0.0-" + ip_str(ip - 1) + "," + ip_str(ip + 1) + "-126.255.255.255,128.0.0.0-255.255.255.254";
-        }
-        if (!remoteip.empty()) {
-            run_cmd_silent("netsh advfirewall firewall delete rule name=\"XephyGuard_Isolate_Block\"");
-            run_cmd_silent("netsh advfirewall firewall add rule name=\"XephyGuard_Isolate_Block\" dir=out action=block remoteip=" +
-                           remoteip + " enable=yes");
-        }
-    }
-    run_cmd_silent("route.exe delete 0.0.0.0 mask 0.0.0.0");
-#else
-    if (!cfg_.ccc_host.empty() && is_safe_ip_token(cfg_.ccc_host)) {
-        run_cmd_silent("iptables -N XEPHYGUARD_ISOLATE 2>/dev/null || iptables -F XEPHYGUARD_ISOLATE");
-        run_cmd_silent("iptables -C OUTPUT -j XEPHYGUARD_ISOLATE 2>/dev/null || iptables -I OUTPUT 1 -j XEPHYGUARD_ISOLATE");
-        run_cmd_silent("iptables -A XEPHYGUARD_ISOLATE -o lo -j ACCEPT");
-        run_cmd_silent("iptables -A XEPHYGUARD_ISOLATE -d " + cfg_.ccc_host + " -j ACCEPT");
-        run_cmd_silent("iptables -A XEPHYGUARD_ISOLATE -j REJECT");
-    }
-    run_cmd_silent("ip -4 route del default || true");
-    run_cmd_silent("nmcli networking connectivity check || true");
-#endif
-}
-
-void Agent::renew_isolation(int64_t now_steady, int lease_s, const std::string& reason) {
-    isolation_lease_s_ = lease_s > 0 ? std::clamp(lease_s, 1, 86400) : 600;
-    isolation_renewed_ms_ = now_steady;
-    if (!reason.empty()) isolation_reason_ = reason;
-    const bool was_isolated = status_.isolated.exchange(true);
-    if (!isolation_enforced_) {
-        apply_network_isolation(true);
-    }
-    if (!was_isolated) {
-        push_helper_config();
-    }
-}
-
-void Agent::check_isolation_lease(int64_t now_steady) {
-    if (!isolation_enforced_ && !status_.isolated.load()) return;
-    if (isolation_lease_s_ <= 0) return;
-    if (now_steady - isolation_renewed_ms_ > int64_t(isolation_lease_s_) * 1000) {
-        const int expired_lease_s = isolation_lease_s_;
-        status_.isolated = false;
-        isolation_reason_.clear();
-        apply_network_isolation(false);
-        push_helper_config();
-        log::warn("network: isolation_lease_expired after {}s without renewal; network restored", expired_lease_s);
-        sink_->emit(ev::isolation_lease_expired, {{"lease_s", expired_lease_s}});
-        notify_student("XephyGuard",
-                       "Network access for this PC was automatically restored (isolation lease expired).",
-                       false);
-        wake_uplink();
-    }
-}
-
-void Agent::scan_copilot_activity(int64_t /*now*/) {
-    bool file_changed = false;
-    std::string detail_file;
-    std::error_code ec;
-
-    auto check_file = [&](const fs::path& p) {
-        if (!fs::is_regular_file(p, ec)) return;
-        const auto mtime = uint64_t(fs::last_write_time(p, ec).time_since_epoch().count());
-        const auto fsize = uint64_t(fs::file_size(p, ec));
-        if (ec) return;
-        const uint64_t state = mtime ^ (fsize * 0x9e3779b97f4a7c15ULL);
-        const std::string key = p.string();
-        auto it = copilot_file_state_.find(key);
-        if (!copilot_scan_initialized_) {
-            copilot_file_state_[key] = state;
-        } else if (it == copilot_file_state_.end() || it->second != state) {
-            copilot_file_state_[key] = state;
-            file_changed = true;
-            detail_file = p.filename().string();
-        }
-    };
-
-    std::vector<fs::path> code_user_dirs;
-    auto add_dir = [&](const fs::path& d) {
-        std::error_code dir_ec;
-        if (!fs::is_directory(d, dir_ec)) return;
-        for (const auto& existing : code_user_dirs) {
-            if (existing == d) return;
-        }
-        code_user_dirs.push_back(d);
-    };
-
-    for (const auto& h : user_homes()) {
-        if (h.empty()) continue;
-        const fs::path hp(h);
-        add_dir(hp / "AppData" / "Roaming" / "Code" / "User");
-        add_dir(hp / ".config" / "Code" / "User");
-    }
-#ifdef _WIN32
-    const fs::path users("C:\\Users");
-    if (fs::is_directory(users, ec)) {
-        for (const auto& u : fs::directory_iterator(users, fs::directory_options::skip_permission_denied, ec)) {
-            const std::string uname = u.path().filename().string();
-            if (uname == "Public" || uname == "Default" || uname == "Default User" || uname == "All Users") continue;
-            add_dir(u.path() / "AppData" / "Roaming" / "Code" / "User");
-        }
-    }
-#endif
-
-    for (const auto& code_user : code_user_dirs) {
-        const fs::path gs = code_user / "globalStorage" / "github.copilot-chat";
-        if (fs::is_directory(gs, ec)) {
-            check_file(gs / "session-store.db");
-            check_file(gs / "session-store.db-wal");
-            check_file(gs / "commandEmbeddings.json");
-        }
-        const fs::path ws_root = code_user / "workspaceStorage";
-        if (fs::is_directory(ws_root, ec)) {
-            for (const auto& ws : fs::directory_iterator(ws_root, fs::directory_options::skip_permission_denied, ec)) {
-                const fs::path cs = ws.path() / "chatSessions";
-                if (fs::is_directory(cs, ec)) {
-                    for (const auto& f : fs::directory_iterator(cs, fs::directory_options::skip_permission_denied, ec))
-                        check_file(f.path());
-                }
-                for (const char* gc_name : {"GitHub.copilot-chat", "github.copilot-chat"}) {
-                    const fs::path gc = ws.path() / gc_name;
-                    if (!fs::is_directory(gc, ec)) continue;
-                    const fs::path tr = gc / "transcripts";
-                    if (fs::is_directory(tr, ec)) {
-                        for (const auto& f : fs::directory_iterator(tr, fs::directory_options::skip_permission_denied, ec))
-                            check_file(f.path());
-                    }
-                    const fs::path dl = gc / "debug-logs";
-                    if (fs::is_directory(dl, ec)) {
-                        for (const auto& sub : fs::directory_iterator(dl, fs::directory_options::skip_permission_denied, ec)) {
-                            if (fs::is_directory(sub.path(), ec)) check_file(sub.path() / "main.jsonl");
-                        }
-                    }
-                }
-            }
-        }
-    }
-    copilot_scan_initialized_ = true;
-
-    if (file_changed) {
-        sink_->emit(ev::ide_ai_activity, {
-            {"tool", "github-copilot"},
-            {"ide", "vscode"},
-            {"evidence", "file_activity"},
-            {"detail", detail_file},
-            {"confidence", "medium"},
-            {"meaning", "IDE AI extension storage was written to"},
-            {"not_meaning", "Does not prove chat use; inline completions, sign-in or telemetry produce the same signal"},
-            {"user", active_user()}
-        });
-        wake_uplink();
-    }
 }
 
 void Agent::check_helpers() {
@@ -1191,10 +693,6 @@ bool Agent::poll_enrollment() {
         cfg_.token = j["token"].get<std::string>();
         cfg_.poll_token.clear();
         cfg_.save(config_path_);
-        if (!realtime_cfg_.is_null() && realtime_cfg_.is_object()) {
-            realtime_cfg_["channel"] = "private-pc." + cfg_.pc_id;
-            if (queue_) queue_->kv_set("realtime", realtime_cfg_.dump());
-        }
         if (auto h = crypto::sha256_file_hex(config_path_)) file_hashes_[config_path_] = *h;
         log::info("enrollment approved: this PC is #{}", cfg_.pc_id);
         policy_dirty_ = true;
@@ -1261,12 +759,8 @@ bool Agent::flush_once() {
     const Policy p = policy();
     if (ack->policy_version != 0 && ack->policy_version != p.version) policy_dirty_ = true;
     if (!ack->signatures_version.empty() && ack->signatures_version != rules_.version()) policy_dirty_ = true;
-    if (ack->isolated) {
-        renew_isolation(steady_ms(), ack->isolation_lease_s);
-    } else if (status_.isolated.load() || isolation_enforced_) {
-        status_.isolated = false;
-        isolation_reason_.clear();
-        apply_network_isolation(false);
+    if (ack->isolated != status_.isolated.load()) {
+        status_.isolated = ack->isolated;
         push_helper_config();
     }
     return included == events.size() || included > 0;
@@ -1328,20 +822,10 @@ void Agent::realtime_loop(std::atomic<bool>& stop) {
         std::thread watcher([&] {
             while (!stop && !session_stop) {
                 status_.realtime_connected = client.connected();
-                const std::string desired_channel =
-                    realtime_cfg_.is_object() ? realtime_cfg_.value("channel", "private-pc." + cfg_.pc_id)
-                                              : ("private-pc." + cfg_.pc_id);
-                const std::string desired_key =
-                    realtime_cfg_.is_object() ? realtime_cfg_.value("app_key", "") : "";
-                if (desired_channel != pc.channel || desired_key != pc.app_key) {
-                    session_stop = true;
-                    break;
-                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
             }
-            if (stop) session_stop = true;
         });
-        client.run(session_stop);
+        client.run(stop);
         session_stop = true;
         watcher.join();
         status_.realtime_connected = false;
@@ -1364,13 +848,8 @@ void Agent::handle_command(const protocol::Command& cmd) {
                        cmd.args.value("urgent", false));
         command_result(cmd.id, "ok", {{"helpers", status_.helpers_connected.load()}});
     } else if (cmd.type == "kill") {
-        const Policy pol = policy();
-        if (pol.mode != Mode::test) {
-            log::warn("command: ignoring kill outside Test mode (current mode: {})", to_string(pol.mode));
-            command_result(cmd.id, "ignored", {{"reason", "not_in_test_mode"}});
-            return;
-        }
         json killed = json::array();
+        const Policy pol = policy();
         std::vector<int64_t> pids;
         if (cmd.args.contains("pid") && cmd.args["pid"].is_number_integer()) pids.push_back(cmd.args["pid"].get<int64_t>());
         if (cmd.args.contains("exe") && cmd.args["exe"].is_string() && plat_.processes) {
@@ -1390,22 +869,11 @@ void Agent::handle_command(const protocol::Command& cmd) {
         notify_student("XephyGuard", "A program was closed by your instructor.", false);
         command_result(cmd.id, "ok", {{"processes", killed}});
     } else if (cmd.type == "isolate_notice") {
-        const bool iso = cmd.args.value("isolated", false);
-        const int lease_s = cmd.args.value("lease_s", 600);
-        const std::string reason = cmd.args.value("reason", std::string{});
-        if (iso) {
-            renew_isolation(steady_ms(), lease_s, reason);
-            push_helper_config();
-            std::string msg = "Network access for this PC was paused by the instructor.";
-            if (!reason.empty()) msg += " Reason: " + reason;
-            notify_student("XephyGuard", msg, true);
-        } else {
-            status_.isolated = false;
-            isolation_reason_.clear();
-            apply_network_isolation(false);
-            push_helper_config();
-            notify_student("XephyGuard", "Network access for this PC was restored.", true);
-        }
+        status_.isolated = cmd.args.value("isolated", false);
+        push_helper_config();
+        notify_student("XephyGuard", status_.isolated ? "Network access for this PC was paused by the instructor."
+                                                      : "Network access for this PC was restored.",
+                       true);
         command_result(cmd.id, "ok", json::object());
     } else if (cmd.type == "rescan") {
         const auto what = cmd.args.value("what", "all");
@@ -1469,7 +937,6 @@ void Agent::reevaluate_all() {
 }
 
 void Agent::run_periodic(int64_t now) {
-    check_isolation_lease(now);
     if (reevaluate_.exchange(false)) reevaluate_all();
     const Policy p = policy();
     auto due = [&](const char* k, int s) {
@@ -1486,7 +953,6 @@ void Agent::run_periodic(int64_t now) {
     if (p.collect.network && (network_dirty_.exchange(false) || due("net", 30))) scan_network();
     if (p.collect.extensions && (rescan_extensions_.exchange(false) || due("ext", p.intervals.extension_scan_s)))
         scan_extensions();
-    if (due("copilot", 3)) scan_copilot_activity(now);
     flush_keystats(now_ms(), false);
     if (due("files", 10)) flush_file_activity();
     if (p.collect.gpu && due("gpu", p.intervals.gpu_sample_s)) sample_gpu();
@@ -1574,8 +1040,6 @@ int Agent::run(std::atomic<bool>& stop) {
     for (auto& t : threads_) t.join();
     threads_.clear();
     if (cfg_.enrolled()) flush_once();
-    if (isolation_enforced_) apply_network_isolation(false);
-    if (!active_blocked_domains_.empty()) apply_hosts_blocklist({});
     queue_->kv_set("clean_shutdown", "1");
     if (plat_.processes) plat_.processes->stop();
     if (plat_.network) plat_.network->stop();

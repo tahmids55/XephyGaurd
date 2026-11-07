@@ -16,12 +16,6 @@ class SignatureVersion extends Model
 
     public function envelope(): array
     {
-        return [
-            'version' => $this->version,
-            'bundle' => $this->bundle,
-            'signature' => $this->signature,
-            'sha256' => $this->sha256,
-            'signer_cert' => \App\Services\CertificateAuthority::fromConfig()->signingCertPem(),
-        ];
+        return ['version' => $this->version, 'bundle' => $this->bundle, 'signature' => $this->signature];
     }
 }

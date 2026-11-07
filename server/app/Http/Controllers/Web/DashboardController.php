@@ -24,20 +24,6 @@ class DashboardController extends Controller
     {
         $lab = Lab::current();
         $session = LabSession::activeFor($lab->id);
-        $since = $session?->started_at ?? now()->subHours(2);
-
-        $events = Event::query()
-            ->where(fn ($q) => $session ? $q->where('lab_session_id', $session->id)->orWhere('occurred_at', '>=', $since) : $q->where('occurred_at', '>=', $since))
-            ->whereNotIn('type', ['key_stats', 'heartbeat'])
-            ->get(['type', 'data']);
-        $blockedNetCount = NetEvent::query()
-            ->where(fn ($q) => $session ? $q->where('lab_session_id', $session->id)->orWhere('occurred_at', '>=', $since) : $q->where('occurred_at', '>=', $since))
-            ->where('action', 'blocked')
-            ->count();
-
-        $installedCount = $events->filter(fn (Event $e) => $e->event_class === 'installed')->count();
-        $activeCount = $events->filter(fn (Event $e) => $e->event_class === 'active')->count();
-        $blockedCount = $events->filter(fn (Event $e) => $e->event_class === 'blocked')->count() + $blockedNetCount;
 
         return view('dashboard.live', [
             'lab' => $lab,
@@ -46,14 +32,6 @@ class DashboardController extends Controller
             'pcs' => Pc::query()->active()->where('lab_id', $lab->id)->orderBy('name')->get()->map->tile(),
             'profiles' => Profile::query()->orderBy('mode')->get(['id', 'name', 'mode']),
             'recentAlerts' => Alert::query()->with('pc:id,name')->latest('occurred_at')->limit(15)->get()->map->broadcastPayload(),
-            'installed_count' => $installedCount,
-            'active_count' => $activeCount,
-            'blocked_count' => $blockedCount,
-            'evidenceCounts' => [
-                'installed' => $installedCount,
-                'active' => $activeCount,
-                'blocked' => $blockedCount,
-            ],
         ]);
     }
 
@@ -62,10 +40,7 @@ class DashboardController extends Controller
     {
         $session = LabSession::activeFor($pc->lab_id);
         $since = $session?->started_at ?? now()->subHours(2);
-        $inWindow = fn ($q) => $session
-            ? $q->where('lab_session_id', $session->id)->orWhere('occurred_at', '>=', $since)
-            : $q->where('occurred_at', '>=', $since);
-        $events = Event::query()->where('pc_id', $pc->id)->where($inWindow)
+        $events = Event::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)
             ->whereNotIn('type', ['key_stats', 'heartbeat'])->latest('occurred_at')->limit(200)->get(['type', 'occurred_at', 'data', 'user']);
         $keys = KeyStat::query()->where('pc_id', $pc->id)->where('window_start', '>=', $since)->orderBy('window_start')
             ->get(['window_start', 'window_s', 'keys', 'backspaces', 'paste_chords']);
@@ -73,48 +48,18 @@ class DashboardController extends Controller
         $perMinute = $keys->groupBy(fn ($k) => $k->window_start->format('H:i'))->map(fn ($g) => [
             'keys' => $g->sum('keys'), 'backspaces' => $g->sum('backspaces'), 'pastes' => $g->sum('paste_chords'),
         ]);
-        $network = NetEvent::query()->where('pc_id', $pc->id)->where($inWindow)->latest('occurred_at')
-            ->limit(100)->get(['host', 'path', 'layer', 'action', 'category', 'occurred_at']);
-        $alerts = Alert::query()->where('pc_id', $pc->id)->where($inWindow)->latest('occurred_at')
-            ->limit(50)->get(['id', 'rule_id', 'category', 'severity', 'title', 'details', 'occurred_at', 'acknowledged_at']);
-
-        $installedCount = $events->filter(fn (Event $e) => $e->event_class === 'installed')->count();
-        $activeCount = $events->filter(fn (Event $e) => $e->event_class === 'active')->count();
-        $blockedCount = $events->filter(fn (Event $e) => $e->event_class === 'blocked')->count()
-            + $network->where('action', 'blocked')->count();
 
         return response()->json([
             'pc' => $pc->tile() + ['hostname' => $pc->hostname, 'os_version' => $pc->os_version, 'ip' => $pc->ip,
                 'capabilities' => $pc->capabilities, 'usage' => $pc->usage, 'agent_version' => $pc->agent?->version],
-            'installed_count' => $installedCount,
-            'active_count' => $activeCount,
-            'blocked_count' => $blockedCount,
-            'evidence_counts' => [
-                'installed' => $installedCount,
-                'active' => $activeCount,
-                'blocked' => $blockedCount,
-            ],
-            'alerts' => $alerts,
-            'timeline' => $events->map(function (Event $e) {
-                $meta = $e->evidence_meta;
-
-                return [
-                    'type' => $e->type,
-                    'at' => $e->occurred_at->format('H:i:s'),
-                    'summary' => self::summarize($e->type, $e->data),
-                    'user' => $e->user,
-                    'event_class' => $meta['event_class'],
-                    'confidence' => $meta['confidence'],
-                    'evidence_meta' => $meta,
-                    'what_it_means' => $e->data['what_it_means'] ?? $e->data['meaning'] ?? $meta['what_it_means'],
-                    'what_it_does_not_mean' => $e->data['what_it_does_not_mean'] ?? $e->data['not_meaning'] ?? $meta['what_it_does_not_mean'],
-                    'meaning' => $e->data['meaning'] ?? $meta['what_it_means'],
-                    'not_meaning' => $e->data['not_meaning'] ?? $meta['what_it_does_not_mean'],
-                ];
-            }),
+            'alerts' => Alert::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)->latest('occurred_at')
+                ->limit(50)->get(['id', 'rule_id', 'severity', 'title', 'occurred_at', 'acknowledged_at']),
+            'timeline' => $events->map(fn ($e) => ['type' => $e->type, 'at' => $e->occurred_at->format('H:i:s'),
+                'summary' => self::summarize($e->type, $e->data), 'user' => $e->user]),
             'processes' => $events->whereIn('type', ['process_start', 'process_stop'])->values()
                 ->map(fn ($e) => ['at' => $e->occurred_at->format('H:i:s'), 'type' => $e->type, 'exe' => $e->data['exe'] ?? '', 'rule' => $e->data['rule_id'] ?? '']),
-            'network' => $network,
+            'network' => NetEvent::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)->latest('occurred_at')
+                ->limit(100)->get(['host', 'path', 'layer', 'action', 'category', 'occurred_at']),
             'pastes' => PasteEvent::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)->latest('occurred_at')
                 ->limit(100)->get(['is_copy', 'chars', 'lines', 'looks_like_code', 'source_app', 'target_app', 'occurred_at']),
             'keyrate' => ['labels' => $perMinute->keys()->values(), 'series' => $perMinute->values()],
@@ -138,10 +83,6 @@ class DashboardController extends Controller
             'agent_started' => 'agent started (previous exit: '.($d['previous_exit'] ?? '?').')',
             'agent_stopping' => 'agent stopping',
             'command_result' => 'command '.($d['command_id'] ?? '').': '.($d['status'] ?? ''),
-            'ide_ai_activity' => 'IDE AI ('.($d['confidence'] ?? 'medium').'): '.($d['tool'] ?? '?').' in '.($d['ide'] ?? '?')
-                .(isset($d['meaning']) ? ' — '.$d['meaning'] : '')
-                .(isset($d['not_meaning']) ? ' (Note: '.$d['not_meaning'].')' : ''),
-            'isolation_lease_expired' => 'isolation lease expired after '.($d['lease_s'] ?? '?').'s (network restored)',
             default => $type,
         };
     }

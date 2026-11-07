@@ -45,18 +45,12 @@ struct Policy {
     std::set<std::string> disabled_rules;
     std::vector<std::string> work_dirs;       // e.g. "~/lab", "%USERPROFILE%\\Documents\\Lab"
     std::set<std::string> kill_exempt;        // never kill these normalized exe names
-    std::vector<std::string> blocked_domains; // host-level DNS sinkhole domains
     std::string signatures_version;
     std::string notice_text;                  // indicator / banner text
-    std::string ai_policy = "forbidden";      // "forbidden" | "permitted_with_disclosure" | "open"
-    std::string target_agent_version;         // pinned agent version for staged rollout / canary
 
     static Policy default_for(Mode m);
     static Policy from_json(const json& j, std::string* err = nullptr);
     json to_json() const;
-
-    /// Clamps collectors and title_capture to the ETHICS.md tiered collection table (Contract C1).
-    void clamp_for_mode();
 
     std::vector<Action> actions_for(const std::string& rule_id, Severity sev) const;
     bool rule_enabled(const std::string& rule_id) const { return !disabled_rules.contains(rule_id); }
