@@ -1,10 +1,15 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 #include "fakes.hpp"
 #include "xg/agent.hpp"
 #include "xg/config.hpp"
+#include "xg/crypto.hpp"
 #include "xg/event_queue.hpp"
 #include "xg/keystats.hpp"
 #include "xg/paste.hpp"
@@ -294,4 +299,165 @@ TEST_CASE("route parsing and hosts blocklist helpers") {
     CHECK(with_block.find("0.0.0.0 www.chatgpt.com") != std::string::npos);
     const std::string restored = update_hosts_blocklist_content(with_block, {}, "\n");
     CHECK(restored == base_hosts);
+}
+
+TEST_CASE("Agent::apply_signatures verifies signer_cert chain and falls back to root CA (P1-C1)") {
+    auto add_ext = [](X509* issuer, X509* subj, int nid, const char* val) {
+        X509V3_CTX ctx;
+        X509V3_set_ctx_nodb(&ctx);
+        X509V3_set_ctx(&ctx, issuer, subj, nullptr, nullptr, 0);
+        X509_EXTENSION* ex = X509V3_EXT_conf_nid(nullptr, &ctx, nid, val);
+        REQUIRE(ex != nullptr);
+        REQUIRE(X509_add_ext(subj, ex, -1) == 1);
+        X509_EXTENSION_free(ex);
+    };
+    auto to_pem = [](X509* c) {
+        BIO* b = BIO_new(BIO_s_mem());
+        REQUIRE(PEM_write_bio_X509(b, c) == 1);
+        char* d = nullptr;
+        long n = BIO_get_mem_data(b, &d);
+        std::string s(d, size_t(n));
+        BIO_free(b);
+        return s;
+    };
+    auto sign_b64 = [](EVP_PKEY* k, const std::string& data) {
+        EVP_MD_CTX* mctx = EVP_MD_CTX_new();
+        REQUIRE(EVP_DigestSignInit(mctx, nullptr, EVP_sha256(), nullptr, k) == 1);
+        size_t len = 0;
+        REQUIRE(EVP_DigestSign(mctx, nullptr, &len, reinterpret_cast<const unsigned char*>(data.data()), data.size()) == 1);
+        std::string sig(len, '\0');
+        REQUIRE(EVP_DigestSign(mctx, reinterpret_cast<unsigned char*>(sig.data()), &len,
+                               reinterpret_cast<const unsigned char*>(data.data()), data.size()) == 1);
+        sig.resize(len);
+        EVP_MD_CTX_free(mctx);
+        return crypto::base64_encode(sig);
+    };
+
+    EVP_PKEY* ca_key = EVP_EC_gen("P-256");
+    X509* ca = X509_new();
+    X509_set_version(ca, 2);
+    ASN1_INTEGER_set(X509_get_serialNumber(ca), 1);
+    X509_gmtime_adj(X509_getm_notBefore(ca), -60);
+    X509_gmtime_adj(X509_getm_notAfter(ca), 3600);
+    X509_set_pubkey(ca, ca_key);
+    X509_NAME_add_entry_by_txt(X509_get_subject_name(ca), "CN", MBSTRING_ASC,
+                               reinterpret_cast<const unsigned char*>("Lab Root CA"), -1, -1, 0);
+    X509_set_issuer_name(ca, X509_get_subject_name(ca));
+    add_ext(ca, ca, NID_basic_constraints, "critical,CA:TRUE");
+    add_ext(ca, ca, NID_key_usage, "critical,keyCertSign,cRLSign,digitalSignature");
+    REQUIRE(X509_sign(ca, ca_key, EVP_sha256()) > 0);
+
+    EVP_PKEY* signer_key = EVP_EC_gen("P-256");
+    X509* signer = X509_new();
+    X509_set_version(signer, 2);
+    ASN1_INTEGER_set(X509_get_serialNumber(signer), 2);
+    X509_gmtime_adj(X509_getm_notBefore(signer), -60);
+    X509_gmtime_adj(X509_getm_notAfter(signer), 3600);
+    X509_set_pubkey(signer, signer_key);
+    X509_NAME_add_entry_by_txt(X509_get_subject_name(signer), "CN", MBSTRING_ASC,
+                               reinterpret_cast<const unsigned char*>("Lab Signature Signer"), -1, -1, 0);
+    X509_set_issuer_name(signer, X509_get_subject_name(ca));
+    add_ext(ca, signer, NID_basic_constraints, "critical,CA:FALSE");
+    add_ext(ca, signer, NID_key_usage, "critical,digitalSignature");
+    add_ext(ca, signer, NID_ext_key_usage, "critical,codeSigning");
+    REQUIRE(X509_sign(signer, ca_key, EVP_sha256()) > 0);
+
+    auto dir = fs::temp_directory_path() / ("xg-sig-" + random_hex(4));
+    fs::create_directories(dir);
+    Config cfg = Config::defaults();
+    cfg.data_dir = dir.string();
+    cfg.ca_file = (dir / "ca.crt").string();
+    REQUIRE(write_file_atomic(cfg.ca_file, to_pem(ca)));
+
+    ServicePlatform plat;
+    Agent agent(cfg, (dir / "agent.toml").string(), plat);
+
+    const std::string bundle_str = test::sample_signatures().dump();
+    json env_with_signer = {
+        {"version", "test-2026"},
+        {"bundle", bundle_str},
+        {"signature", sign_b64(signer_key, bundle_str)},
+        {"signer_cert", to_pem(signer)},
+    };
+    CHECK(agent.apply_signatures(env_with_signer, /*require_signature=*/true));
+
+    // Invalid signature with signer_cert is rejected.
+    json env_bad_sig = env_with_signer;
+    env_bad_sig["signature"] = sign_b64(ca_key, bundle_str);
+    CHECK_FALSE(agent.apply_signatures(env_bad_sig, /*require_signature=*/true));
+
+    // Legacy envelope without signer_cert (or null signer_cert) falls back to root CA.
+    json env_legacy = {
+        {"version", "test-legacy"},
+        {"bundle", bundle_str},
+        {"signature", sign_b64(ca_key, bundle_str)},
+        {"signer_cert", nullptr},
+    };
+    CHECK(agent.apply_signatures(env_legacy, /*require_signature=*/true));
+
+    X509_free(signer);
+    EVP_PKEY_free(signer_key);
+    X509_free(ca);
+    EVP_PKEY_free(ca_key);
+    fs::remove_all(dir);
+}
+
+TEST_CASE("Policy round-trips ai_policy and target_agent_version and strips punitive AI actions in disclosure mode (P3-C2)") {
+    json j = {
+        {"version", 15},
+        {"mode", "test"},
+        {"session_id", 42},
+        {"ai_policy", "permitted_with_disclosure"},
+        {"target_agent_version", "1.2.0"},
+        {"actions", {{"rules", {{"proc.ollama", {"log", "warn", "kill", "alert"}}}}}},
+    };
+    Policy p = Policy::from_json(j);
+    CHECK(p.ai_policy == "permitted_with_disclosure");
+    CHECK(p.target_agent_version == "1.2.0");
+
+    // In permitted_with_disclosure mode, kill and warn are stripped from AI rules.
+    auto acts = p.actions_for("proc.ollama", Severity::high);
+    CHECK(std::find(acts.begin(), acts.end(), Action::kill) == acts.end());
+    CHECK(std::find(acts.begin(), acts.end(), Action::warn) == acts.end());
+    CHECK(std::find(acts.begin(), acts.end(), Action::log) != acts.end());
+
+    // Round-trip preserves ai_policy and target_agent_version.
+    Policy roundtrip = Policy::from_json(p.to_json());
+    CHECK(roundtrip.ai_policy == "permitted_with_disclosure");
+    CHECK(roundtrip.target_agent_version == "1.2.0");
+    CHECK(roundtrip.to_json() == p.to_json());
+
+    // Agent::handle_rule_hit does not kill processes or send warning popups when ai_policy == permitted_with_disclosure.
+    auto dir = fs::temp_directory_path() / ("xg-aipol-" + random_hex(4));
+    fs::create_directories(dir);
+    Config cfg = Config::defaults();
+    cfg.data_dir = dir.string();
+    ServicePlatform plat;
+    auto procs_ptr = std::make_unique<test::FakeProcesses>();
+    auto* procs = procs_ptr.get();
+    procs->procs = {{500, 1, "/usr/bin/ollama", "ollama", "", "alice", 0, 100}};
+    plat.processes = std::move(procs_ptr);
+    auto ipc_ptr = std::make_unique<test::FakeIpc>();
+    auto* ipc = ipc_ptr.get();
+    plat.ipc = std::move(ipc_ptr);
+    VectorSink sink;
+
+    Agent agent(cfg, (dir / "agent.toml").string(), plat);
+    agent.set_sink_for_tests(&sink);
+    json env{{"version", "test-1"}, {"bundle", test::sample_signatures().dump()}};
+    REQUIRE(agent.apply_signatures(env, false));
+    agent.apply_policy(p);
+    agent.on_process_started(procs->procs[0]);
+
+    CHECK(procs->killed.empty());
+    CHECK(ipc->count_containing("\"notify\"") == 0);
+    bool found_hit = false;
+    for (const auto& ev : sink.events) {
+        if (ev.type == ev::rule_hit) {
+            found_hit = true;
+            CHECK(ev.data.value("ai_policy", "") == "permitted_with_disclosure");
+        }
+    }
+    CHECK(found_hit);
+    fs::remove_all(dir);
 }

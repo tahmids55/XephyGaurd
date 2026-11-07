@@ -50,3 +50,34 @@ def test_evidence_matching_and_tables(tmp_path):
     assert "| agent | 2 | 0 | 1 | 1 | 50% |" in md
     assert "| **overall** | 3 | 1 | 1 | 1 | 33% |" in md
     assert "\\toprule" in redteam.table_latex(rows)
+
+
+def test_pilot_governance_summary_and_fairness():
+    sys.path.insert(0, str(ROOT / "export"))
+    sys.path.insert(0, str(ROOT.parent / "analysis"))
+    import metrics  # noqa: E402
+    from xg_analysis.fairness import audit_fairness  # noqa: E402
+
+    records = [
+        {"student_id": "s1", "group": "native_typist", "ground_truth_honest": True, "score": 10.0, "exempt": False},
+        {"student_id": "s2", "group": "non_native_typist", "ground_truth_honest": True, "score": 15.0, "exempt": False},
+        {"student_id": "s3", "group": "accommodated", "ground_truth_honest": True, "score": 90.0, "exempt": True},
+        {"student_id": "s4", "group": "native_typist", "ground_truth_honest": False, "score": 88.0, "rule_hits": ["proc.ollama"]},
+    ]
+    fairness = audit_fairness(records, score_threshold=50.0)
+    appeals = [
+        {"id": 1, "status": "overturned"},
+        {"id": 2, "status": "upheld"},
+        {"id": 3, "status": "upheld"},
+        {"id": 4, "status": "noted"},
+        {"id": 5, "status": "open"},
+    ]
+    gov = metrics.summarize_pilot_governance(appeals, fairness)
+    assert gov["appeals_total"] == 5
+    assert gov["appeals_open"] == 1
+    assert gov["appeals_decided"] == 4
+    assert gov["appeals_overturned"] == 1
+    assert gov["overturn_rate"] == 0.25
+    assert gov["passes_fairness_gate"] is True
+    assert gov["max_fpr_gap"] == 0.0
+    assert gov["low_precision_rules"] == []

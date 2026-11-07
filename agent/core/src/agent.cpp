@@ -282,7 +282,9 @@ bool Agent::apply_signatures(const json& env, bool require_signature) {
     if (require_signature) {
         bool ok = false;
         const std::string ca = read_file(cfg_.ca_file, &ok);
-        if (!ok || !crypto::verify_signature(bundle, env.value("signature", ""), ca)) {
+        const std::string signer_cert =
+            (env.contains("signer_cert") && env["signer_cert"].is_string()) ? env.value("signer_cert", "") : "";
+        if (!ok || !crypto::verify_signature_with_chain(bundle, env.value("signature", ""), ca, signer_cert)) {
             log::error("signatures: bundle {} has an invalid signature; keeping {}", env.value("version", "?"),
                        rules_.version());
             sink_->emit(ev::tamper, {{"kind", "signature_invalid"}, {"bundle_version", env.value("version", "")}});
@@ -317,8 +319,13 @@ void Agent::handle_rule_hit(const RuleHit& hit, const std::string& subject, json
     const auto actions = pol.actions_for(hit.rule_id, hit.severity);
     const bool is_inventory =
         hit.rule_id.starts_with("ext.") || hit.rule_id.starts_with("file.") || hit.category == "local_model";
-    // Contract C4: Kills only when an active Test session exists AND the profile action includes kill.
-    const bool wants_kill = (pol.mode == Mode::test) && !is_inventory &&
+    const bool is_ai_rule = hit.rule_id.starts_with("proc.") || hit.rule_id.starts_with("ext.") ||
+                            hit.rule_id.starts_with("ide.") || hit.rule_id.starts_with("port.") ||
+                            hit.rule_id.starts_with("file.") || hit.category == "local_model";
+    const bool ai_permitted = (pol.ai_policy == "permitted_with_disclosure" || pol.ai_policy == "open");
+    // Contract C4 & P3-C2: Kills only when an active Test session exists, AI policy is forbidden,
+    // AND the profile action includes kill.
+    const bool wants_kill = (pol.mode == Mode::test) && !is_inventory && !(ai_permitted && is_ai_rule) &&
                             (std::find(actions.begin(), actions.end(), Action::kill) != actions.end());
 
     auto do_kill = [&]() -> json {
@@ -347,7 +354,7 @@ void Agent::handle_rule_hit(const RuleHit& hit, const std::string& subject, json
     json result = json::object();
     for (auto a : actions) {
         if (a == Action::kill && !wants_kill) continue;
-        if (a == Action::warn && (pol.mode == Mode::always_on || is_inventory)) continue;
+        if (a == Action::warn && (pol.mode == Mode::always_on || is_inventory || (ai_permitted && is_ai_rule))) continue;
         taken.push_back(to_string(a));
         switch (a) {
             case Action::warn:
@@ -373,6 +380,7 @@ void Agent::handle_rule_hit(const RuleHit& hit, const std::string& subject, json
                                {"result", result},
                                {"context", std::move(context)},
                                {"mode", to_string(pol.mode)},
+                               {"ai_policy", pol.ai_policy},
                                {"session_id", pol.session_id},
                                {"user", active_user()}});
     wake_uplink();  // alerts should reach the CCC within seconds

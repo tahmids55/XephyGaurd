@@ -48,6 +48,8 @@ struct Policy {
     std::vector<std::string> blocked_domains; // host-level DNS sinkhole domains
     std::string signatures_version;
     std::string notice_text;                  // indicator / banner text
+    std::string ai_policy = "forbidden";      // "forbidden" | "permitted_with_disclosure" | "open"
+    std::string target_agent_version;         // pinned agent version for staged rollout / canary
 
     static Policy default_for(Mode m);
     static Policy from_json(const json& j, std::string* err = nullptr);

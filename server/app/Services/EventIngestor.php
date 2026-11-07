@@ -32,7 +32,8 @@ class EventIngestor
     public const TYPES = ['heartbeat', 'agent_started', 'agent_stopping', 'process_start', 'process_stop',
         'process_snapshot', 'rule_hit', 'listening_port', 'window_focus', 'paste', 'copy', 'key_stats', 'net_adapter',
         'device', 'extension_scan', 'artifact_scan', 'file_activity', 'gpu_sample', 'tamper', 'capabilities',
-        'command_result', 'helper_status', 'ide_ai_activity', 'isolation_lease_expired'];
+        'command_result', 'helper_status', 'ide_ai_activity', 'isolation_lease_expired',
+        'net_block', 'dns_block', 'sni_block', 'local_model'];
 
     private const TAMPER_TITLES = [
         'binary_hash_mismatch' => 'Agent binary does not match the installed package',
@@ -72,14 +73,20 @@ class EventIngestor
             $this->applyHeartbeat($agent, $pc, $hb, $ip, $session);
 
             $events = collect($batch['events'] ?? [])->filter(fn ($e) => $e['seq'] > $agent->last_seq)->sortBy('seq');
+            $aiPolicy = $session ? $this->policies->effectiveAiPolicy($pc) : 'open';
             $rows = [];
             foreach ($events as $e) {
                 $at = CarbonImmutable::createFromTimestampMs($e['ts'] + $offset);
                 $user = is_string($e['data']['user'] ?? null) ? mb_substr($e['data']['user'], 0, 64) : null;
+                $rawData = $e['data'];
+                if ($aiPolicy === 'permitted_with_disclosure' && self::isAiToolEvent($e['type'], $rawData)) {
+                    $rawData['ai_policy'] = 'permitted_with_disclosure';
+                }
+                $enrichedData = self::withEvidenceMeta($e['type'], $rawData);
                 $rows[] = [
                     'pc_id' => $pc->id, 'agent_id' => $agent->id, 'seq' => $e['seq'], 'lab_session_id' => $session?->id,
                     'type' => $e['type'], 'occurred_at' => $at, 'received_at' => now(), 'user' => $user,
-                    'data' => json_encode($e['data'], JSON_UNESCAPED_SLASHES),
+                    'data' => json_encode($enrichedData, JSON_UNESCAPED_SLASHES),
                 ];
             }
             foreach (array_chunk($rows, 200) as $chunk) {
@@ -87,7 +94,11 @@ class EventIngestor
             }
             foreach ($events as $e) {
                 $at = CarbonImmutable::createFromTimestampMs($e['ts'] + $offset);
-                if ($a = $this->derive($pc, $session, $e['type'], $e['data'], $at)) {
+                $rawData = $e['data'];
+                if ($aiPolicy === 'permitted_with_disclosure' && self::isAiToolEvent($e['type'], $rawData)) {
+                    $rawData['ai_policy'] = 'permitted_with_disclosure';
+                }
+                if ($a = $this->derive($pc, $session, $e['type'], self::withEvidenceMeta($e['type'], $rawData), $at)) {
                     $alerts[] = $a;
                 }
             }
@@ -209,6 +220,12 @@ class EventIngestor
                     || str_starts_with($ruleId, 'artifact.')
                     || in_array($cat, ['extension', 'artifact'], true)
                     || ($d['evidence'] ?? '') === 'extension_installed';
+
+                if (($d['event_class'] ?? '') === 'disclosure' || (($d['ai_policy'] ?? '') === 'permitted_with_disclosure' && self::isAiToolEvent($type, $d))) {
+                    $pc->last_event = mb_substr('Disclosed AI: '.$desc.' ('.$subject.')', 0, 160);
+
+                    return null;
+                }
 
                 $pc->last_event = mb_substr($desc.' ('.$subject.')', 0, 160);
 
@@ -346,7 +363,8 @@ class EventIngestor
                 // logged event + optional low-severity alert in Test only; never kill, never isolate, no popup.
                 if ($winTitle !== '' && mb_strtolower($winTitle) !== mb_strtolower($app) && ($match = $this->matchWindowAi($app, $winTitle))) {
                     $pc->last_event = mb_substr("Window title keyword (weak): {$match['name']} ({$winTitle})", 0, 160);
-                    if ($session && $session->mode === 'test' && config('xephyguard.window_title_alerts', true)) {
+                    $aiPolicy = $session ? $this->policies->effectiveAiPolicy($pc) : 'open';
+                    if ($session && $session->mode === 'test' && $aiPolicy === 'forbidden' && config('xephyguard.window_title_alerts', true)) {
                         $alertTitle = mb_substr("Window title keyword (weak): {$match['name']} in {$app} ({$winTitle})", 0, 200);
                         $dup = Alert::query()
                             ->where('pc_id', $pc->id)
@@ -374,6 +392,10 @@ class EventIngestor
                 $notMeaning = $str('not_meaning', 255) ?? 'Does not prove chat use; inline completions, sign-in or telemetry produce the same signal';
 
                 $pc->last_event = mb_substr("IDE AI ({$confidence}): {$tool} in {$ide} [{$evidence}]", 0, 160);
+
+                if (($d['event_class'] ?? '') === 'disclosure' || ($d['ai_policy'] ?? '') === 'permitted_with_disclosure') {
+                    return null;
+                }
 
                 if (! $session || $session->mode !== 'test') {
                     return null;
@@ -435,18 +457,201 @@ class EventIngestor
                 }
 
                 return null;
+
+            case 'net_block':
+            case 'dns_block':
+            case 'sni_block':
+                $host = $str('host', 120) ?? $str('subject', 120) ?? 'domain';
+                $pc->last_event = mb_substr("Blocked ({$type}): {$host}", 0, 160);
+
+                return null;
         }
 
         return null;
+    }
+
+    public static function isAiToolEvent(string $type, array $d = []): bool
+    {
+        if (in_array($type, ['ide_ai_activity', 'extension_scan', 'local_model'], true)) {
+            return true;
+        }
+        $ruleId = strtolower((string) ($d['rule_id'] ?? $d['id'] ?? ''));
+        $cat = strtolower((string) ($d['category'] ?? ''));
+        if ($type === 'rule_hit') {
+            if (str_starts_with($ruleId, 'tamper.') || $cat === 'tamper') {
+                return false;
+            }
+            if (
+                str_starts_with($ruleId, 'proc.')
+                || str_starts_with($ruleId, 'ide.')
+                || str_starts_with($ruleId, 'ext.')
+                || str_starts_with($ruleId, 'artifact.')
+                || str_starts_with($ruleId, 'port.')
+                || str_starts_with($ruleId, 'web.')
+                || in_array($cat, ['ai', 'ide', 'ide_ai', 'local_llm', 'extension', 'artifact', 'web_ai'], true)
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Classifies an event or alert into the Phase 1–4 evidence model (P1-C3, P4-C1):
+     * - event_class: 'installed' | 'active' | 'blocked' | 'behavioral' | 'system' | 'disclosure'
+     * - confidence: 'strong' | 'medium' | 'weak'
+     * - what_it_means: string
+     * - what_it_does_not_mean: string
+     *
+     * @return array{event_class: string, confidence: string, what_it_means: string, what_it_does_not_mean: string}
+     */
+    public static function classifyEvidence(string $type, array $d = []): array
+    {
+        $ruleId = strtolower((string) ($d['rule_id'] ?? $d['id'] ?? ''));
+        $cat = strtolower((string) ($d['category'] ?? ''));
+        $evidence = strtolower((string) ($d['evidence'] ?? ''));
+        $explicitConf = in_array($d['confidence'] ?? null, ['strong', 'medium', 'weak'], true) ? $d['confidence'] : null;
+
+        // 0. AI-Permitted with Disclosure Mode (P4-C1)
+        if ((($d['ai_policy'] ?? '') === 'permitted_with_disclosure' || ($d['event_class'] ?? '') === 'disclosure') && self::isAiToolEvent($type, $d)) {
+            return [
+                'event_class' => 'disclosure',
+                'confidence' => $explicitConf ?? 'medium',
+                'what_it_means' => (string) ($d['what_it_means'] ?? $d['meaning'] ?? 'AI tool activity logged transparently under AI-Permitted with Disclosure policy'),
+                'what_it_does_not_mean' => (string) ($d['what_it_does_not_mean'] ?? $d['not_meaning'] ?? 'Not a rule violation; AI assistance is permitted with disclosure in this session'),
+            ];
+        }
+
+        // 1. Blocked network/DNS/SNI attempts
+        if (
+            in_array($type, ['net_block', 'dns_block', 'sni_block'], true)
+            || in_array($cat, ['net_block', 'dns_block', 'sni_block', 'blocked'], true)
+            || str_starts_with($ruleId, 'net_block')
+            || str_starts_with($ruleId, 'dns_block')
+            || str_starts_with($ruleId, 'sni_block')
+            || (($d['action'] ?? '') === 'blocked' && isset($d['host']))
+        ) {
+            $confidence = $explicitConf ?? 'strong';
+            $means = (string) ($d['what_it_means'] ?? $d['meaning'] ?? 'A network connection or DNS query to a restricted domain was intercepted and blocked');
+            $notMeans = (string) ($d['what_it_does_not_mean'] ?? $d['not_meaning'] ?? 'The request was blocked before completion; background tabs, extensions or prefetchers can also trigger blocked lookups');
+
+            return [
+                'event_class' => 'blocked',
+                'confidence' => $confidence,
+                'what_it_means' => $means,
+                'what_it_does_not_mean' => $notMeans,
+            ];
+        }
+
+        // 2. Installed inventory (extensions, model files on disk, static artifacts)
+        if (
+            in_array($type, ['extension_scan', 'artifact_scan', 'local_model'], true)
+            || ($type === 'ide_ai_activity' && $evidence === 'extension_installed')
+            || str_starts_with($ruleId, 'ext.')
+            || str_starts_with($ruleId, 'artifact.')
+            || str_starts_with($ruleId, 'local_model')
+            || in_array($cat, ['extension', 'artifact', 'local_model'], true)
+            || $evidence === 'extension_installed'
+        ) {
+            $confidence = $explicitConf ?? 'weak';
+            $means = (string) ($d['what_it_means'] ?? $d['meaning'] ?? 'An AI extension, tool or model file is installed on disk in the user profile');
+            $notMeans = (string) ($d['what_it_does_not_mean'] ?? $d['not_meaning'] ?? 'Presence on disk does not prove the extension or model was actively used during this session');
+
+            return [
+                'event_class' => 'installed',
+                'confidence' => $confidence,
+                'what_it_means' => $means,
+                'what_it_does_not_mean' => $notMeans,
+            ];
+        }
+
+        // 3. Behavioral signals (paste, copy, key_stats, window_focus keyword match)
+        if (
+            in_array($type, ['paste', 'copy', 'key_stats', 'keystats', 'window_focus'], true)
+            || str_starts_with($ruleId, 'behavior.')
+            || str_starts_with($ruleId, 'web.')
+            || in_array($cat, ['behavior', 'web_ai'], true)
+        ) {
+            $confidence = $explicitConf ?? 'weak';
+            $defaultMeans = $type === 'window_focus' || str_starts_with($ruleId, 'web.')
+                ? 'Window title matched an AI-related keyword'
+                : 'Typing rhythm or clipboard size/code-likeness statistic was recorded';
+            $defaultNotMeans = $type === 'window_focus' || str_starts_with($ruleId, 'web.')
+                ? 'Does not prove AI use; an article, video, document or search result with this word in the title produces the same signal'
+                : 'No keystrokes or clipboard text are ever recorded; pasting assignment starter code or notes produces the same signal';
+
+            return [
+                'event_class' => 'behavioral',
+                'confidence' => $confidence,
+                'what_it_means' => (string) ($d['what_it_means'] ?? $d['meaning'] ?? $defaultMeans),
+                'what_it_does_not_mean' => (string) ($d['what_it_does_not_mean'] ?? $d['not_meaning'] ?? $defaultNotMeans),
+            ];
+        }
+
+        // 4. System & tamper events
+        if (
+            in_array($type, ['heartbeat', 'tamper', 'agent_started', 'agent_stopping', 'isolation_lease_expired', 'capabilities', 'command_result', 'helper_status', 'process_snapshot'], true)
+            || str_starts_with($ruleId, 'tamper.')
+            || $cat === 'tamper'
+        ) {
+            $confidence = $explicitConf ?? 'strong';
+            $defaultMeans = ($type === 'tamper' || str_starts_with($ruleId, 'tamper.') || $cat === 'tamper')
+                ? 'Agent integrity, service state or system clock anomaly was detected'
+                : 'Agent system lifecycle or telemetry event was recorded';
+            $defaultNotMeans = ($type === 'tamper' || str_starts_with($ruleId, 'tamper.') || $cat === 'tamper')
+                ? 'Power loss, OS updates or hardware resets can also cause service stops or clock drift'
+                : 'Routine operational telemetry, not evidence of misconduct';
+
+            return [
+                'event_class' => 'system',
+                'confidence' => $confidence,
+                'what_it_means' => (string) ($d['what_it_means'] ?? $d['meaning'] ?? $defaultMeans),
+                'what_it_does_not_mean' => (string) ($d['what_it_does_not_mean'] ?? $d['not_meaning'] ?? $defaultNotMeans),
+            ];
+        }
+
+        // 5. Active use (proc.*, port.*, ide_ai_activity file_activity/process, adapter.*, device.*, vm.*)
+        $isIdeActivity = $type === 'ide_ai_activity' || str_starts_with($ruleId, 'ide.ai.') || $cat === 'ide_ai';
+        $confidence = $explicitConf ?? ($isIdeActivity ? 'medium' : 'strong');
+        $defaultMeans = $isIdeActivity
+            ? 'IDE AI extension process or storage activity was observed during the session'
+            : 'An AI program, local model server, network adapter or device rule was actively triggered on this PC';
+        $defaultNotMeans = $isIdeActivity
+            ? 'Does not prove chat use; inline completions, sign-in or telemetry produce the same signal'
+            : 'Does not capture screen contents or prompt text; verify context with the student and session timeline';
+
+        return [
+            'event_class' => 'active',
+            'confidence' => $confidence,
+            'what_it_means' => (string) ($d['what_it_means'] ?? $d['meaning'] ?? $defaultMeans),
+            'what_it_does_not_mean' => (string) ($d['what_it_does_not_mean'] ?? $d['not_meaning'] ?? $defaultNotMeans),
+        ];
+    }
+
+    public static function withEvidenceMeta(string $type, array $d = []): array
+    {
+        $meta = self::classifyEvidence($type, $d);
+        $d['evidence_meta'] = $meta;
+        $d['event_class'] = $meta['event_class'];
+        $d['confidence'] = $meta['confidence'];
+        $d['what_it_means'] = $meta['what_it_means'];
+        $d['what_it_does_not_mean'] = $meta['what_it_does_not_mean'];
+        $d['meaning'] ??= $meta['what_it_means'];
+        $d['not_meaning'] ??= $meta['what_it_does_not_mean'];
+
+        return $d;
     }
 
     private function alert(Pc $pc, ?int $sid, string $rule, string $severity, ?string $category, string $title,
         array $details, CarbonImmutable $at, ?string $user): Alert
     {
         $severity = array_key_exists($severity, Alert::SEVERITY_POINTS) ? $severity : 'medium';
+        $detailsWithRule = $details + ['rule_id' => $rule, 'category' => $category];
+        $enrichedDetails = self::withEvidenceMeta('rule_hit', $detailsWithRule);
         $alert = Alert::create([
             'pc_id' => $pc->id, 'lab_session_id' => $sid, 'rule_id' => $rule, 'severity' => $severity,
-            'category' => $category, 'title' => mb_substr($title, 0, 200), 'details' => $details,
+            'category' => $category, 'title' => mb_substr($title, 0, 200), 'details' => $enrichedDetails,
             'user' => $user ?? $pc->current_user, 'occurred_at' => $at,
         ]);
         $alert->setRelation('pc', $pc);
@@ -536,6 +741,9 @@ class EventIngestor
     private function profileBlocksAi(Pc $pc, ?LabSession $session): bool
     {
         if (! $session) {
+            return false;
+        }
+        if ($this->policies->effectiveAiPolicy($pc) !== 'forbidden') {
             return false;
         }
         ['profile' => $profile] = $this->policies->effective($pc);

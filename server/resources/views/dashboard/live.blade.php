@@ -21,7 +21,10 @@
           <input name="duration_min" type="number" min="5" class="input w-28" placeholder="Minutes">
           <button class="btn btn-primary">Start session</button></form>
       @endif
-      <div class="ml-auto flex items-center gap-2 text-sm">
+      <div class="ml-auto flex flex-wrap items-center gap-2 text-sm">
+        <span class="badge bg-slate-100 text-slate-700" title="Static inventory on disk (extensions, local models)">Installed: {{ $installed_count ?? 0 }}</span>
+        <span class="badge bg-amber-100 text-amber-800" title="Active AI process, port or IDE activity">Active: {{ $active_count ?? 0 }}</span>
+        <span class="badge bg-indigo-100 text-indigo-800" title="Blocked DNS/SNI/Proxy network attempts">Blocked: {{ $blocked_count ?? 0 }}</span>
         <span class="badge bg-emerald-100 text-emerald-800" x-text="counts.clean + ' clean'"></span>
         <span class="badge bg-amber-100 text-amber-800" x-text="counts.warning + ' warning'"></span>
         <span class="badge bg-red-100 text-red-700" x-text="counts.alert + ' alert'"></span>

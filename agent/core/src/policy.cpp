@@ -154,12 +154,36 @@ Policy Policy::from_json(const json& j, std::string* err) {
             if (bd.is_string()) p.blocked_domains.push_back(to_lower(trim(bd.get<std::string>())));
         p.signatures_version = j.value("signatures_version", std::string{});
         if (j.contains("notice_text") && j["notice_text"].is_string()) p.notice_text = j["notice_text"].get<std::string>();
+        if (j.contains("ai_policy") && j["ai_policy"].is_string()) {
+            const auto ap = to_lower(trim(j["ai_policy"].get<std::string>()));
+            if (ap == "forbidden" || ap == "permitted_with_disclosure" || ap == "open") {
+                p.ai_policy = ap;
+            }
+        }
+        if (j.contains("target_agent_version") && j["target_agent_version"].is_string()) {
+            p.target_agent_version = trim(j["target_agent_version"].get<std::string>());
+        }
     } catch (const std::exception& e) {
         if (err) *err = e.what();
     }
     p.clamp_for_mode();
     return p;
 }
+
+namespace {
+bool is_ai_rule_id(const std::string& rule_id) {
+    return rule_id.starts_with("proc.") || rule_id.starts_with("ext.") || rule_id.starts_with("ide.") ||
+           rule_id.starts_with("port.") || rule_id.starts_with("file.");
+}
+
+std::vector<Action> strip_punitive_actions(std::vector<Action> actions) {
+    actions.erase(std::remove_if(actions.begin(), actions.end(),
+                                 [](Action a) { return a == Action::kill || a == Action::warn; }),
+                  actions.end());
+    if (actions.empty()) actions.push_back(Action::log);
+    return actions;
+}
+}  // namespace
 
 void Policy::clamp_for_mode() {
     switch (mode) {
@@ -176,6 +200,16 @@ void Policy::clamp_for_mode() {
             break;
         case Mode::test:
             break;
+    }
+    if (ai_policy == "permitted_with_disclosure" || ai_policy == "open") {
+        for (auto& [sev, list] : default_actions) {
+            list = strip_punitive_actions(std::move(list));
+        }
+        for (auto& [rid, list] : rule_actions) {
+            if (is_ai_rule_id(rid)) {
+                list = strip_punitive_actions(std::move(list));
+            }
+        }
     }
 }
 
@@ -214,14 +248,20 @@ json Policy::to_json() const {
         {"blocked_domains", blocked_domains},
         {"signatures_version", signatures_version},
         {"notice_text", notice_text},
+        {"ai_policy", ai_policy},
+        {"target_agent_version", target_agent_version},
     };
 }
 
 std::vector<Action> Policy::actions_for(const std::string& rule_id, Severity sev) const {
     if (!rule_enabled(rule_id)) return {};
-    if (auto it = rule_actions.find(rule_id); it != rule_actions.end()) return it->second;
-    if (auto it = default_actions.find(sev); it != default_actions.end()) return it->second;
-    return {Action::log};
+    std::vector<Action> out = {Action::log};
+    if (auto it = rule_actions.find(rule_id); it != rule_actions.end()) out = it->second;
+    else if (auto it = default_actions.find(sev); it != default_actions.end()) out = it->second;
+    if ((ai_policy == "permitted_with_disclosure" || ai_policy == "open") && is_ai_rule_id(rule_id)) {
+        out = strip_punitive_actions(std::move(out));
+    }
+    return out;
 }
 
 std::string Policy::filter_title(const std::string& app, const std::string& title) const {

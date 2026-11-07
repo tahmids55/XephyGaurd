@@ -109,7 +109,40 @@ class PolicyBuilder
     public static function alwaysOnProfile(): Profile
     {
         return Profile::query()->where('mode', 'always_on')->orderByDesc('builtin')->orderBy('id')->first()
-            ?? new Profile(['name' => 'Always-on', 'mode' => 'always_on', 'network' => [], 'agent' => ['title_capture' => 'off']]);
+            ?? new Profile(['name' => 'Always-on', 'mode' => 'always_on', 'ai_policy' => 'open', 'network' => [], 'agent' => ['title_capture' => 'off']]);
+    }
+
+    public function effectiveAiPolicy(Pc $pc): string
+    {
+        ['profile' => $profile, 'session' => $session, 'override' => $override] = $this->effective($pc);
+
+        return self::resolveAiPolicy($profile, $session, $override);
+    }
+
+    public static function resolveAiPolicy(Profile $profile, ?LabSession $session = null, ?SessionPc $override = null): string
+    {
+        if ($override?->overrideProfile) {
+            $p = $override->overrideProfile->ai_policy;
+
+            return in_array($p, Profile::AI_POLICIES, true) ? $p : 'forbidden';
+        }
+        if ($session) {
+            if (in_array($session->ai_policy, ['permitted_with_disclosure', 'open'], true)) {
+                return $session->ai_policy;
+            }
+            if (in_array($profile->ai_policy, ['permitted_with_disclosure', 'open'], true)) {
+                return $profile->ai_policy;
+            }
+
+            return in_array($session->ai_policy, Profile::AI_POLICIES, true)
+                ? $session->ai_policy
+                : (in_array($profile->ai_policy, Profile::AI_POLICIES, true) ? $profile->ai_policy : 'forbidden');
+        }
+        if ($profile->mode === 'always_on') {
+            return in_array($profile->ai_policy, Profile::AI_POLICIES, true) ? $profile->ai_policy : 'open';
+        }
+
+        return in_array($profile->ai_policy, Profile::AI_POLICIES, true) ? $profile->ai_policy : 'forbidden';
     }
 
     public static function clampTitleCapture(string $mode, ?string $requested): string
@@ -159,12 +192,17 @@ class PolicyBuilder
 
     public function forPc(Pc $pc): array
     {
-        ['profile' => $profile, 'session' => $session] = $this->effective($pc);
+        ['profile' => $profile, 'session' => $session, 'override' => $override] = $this->effective($pc);
         $mode = in_array($profile->mode, ['always_on', 'practice', 'test'], true) ? $profile->mode : 'always_on';
+        $aiPolicy = self::resolveAiPolicy($profile, $session, $override);
+        $aiPermitted = in_array($aiPolicy, ['permitted_with_disclosure', 'open'], true);
         $agent = $profile->agent ?? [];
         $net = $profile->network ?? [];
         $blockCats = $mode === 'always_on' ? [] : array_values($net['block_categories'] ?? []);
-        $blocksAi = ! empty($blockCats);
+        if ($aiPermitted) {
+            $blockCats = array_values(array_diff($blockCats, ['ai', 'ide']));
+        }
+        $blocksAi = ! $aiPermitted && ! empty($blockCats);
 
         $ruleActions = [];
         $disabled = [];
@@ -176,13 +214,21 @@ class PolicyBuilder
                 $isInv = in_array($r->kind, ['extension', 'artifact'], true)
                     || str_starts_with($r->rule_id, 'ext.')
                     || str_starts_with($r->rule_id, 'artifact.');
-                $ruleActions[$r->rule_id] = self::clampActionsForMode($mode, array_values($r->actions[$mode]), $blocksAi, $isInv);
+                $acts = self::clampActionsForMode($mode, array_values($r->actions[$mode]), $blocksAi, $isInv);
+                if ($aiPermitted) {
+                    $acts = array_values(array_diff($acts, ['kill', 'warn', 'isolate'])) ?: ['log'];
+                }
+                $ruleActions[$r->rule_id] = $acts;
             }
         }
         foreach ($agent['rule_actions'] ?? [] as $rid => $acts) {
             if (is_array($acts)) {
                 $isInv = str_starts_with((string) $rid, 'ext.') || str_starts_with((string) $rid, 'artifact.');
-                $ruleActions[$rid] = self::clampActionsForMode($mode, array_values($acts), $blocksAi, $isInv);
+                $clamped = self::clampActionsForMode($mode, array_values($acts), $blocksAi, $isInv);
+                if ($aiPermitted) {
+                    $clamped = array_values(array_diff($clamped, ['kill', 'warn', 'isolate'])) ?: ['log'];
+                }
+                $ruleActions[$rid] = $clamped;
             }
         }
 
@@ -204,14 +250,18 @@ class PolicyBuilder
             default => [
                 'info' => ['log'],
                 'low' => ['log'],
-                'medium' => ['log', 'alert'],
-                'high' => ['log', 'warn', 'alert'],
-                'critical' => ['log', 'warn', 'alert'],
+                'medium' => $aiPermitted ? ['log'] : ['log', 'alert'],
+                'high' => $aiPermitted ? ['log'] : ['log', 'warn', 'alert'],
+                'critical' => $aiPermitted ? ['log'] : ['log', 'warn', 'alert'],
             ],
         };
         foreach ($agent['default_actions'] ?? [] as $sev => $acts) {
             if (is_array($acts) && isset($defaultActions[$sev])) {
-                $defaultActions[$sev] = self::clampActionsForMode($mode, array_values($acts), $blocksAi, false);
+                $clamped = self::clampActionsForMode($mode, array_values($acts), $blocksAi, false);
+                if ($aiPermitted) {
+                    $clamped = array_values(array_diff($clamped, ['kill', 'warn', 'isolate'])) ?: ['log'];
+                }
+                $defaultActions[$sev] = $clamped;
             }
         }
 
@@ -222,7 +272,7 @@ class PolicyBuilder
         $titleCapture = self::clampTitleCapture($mode, is_string($requestedTitle) ? $requestedTitle : null);
         $collect = self::clampCollect($mode, is_array($agent['collect'] ?? null) ? $agent['collect'] : []);
 
-        if ($mode !== 'always_on' && in_array('ai', $blockCats, true) && ! in_array('ide', $blockCats, true)) {
+        if ($mode !== 'always_on' && ! $aiPermitted && in_array('ai', $blockCats, true) && ! in_array('ide', $blockCats, true)) {
             $blockCats[] = 'ide';
         }
         $blockedDomains = [];
@@ -238,6 +288,13 @@ class PolicyBuilder
                 ->values()
                 ->all();
         }
+
+        $locale = in_array(Setting::get('locale', 'en'), ['en', 'bn'], true) ? Setting::get('locale', 'en') : 'en';
+        $noticeText = $locale === 'bn'
+            ? trans('xephyguard.tray_notice', ['mode' => trans("xephyguard.modes.{$mode}.badge", [], 'bn')], 'bn')
+            : Setting::get('notice_text');
+
+        $targetAgentVersion = (string) ($profile->target_agent_version ?? Setting::get('target_agent_version', '') ?? '');
 
         $policy = array_filter([
             'pc_id' => $pc->id,
@@ -255,8 +312,11 @@ class PolicyBuilder
             'work_dirs' => $agent['work_dirs'] ?? Setting::get('work_dirs', ['~/lab', '~/Documents/Lab', '%USERPROFILE%\\Documents\\Lab']),
             'kill_exempt' => $agent['kill_exempt'] ?? [],
             'signatures_version' => SignatureVersion::active()?->version ?? '',
-            'notice_text' => Setting::get('notice_text'),
+            'notice_text' => $noticeText,
+            'notice_text_bn' => trans('xephyguard.tray_notice', ['mode' => trans("xephyguard.modes.{$mode}.badge", [], 'bn')], 'bn'),
         ], fn ($v) => $v !== null && $v !== []);
+        $policy['ai_policy'] = $aiPolicy;
+        $policy['target_agent_version'] = $targetAgentVersion;
         $policy['blocked_domains'] = $blockedDomains;
         $policy['session_id'] = $session?->id ?? 0;
         $policy['version'] = self::version($policy);

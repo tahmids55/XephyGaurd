@@ -4,16 +4,61 @@ namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
 use App\Models\Lab;
+use App\Models\LabSession;
 use App\Models\Setting;
 use App\Services\CertificateAuthority;
+use App\Services\PolicyBuilder;
+use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 
 /** Unauthenticated pages: the student notice, the CA certificate and the agent install scripts. */
 class PublicController extends Controller
 {
-    public function notice()
+    public function notice(Request $request)
     {
-        return view('public.notice', ['text' => Setting::get('notice_text'), 'lab' => Lab::query()->first()]);
+        $defaultLocale = in_array(Setting::get('locale', 'en'), ['en', 'bn'], true) ? Setting::get('locale', 'en') : 'en';
+        $lang = in_array($request->query('lang'), ['en', 'bn'], true) ? (string) $request->query('lang') : $defaultLocale;
+        app()->setLocale($lang);
+
+        $lab = Lab::query()->first();
+        $session = $lab ? LabSession::activeFor($lab->id) : null;
+        $profile = $session?->profile ?? PolicyBuilder::alwaysOnProfile();
+        $mode = in_array($profile->mode, ['always_on', 'practice', 'test'], true) ? $profile->mode : 'always_on';
+        $agentCfg = is_array($profile->agent ?? null) ? $profile->agent : [];
+        $netCfg = is_array($profile->network ?? null) ? $profile->network : [];
+
+        $requestedTitle = $agentCfg['title_capture'] ?? Setting::get(
+            "privacy.title_capture.$mode",
+            $mode === 'always_on' ? 'off' : 'app_only'
+        );
+        $titleCapture = PolicyBuilder::clampTitleCapture($mode, is_string($requestedTitle) ? $requestedTitle : null);
+        $collect = PolicyBuilder::clampCollect($mode, is_array($agentCfg['collect'] ?? null) ? $agentCfg['collect'] : []);
+        $aiPolicy = PolicyBuilder::resolveAiPolicy($profile, $session);
+        $aiPermitted = in_array($aiPolicy, ['permitted_with_disclosure', 'open'], true);
+        $blockCategories = $mode === 'always_on' ? [] : array_values($netCfg['block_categories'] ?? []);
+        if ($aiPermitted) {
+            $blockCategories = array_values(array_diff($blockCategories, ['ai', 'ide']));
+        }
+        $blocksAi = ! $aiPermitted && ! empty($blockCategories);
+        $leaseSeconds = (int) config('xephyguard.isolation_lease_seconds', 600);
+        $retentionDays = (int) Setting::get('retention_days_raw', 140);
+
+        return view('public.notice', [
+            'lang' => $lang,
+            'text' => Setting::get('notice_text'),
+            'lab' => $lab,
+            'session' => $session,
+            'profile' => $profile,
+            'mode' => $mode,
+            'aiPolicy' => $aiPolicy,
+            'collect' => $collect,
+            'titleCapture' => $titleCapture,
+            'blockCategories' => $blockCategories,
+            'blocksAi' => $blocksAi,
+            'leaseSeconds' => $leaseSeconds,
+            'leaseMinutes' => max(1, (int) round($leaseSeconds / 60)),
+            'retentionDays' => $retentionDays,
+        ]);
     }
 
     public function caCert(): Response

@@ -37,6 +37,7 @@ class SessionManager
             }
             $s = LabSession::create(array_merge([
                 'lab_id' => $lab->id, 'profile_id' => $profile->id, 'course' => $course, 'mode' => $profile->mode,
+                'ai_policy' => $profile->ai_policy ?? 'forbidden',
                 'status' => 'active', 'starts_at' => now(), 'ends_at' => $endsAt, 'started_at' => now(),
                 'started_by' => $by?->id,
             ], $extra));
@@ -78,7 +79,7 @@ class SessionManager
     public function switchProfile(LabSession $session, Profile $profile, ?User $by = null): void
     {
         $from = $session->profile?->name;
-        $session->forceFill(['profile_id' => $profile->id, 'mode' => $profile->mode])->save();
+        $session->forceFill(['profile_id' => $profile->id, 'mode' => $profile->mode, 'ai_policy' => $profile->ai_policy ?? 'forbidden'])->save();
         Audit::log('session.switch_mode', $session, ['from' => $from, 'to' => $profile->name, 'mode' => $profile->mode]);
         $this->propagate($session->fresh());
     }

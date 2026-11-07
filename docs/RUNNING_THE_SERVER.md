@@ -15,13 +15,10 @@ Pick one setup:
 
 | # | Setup | Use it for | Network layer |
 |---|---|---|---|
-| **A** | Linux, Docker, `install.sh` | **real labs (recommended)** | yes |
-| **B** | Linux, native (no Docker) | development, demos | optional |
-| **C** | Windows + WSL2 (Ubuntu inside Windows) | a lab whose only server is a Windows PC | proxy-only, untested |
-| **D** | Windows, native (PHP, nginx and Python for Windows) | development, demos | no |
-
-> Setups A and B were tested end to end. C and D follow the same steps on a different OS but have
-> **not been run on a real Windows machine yet**. Please report problems.
+| **A** | Linux, Docker, `install.sh` | **Primary production lab stack (recommended)** | yes |
+| **B** | Linux, native (no Docker) | development, demos, custom systemd hosts | optional |
+| **C** | Windows + WSL2 (Ubuntu inside Windows) | a lab whose server is a Windows 11/Server host needing proxy filtering | proxy-only |
+| **D** | Windows CCC service stack (`scripts/windows-ccc-service.ps1`) | **Supported Windows CCC deployment** (endpoint telemetry + dashboard, no Linux gateway) | no |
 
 Ports used on the lab network, all setups:
 
@@ -335,10 +332,57 @@ Ports 8000, 8081 and 8090 stay on `127.0.0.1` and must not be opened.
 
 Open `https://<Windows-PC-IP>/` and finish the wizard.
 
-To start everything automatically, wrap each command in a Windows service with
-[NSSM](https://nssm.cc) (`nssm install xg-web C:\php\php.exe artisan serve --host=127.0.0.1 --port=8000`,
-with the app directory set to `C:\xephyguard\server`) or use Task Scheduler. For anything beyond a
-demo, prefer setup A or C.
+To start and supervise everything automatically in production on Windows, use the built-in service wrapper `scripts/windows-ccc-service.ps1` (run PowerShell as Administrator). It registers `xg-ccc-web`, `xg-ccc-reverb`, `xg-ccc-worker`, `xg-ccc-scheduler`, `xg-ccc-analysis`, and `xg-ccc-nginx` via NSSM (when installed) with `sc.exe failure` auto-restart recovery, or via SYSTEM Scheduled Tasks with a 1-minute watchdog restart interval:
+
+```powershell
+# Register all 6 CCC background services with automatic restart on failure
+.\scripts\windows-ccc-service.ps1 install -RootDir C:\xephyguard -PhpExe C:\php\php.exe -NginxDir C:\nginx
+
+# Start, inspect status, and run an end-to-end /healthz readiness check
+.\scripts\windows-ccc-service.ps1 start
+.\scripts\windows-ccc-service.ps1 status
+.\scripts\windows-ccc-service.ps1 health
+```
+
+---
+
+## Observability, Backups & SBOM (All Setups)
+
+### 1. Health & Prometheus Metrics
+* **`GET /healthz`**: Returns JSON readiness status (`200 OK` when healthy, `503 Service Unavailable` when degraded):
+  ```json
+  {
+    "status": "ok",
+    "db": true,
+    "ca_initialized": true,
+    "active_signature_version": "2026.11.01",
+    "pcs_online": 28,
+    "pcs_isolated": 0,
+    "queue_depth": 0,
+    "timestamp": "2026-11-07T08:00:00+00:00"
+  }
+  ```
+* **`GET /metrics`**: Exports Prometheus text metrics (`xephyguard_pcs_total`, `xephyguard_pcs_online`, `xephyguard_pcs_isolated`, `xephyguard_pcs_silent`, `xephyguard_events_total`, `xephyguard_alerts_open_total` by severity, `xephyguard_agents_by_version`). Accessible from loopback (`127.0.0.1`), authenticated staff sessions, or via `Authorization: Bearer <XG_METRICS_TOKEN>`.
+
+### 2. Automated Backups & Verified Restore
+Create a signed/checksummed backup archive containing a consistent database dump, CA certificates and keys (`ca.crt`, `signing.crt`, `interception-ca.crt`), `.env` metadata, and a `manifest.json` with SHA-256 digests of every file:
+```bash
+php artisan xephyguard:backup --output=/var/backups/xephyguard-backup.tar.gz
+```
+Verify archive integrity (and dry-run restore verification) without modifying the live server:
+```bash
+php artisan xephyguard:restore /var/backups/xephyguard-backup.tar.gz --verify-only
+```
+Restore from a verified archive:
+```bash
+php artisan xephyguard:restore /var/backups/xephyguard-backup.tar.gz
+```
+
+### 3. CycloneDX 1.5 SBOM Generation
+Generate or refresh the CycloneDX 1.5 JSON Software Bill of Materials (`dist/sbom.cdx.json`) covering C++ (`agent/cmake/Dependencies.cmake`), PHP (`server/composer.lock`), and Python (`analysis/requirements.txt`, `proxy/requirements.txt`) dependencies:
+```bash
+python3 scripts/generate-sbom.py --output dist/sbom.cdx.json
+```
 
 ---
 

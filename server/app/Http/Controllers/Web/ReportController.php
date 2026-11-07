@@ -5,11 +5,14 @@ namespace App\Http\Controllers\Web;
 use App\Http\Controllers\Controller;
 use App\Jobs\ScoreSession;
 use App\Models\Alert;
+use App\Models\Event;
 use App\Models\LabSession;
 use App\Models\NetEvent;
 use App\Models\PasteEvent;
+use App\Models\Pc;
 use App\Models\Report;
 use App\Models\Score;
+use App\Models\SessionPc;
 use App\Models\Setting;
 use App\Models\Student;
 use App\Services\Audit;
@@ -32,14 +35,23 @@ class ReportController extends Controller
     {
         $scores = Score::query()->with(['pc:id,name', 'student'])->where('lab_session_id', $session->id)
             ->orderByDesc('score')->get();
+        $alerts = Alert::query()->with('pc:id,name')->where('lab_session_id', $session->id)->orderBy('occurred_at')->get();
+        $blocked = NetEvent::query()->where('lab_session_id', $session->id)->where('action', 'blocked')
+            ->selectRaw('pc_id, host, category, count(*) as n, min(occurred_at) as first_at')
+            ->groupBy('pc_id', 'host', 'category')->orderByDesc('n')->with('pc:id,name')->get();
+
+        $installedCount = $alerts->filter(fn (Alert $a) => $a->event_class === 'installed')->count();
+        $activeCount = $alerts->filter(fn (Alert $a) => $a->event_class === 'active')->count();
+        $blockedCount = (int) $blocked->sum('n') + $alerts->filter(fn (Alert $a) => $a->event_class === 'blocked')->count();
 
         return [
             'session' => $session->load('profile'),
             'scores' => $scores,
-            'alerts' => Alert::query()->with('pc:id,name')->where('lab_session_id', $session->id)->orderBy('occurred_at')->get(),
-            'blocked' => NetEvent::query()->where('lab_session_id', $session->id)->where('action', 'blocked')
-                ->selectRaw('pc_id, host, category, count(*) as n, min(occurred_at) as first_at')
-                ->groupBy('pc_id', 'host', 'category')->orderByDesc('n')->with('pc:id,name')->get(),
+            'alerts' => $alerts,
+            'blocked' => $blocked,
+            'installed_count' => $installedCount,
+            'active_count' => $activeCount,
+            'blocked_count' => $blockedCount,
             'pastes' => PasteEvent::query()->where('lab_session_id', $session->id)->where('is_copy', false)
                 ->where('chars', '>=', 300)->orderBy('occurred_at')->get(),
             'report' => Report::query()->where('lab_session_id', $session->id)->where('kind', 'session')->first(),
@@ -117,5 +129,89 @@ class ReportController extends Controller
             }
             fclose($out);
         }, 'xephyguard-research-export.csv');
+    }
+
+    /**
+     * Process & AI Disclosure Work Journal (P4-C1):
+     * Chronological timeline of work-folder file saves/size growth + disclosed AI tool activity.
+     */
+    public function journal(Request $request, LabSession $session, Pc $pc)
+    {
+        $sessionPc = SessionPc::query()
+            ->where('lab_session_id', $session->id)
+            ->where('pc_id', $pc->id)
+            ->first();
+        $student = $sessionPc?->student_id ? Student::query()->find($sessionPc->student_id) : Student::forLogin($pc->current_user);
+
+        $rawEvents = Event::query()
+            ->where('lab_session_id', $session->id)
+            ->where('pc_id', $pc->id)
+            ->orderBy('occurred_at')
+            ->orderBy('seq')
+            ->get();
+
+        $journalEvents = $rawEvents->filter(function (Event $e) {
+            return $e->type === 'file_activity'
+                || $e->event_class === 'disclosure'
+                || ($e->data['ai_policy'] ?? '') === 'permitted_with_disclosure';
+        })->values();
+
+        $entries = $journalEvents->map(function (Event $e) {
+            $d = is_array($e->data) ? $e->data : [];
+            $isFile = $e->type === 'file_activity';
+
+            return [
+                'id' => $e->id,
+                'seq' => $e->seq,
+                'type' => $e->type,
+                'kind' => $isFile ? 'work_progress' : 'ai_disclosure',
+                'event_class' => $e->event_class,
+                'confidence' => $e->confidence,
+                'user' => $e->user,
+                'occurred_at' => $e->occurred_at?->toIso8601String(),
+                'summary' => $isFile
+                    ? sprintf(
+                        'Work folder save in %s (%d files changed, %d bytes)',
+                        (string) ($d['dir'] ?? $d['path'] ?? 'work_dir'),
+                        (int) ($d['files_changed'] ?? $d['count'] ?? 1),
+                        (int) ($d['total_bytes'] ?? $d['bytes'] ?? 0)
+                    )
+                    : sprintf(
+                        'Disclosed AI activity: %s (%s)',
+                        (string) ($d['description'] ?? $d['tool'] ?? $d['rule_id'] ?? $e->type),
+                        (string) ($d['subject'] ?? $d['ide'] ?? 'permitted')
+                    ),
+                'data' => $d,
+                'evidence_meta' => $e->evidence_meta,
+            ];
+        })->all();
+
+        $payload = [
+            'session' => [
+                'id' => $session->id,
+                'course' => $session->course,
+                'mode' => $session->mode,
+                'ai_policy' => $session->ai_policy ?? ($session->profile?->ai_policy ?? 'forbidden'),
+            ],
+            'pc' => [
+                'id' => $pc->id,
+                'name' => $pc->name,
+            ],
+            'student' => $student ? [
+                'id' => $student->id,
+                'student_number' => $student->student_number,
+                'name' => $student->name,
+                'login' => $student->login,
+            ] : null,
+            'file_saves_count' => collect($entries)->where('kind', 'work_progress')->count(),
+            'disclosed_ai_count' => collect($entries)->where('kind', 'ai_disclosure')->count(),
+            'entries' => $entries,
+        ];
+
+        if ($request->expectsJson() || $request->query('format') === 'json') {
+            return response()->json($payload);
+        }
+
+        return view('reports.journal', $payload);
     }
 }

@@ -4,6 +4,7 @@
   @if ($session->experiment_condition) · condition {{ $session->experiment_condition }} @endif</p>
 <p style="padding:8px;border:1px solid #f59e0b;background:#fffbeb"><b>Flag for human review.</b> Scores summarise observable signals; they are not proof of misconduct.
   Students marked exempt (accommodations) and assignment-provided boilerplate can raise signals legitimately.</p>
+<p><b>Evidence Summary:</b> Installed (Inventory): <b>{{ $installed_count ?? 0 }}</b> · Active Use: <b>{{ $active_count ?? 0 }}</b> · Blocked Attempts: <b>{{ $blocked_count ?? 0 }}</b></p>
 
 <h2>Scores</h2>
 <table class="tbl" width="100%" cellspacing="0" cellpadding="4" border="1" style="border-collapse:collapse">

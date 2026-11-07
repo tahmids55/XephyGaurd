@@ -22,7 +22,10 @@ trait BuildsLab
         config(['xephyguard.ca_dir' => $this->caDir, 'xephyguard.net_state_path' => $netState,
             'xephyguard.data_dir' => base_path('../data')]);
         $this->app->forgetInstance(CertificateAuthority::class);
-        CertificateAuthority::fromConfig()->create('Test CA');
+        $ca = CertificateAuthority::fromConfig();
+        $ca->create('Test CA');
+        $ca->issueSigningCert();
+        $ca->issueInterceptionCa();
         app(Bootstrap::class)->run();
         User::create(['name' => 'Owner', 'email' => 'owner@lab.test', 'password' => 'correct-horse-battery', 'role' => 'admin']);
 

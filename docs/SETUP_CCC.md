@@ -1,7 +1,8 @@
 # Setting up the CCC (central computer)
 
-> Other options (Windows via WSL2, native Linux/Windows without Docker): see
-> [RUNNING_THE_SERVER.md](RUNNING_THE_SERVER.md).
+> XephyGuard supports two production CCC deployment platforms:
+> 1. **Linux + Docker Compose** (primary gateway + application stack, documented below).
+> 2. **Windows CCC Service Stack** (`scripts/windows-ccc-service.ps1`, or Windows + WSL2 mirrored mode) — see [RUNNING_THE_SERVER.md](RUNNING_THE_SERVER.md).
 
 ## You need
 * A PC or small server with **Ubuntu Server 22.04 or 24.04 LTS**, 4+ cores, 8 GB RAM, 100 GB disk.
@@ -41,10 +42,23 @@ time sync, disk, containers, CA expiry, signatures, analysis service, silent PCs
 ## Day to day
 | Task | Command |
 |---|---|
-| Health check | `sudo xephyguard-ccc doctor` |
+| Health check (host + containers + CA) | `sudo xephyguard-ccc doctor` |
+| HTTP readiness check (`200` / `503` JSON) | `curl -sk https://<CCC-IP>/healthz` |
+| Prometheus metrics (staff session, loopback, or bearer token) | `curl -sk -H "Authorization: Bearer $METRICS_TOKEN" https://<CCC-IP>/metrics` |
 | Logs | `sudo xephyguard-ccc logs web` (or worker, proxy, netpolicy, analysis, reverb) |
-| Backup (DB + CA + secrets) | `sudo xephyguard-ccc backup /mnt/backup` |
+| Verified backup (`manifest.json` + SHA-256 + DB + CA) | `php artisan xephyguard:backup --output=/mnt/backup/xg-backup.tar.gz` (or `sudo xephyguard-ccc backup /mnt/backup`) |
+| Verify / restore backup | `php artisan xephyguard:restore /mnt/backup/xg-backup.tar.gz --verify-only` (omit `--verify-only` to restore) |
+| Short-lived enrollment keys | `sudo xephyguard-ccc enroll-key --create="CS101 Exam" --ttl=24 --max-uses=45` (`--list`, `--revoke=<ID>`) |
 | Update | `git pull && sudo xephyguard-ccc update` |
-| Enrollment key | `sudo xephyguard-ccc enroll-key` (`--rotate` to replace) |
 | Partition the events table (large labs) | see `ccc-deploy/mysql/partition-events.sql` |
-| Publish installers | `scripts/release.sh <ver> --publish-to /var/lib/xephyguard/storage/public/downloads` |
+| Build release + CycloneDX SBOM + SHA256SUMS | `scripts/release.sh <ver> --publish-to /var/lib/xephyguard/storage/public/downloads` |
+
+## Windows CCC Service Wrapper
+When deploying the CCC application stack on a Windows server without Docker, use the included PowerShell service manager (`scripts/windows-ccc-service.ps1`) from an elevated PowerShell prompt:
+```powershell
+.\scripts\windows-ccc-service.ps1 install -RootDir C:\xephyguard
+.\scripts\windows-ccc-service.ps1 start
+.\scripts\windows-ccc-service.ps1 status
+.\scripts\windows-ccc-service.ps1 health
+```
+See [RUNNING_THE_SERVER.md](RUNNING_THE_SERVER.md) for full Windows CCC setup instructions.

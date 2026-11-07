@@ -1,10 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
+cmake_policy(SET CMP0091 NEW)
 project(xephyguard_agent VERSION 0.1.0 LANGUAGES CXX)
+cmake_policy(SET CMP0091 NEW)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
 endif()
@@ -15,9 +18,11 @@ option(XG_WITH_X11 "Build X11 window/clipboard/indicator support into the Linux 
 include(cmake/Dependencies.cmake)
 
 if(MSVC)
-  add_compile_options(/W4 /permissive- /utf-8)
+  add_compile_options(/W4 /permissive- /utf-8 /Brepro)
+  add_link_options(/Brepro)
 else()
-  add_compile_options(-Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
+  add_compile_options(-Wall -Wextra -Wpedantic -Wno-missing-field-initializers
+                      "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.")
 endif()
 
 # ---------------------------------------------------------------- core library

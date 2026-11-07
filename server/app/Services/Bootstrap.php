@@ -12,19 +12,22 @@ class Bootstrap
     public function __construct(private readonly BlocklistService $blocklists, private readonly SignatureCompiler $signatures) {}
 
     public const PROFILES = [
-        ['name' => 'Always-on', 'mode' => 'always_on', 'description' => 'No session: heartbeat, process/extension scan, adapter changes. Logging only, no blocking.',
+        ['name' => 'Always-on', 'mode' => 'always_on', 'ai_policy' => 'open', 'description' => 'No session: heartbeat, process/extension scan, adapter changes. Logging only, no blocking.',
             'network' => ['block_categories' => [], 'strict_egress' => false, 'google_udm14' => false],
             'agent' => ['title_capture' => 'off']],
-        ['name' => 'Practice: AI allowed, logged', 'mode' => 'practice', 'description' => 'Normal lab class. AI sites reachable; light behavior metrics; tampering and local-LLM alerts.',
+        ['name' => 'Practice: AI allowed, logged', 'mode' => 'practice', 'ai_policy' => 'permitted_with_disclosure', 'description' => 'Normal lab class. AI sites reachable; light behavior metrics; tampering and local-LLM alerts.',
             'network' => ['block_categories' => [], 'strict_egress' => false, 'google_udm14' => false],
             'agent' => ['title_capture' => 'app_only']],
-        ['name' => 'Practice: AI blocked', 'mode' => 'practice', 'description' => 'Normal lab class with AI chat sites blocked (DNS + SNI), other egress open.',
+        ['name' => 'Practice: AI blocked', 'mode' => 'practice', 'ai_policy' => 'forbidden', 'description' => 'Normal lab class with AI chat sites blocked (DNS + SNI), other egress open.',
             'network' => ['block_categories' => ['ai'], 'strict_egress' => false, 'google_udm14' => true],
             'agent' => ['title_capture' => 'app_only']],
-        ['name' => 'Test: AI blocked', 'mode' => 'test', 'description' => 'Lab test. Full AI blocking incl. IDE backends and marketplaces; strict egress; all rules active.',
+        ['name' => 'Test: AI blocked', 'mode' => 'test', 'ai_policy' => 'forbidden', 'description' => 'Lab test. Full AI blocking incl. IDE backends and marketplaces; strict egress; all rules active.',
             'network' => ['block_categories' => ['ai', 'ide', 'marketplace', 'vpn', 'custom'], 'strict_egress' => true, 'google_udm14' => true],
             'agent' => ['title_capture' => 'app_only']],
-        ['name' => 'Exam: strict', 'mode' => 'test', 'description' => 'Exam. As Test, plus full window titles and killing of local LLM runtimes.',
+        ['name' => 'Test: AI permitted with disclosure', 'mode' => 'test', 'ai_policy' => 'permitted_with_disclosure', 'description' => 'Open-AI assessment with mandatory process & AI disclosure work journal; AI tools permitted and transparently logged.',
+            'network' => ['block_categories' => ['vpn'], 'strict_egress' => false, 'google_udm14' => false],
+            'agent' => ['title_capture' => 'app_only']],
+        ['name' => 'Exam: strict', 'mode' => 'test', 'ai_policy' => 'forbidden', 'description' => 'Exam. As Test, plus full window titles and killing of local LLM runtimes.',
             'network' => ['block_categories' => ['ai', 'ide', 'marketplace', 'vpn', 'custom'], 'strict_egress' => true, 'google_udm14' => true],
             'agent' => ['title_capture' => 'full', 'rule_actions' => [
                 'proc.ollama' => ['log', 'warn', 'kill', 'alert'], 'proc.llamacpp' => ['log', 'warn', 'kill', 'alert'],
@@ -41,7 +44,7 @@ class Bootstrap
             $out[] = 'enrollment key generated';
         }
         foreach (self::PROFILES as $p) {
-            Profile::query()->firstOrCreate(['name' => $p['name']], $p + ['builtin' => true]);
+            Profile::query()->updateOrCreate(['name' => $p['name']], $p + ['builtin' => true]);
         }
         $out[] = 'blocklist entries added: '.$this->blocklists->importSeed();
         $out[] = 'rules added: '.$this->signatures->importSeed();

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
 use App\Models\Enrollment;
+use App\Models\EnrollmentKey;
 use App\Models\Lab;
 use App\Models\Pc;
 use App\Models\Setting;
@@ -25,6 +26,8 @@ class EnrollmentController extends Controller
         return view('enroll.index', [
             'lab' => $lab,
             'key' => $lab->enrollKey(),
+            'enrollmentKeys' => EnrollmentKey::query()->where('lab_id', $lab->id)->with('creator:id,name')->latest()->limit(50)->get(),
+            'issuedKey' => session('issued_enroll_key'),
             'ccc' => Setting::get('ccc_ip'),
             'fingerprint' => $ca->exists() ? $ca->fingerprint() : null,
             'pending' => Enrollment::query()->where('status', 'pending')->latest()->get(),
@@ -68,6 +71,63 @@ class EnrollmentController extends Controller
         Audit::log('enroll.rotate_key', $lab);
 
         return back()->with('status', 'New enrollment key generated. The old key no longer works.');
+    }
+
+    public function createKey(Request $request)
+    {
+        $d = $request->validate([
+            'label' => 'required|string|max:120',
+            'ttl_hours' => 'nullable|integer|min:1|max:8760',
+            'max_uses' => 'nullable|integer|min:1|max:10000',
+            'allowed_macs' => 'nullable|string|max:20000',
+        ]);
+        $macs = collect(preg_split('/[\s,;]+/', strtolower($d['allowed_macs'] ?? '')))
+            ->filter(fn ($m) => (bool) preg_match('/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/', $m))
+            ->unique()
+            ->values()
+            ->all();
+        $lab = Lab::current();
+        $issued = EnrollmentKey::issue(
+            $lab,
+            $d['label'],
+            isset($d['ttl_hours']) ? (int) $d['ttl_hours'] : 24,
+            isset($d['max_uses']) ? (int) $d['max_uses'] : null,
+            $macs ?: null,
+            $request->user()
+        );
+        Audit::log('enroll.create_key', $issued['model'], [
+            'label' => $issued['model']->label,
+            'key_prefix' => $issued['model']->key_prefix,
+            'expires_at' => $issued['model']->expires_at?->toIso8601String(),
+            'max_uses' => $issued['model']->max_uses,
+        ]);
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'id' => $issued['model']->id,
+                'label' => $issued['model']->label,
+                'key_prefix' => $issued['model']->key_prefix,
+                'key' => $issued['plain'],
+                'expires_at' => $issued['model']->expires_at?->toIso8601String(),
+                'max_uses' => $issued['model']->max_uses,
+            ], 201);
+        }
+
+        return back()
+            ->with('issued_enroll_key', $issued['plain'])
+            ->with('status', "Issued short-lived key ({$issued['model']->label}). Copy it now; it will not be shown again.");
+    }
+
+    public function revokeKey(Request $request, EnrollmentKey $enrollmentKey)
+    {
+        $enrollmentKey->revoke();
+        Audit::log('enroll.revoke_key', $enrollmentKey, ['key_prefix' => $enrollmentKey->key_prefix]);
+
+        if ($request->expectsJson()) {
+            return response()->json(['ok' => true, 'revoked_at' => $enrollmentKey->revoked_at?->toIso8601String()]);
+        }
+
+        return back()->with('status', "Revoked enrollment key {$enrollmentKey->key_prefix} ({$enrollmentKey->label}).");
     }
 
     public function autoApprove(Request $request)

@@ -21,6 +21,8 @@ return [
     'net_state_path' => env('XG_NET_STATE', storage_path('app/net/state.json')),
     'data_dir' => env('XG_DATA_DIR', base_path('../data')),
     'internal_token' => env('XG_INTERNAL_TOKEN'),            // proxy -> CCC net event shipping
+    'metrics_token' => env('XG_METRICS_TOKEN'),              // Prometheus /metrics bearer token
+    'locale' => env('XG_LOCALE', 'en'),                      // Default student notice language (en | bn)
     'internal_url' => env('XG_INTERNAL_URL', 'http://app'),
     'require_mtls' => (bool) env('XG_REQUIRE_MTLS', true),   // agent API must arrive via the mTLS front (nginx)
     'analysis_url' => env('XG_ANALYSIS_URL', 'http://analysis:8090'),
@@ -48,7 +50,11 @@ return [
 
     // Defaults for Settings
     'retention_days_raw' => (int) env('XG_RETENTION_RAW_DAYS', 140),     // ~ one semester
+    'retention_raw_days' => (int) env('XG_RETENTION_RAW_DAYS', 140),     // alias for contract compatibility
     'retention_days_reports' => (int) env('XG_RETENTION_REPORT_DAYS', 1825),
+    'lti_sync_token' => env('XG_LTI_SYNC_TOKEN'),
+    'agent_current_version' => env('XG_AGENT_CURRENT_VERSION', '0.2.0'),
+    'two_person_rule' => (bool) env('XG_TWO_PERSON_RULE', false),
     'notice_text' => env('XG_NOTICE_TEXT', 'This computer is monitored by XephyGuard during lab time. '.
         'We record which programs and websites are used and typing/paste statistics. We never record what '.
         'you type, your clipboard text, your screen or your passwords.'),

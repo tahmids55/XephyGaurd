@@ -18,8 +18,9 @@ class CaInit extends Command
     public function handle(): int
     {
         $ca = CertificateAuthority::fromConfig();
-        if (! $ca->exists() || $this->option('force')) {
-            $ca->create($this->option('cn'), (bool) $this->option('force'));
+        $force = (bool) $this->option('force');
+        if (! $ca->exists() || $force) {
+            $ca->create($this->option('cn'), $force);
             $this->info('CA created in '.$ca->dir());
         } else {
             $this->line('CA already exists in '.$ca->dir());
@@ -28,6 +29,13 @@ class CaInit extends Command
         $dns = $this->option('server-dns') ?: ['xephyguard-ccc', 'localhost'];
         $ca->issueServerCert($ips, $dns, $ca->dir().'/server.crt', $ca->dir().'/server.key');
         $this->info('Server certificate issued for '.implode(', ', array_merge($ips, $dns)));
+
+        $ca->issueSigningCert($force);
+        $this->info('Signature-signing certificate issued in '.$ca->signingCertPath());
+
+        $ca->issueInterceptionCa(force: $force);
+        $this->info('Name-constrained proxy interception Sub-CA issued in '.$ca->interceptionCaCertPath());
+
         $this->line('CA fingerprint (SHA-256): '.$ca->fingerprint());
 
         return self::SUCCESS;

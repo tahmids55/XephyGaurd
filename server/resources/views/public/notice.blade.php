@@ -1,27 +1,141 @@
 @extends('layouts.app')
-@section('title', 'What is monitored')
+@section('title', __('xephyguard.title'))
 @section('content')
-<article class="mx-auto max-w-3xl card space-y-3 text-sm leading-relaxed">
-  <h1 class="text-2xl font-bold">Lab computers are monitored by XephyGuard</h1>
+<article class="mx-auto max-w-3xl card space-y-4 text-sm leading-relaxed">
+  <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
+    <h1 class="text-2xl font-bold">{{ __('xephyguard.title') }}</h1>
+    <div class="flex items-center gap-1">
+      <a href="{{ url('/notice?lang=en') }}" class="btn btn-sm {{ ($lang ?? 'en') === 'en' ? 'btn-primary' : '' }}">{{ __('xephyguard.toggle_en') }}</a>
+      <a href="{{ url('/notice?lang=bn') }}" class="btn btn-sm {{ ($lang ?? 'en') === 'bn' ? 'btn-primary' : '' }}">{{ __('xephyguard.toggle_bn') }}</a>
+    </div>
+  </div>
+
   <p class="text-base">{{ $text }}</p>
-  <h2 class="text-lg font-semibold">Why</h2>
-  <p>To keep lab tests fair, AI tools are blocked during tests and their use is made visible. Outside tests you can browse and learn normally.</p>
-  <h2 class="text-lg font-semibold">What is collected, and when</h2>
-  <table class="tbl"><tr><th></th><th>No session</th><th>Practice class</th><th>Test</th></tr>
-    <tr><td>Running AI programs, AI editor extensions, local AI models</td><td>yes</td><td>yes</td><td>yes</td></tr>
-    <tr><td>Network adapters (hotspot/VPN), USB devices</td><td>yes</td><td>yes</td><td>yes</td></tr>
-    <tr><td>Name of the program in front</td><td>no</td><td>yes</td><td>yes</td></tr>
-    <tr><td>Window titles</td><td>no</td><td>no (configurable)</td><td>configurable</td></tr>
-    <tr><td>Typing rhythm (number of keys, pauses — never which keys)</td><td>no</td><td>yes</td><td>yes</td></tr>
-    <tr><td>Copy/paste size and whether it looks like code — never the text</td><td>no</td><td>yes</td><td>yes</td></tr>
-    <tr><td>Blocked website attempts</td><td>—</td><td>if blocking is on</td><td>yes</td></tr>
+  <p class="text-slate-600">{{ __('xephyguard.tray_notice', ['mode' => __("xephyguard.modes.{$mode}.badge")]) }}</p>
+
+  <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+    <div class="flex flex-wrap items-center gap-2">
+      <span class="font-semibold">{{ __('xephyguard.active_status_heading') }}:</span>
+      <span class="badge mode-{{ $mode }}">{{ __("xephyguard.modes.{$mode}.badge") }}</span>
+      <span class="font-medium">{{ __("xephyguard.modes.{$mode}.name") }}</span>
+    </div>
+    <div class="text-xs text-slate-600">
+      <b>{{ __('xephyguard.active_profile_label') }}:</b> {{ $profile->name }}
+      · <b>{{ __('xephyguard.active_course_label') }}:</b>
+      @if ($session)
+        {{ $session->course }}
+      @else
+        {{ __('xephyguard.no_active_session') }}
+      @endif
+    </div>
+    <p class="text-xs text-slate-700">{{ __("xephyguard.modes.{$mode}.summary") }}</p>
+    <div class="rounded border border-slate-200 bg-white p-2 text-xs">
+      @if ($mode === 'always_on' || ($aiPolicy ?? '') === 'open')
+        <b>{{ __('xephyguard.ai_disclosure_mode.open_title') }} ({{ $aiPolicy ?? 'open' }}):</b>
+        {{ __('xephyguard.ai_disclosure_mode.open_desc') }}
+      @elseif (($aiPolicy ?? '') === 'permitted_with_disclosure' || ! $blocksAi)
+        <b>{{ __('xephyguard.ai_disclosure_mode.permitted_title') }} ({{ $aiPolicy ?? 'permitted_with_disclosure' }}):</b>
+        {{ __('xephyguard.ai_disclosure_mode.permitted_desc') }}
+      @else
+        <b>{{ __('xephyguard.ai_disclosure_mode.blocked_title') }} ({{ $aiPolicy ?? 'forbidden' }}):</b>
+        {{ __('xephyguard.ai_disclosure_mode.blocked_desc', ['categories' => implode(', ', $blockCategories ?: ['ai'])]) }}
+      @endif
+    </div>
+  </div>
+
+  <h2 class="text-lg font-semibold">{{ __('xephyguard.why_heading') }}</h2>
+  <p>{{ __('xephyguard.why_body') }}</p>
+
+  <h2 class="text-lg font-semibold">{{ __('xephyguard.collection_heading') }}</h2>
+  <table class="tbl">
+    <tr>
+      <th>{{ __('xephyguard.collection_table.signal') }}</th>
+      <th>{{ __('xephyguard.collection_table.active_now') }} ({{ $profile->name }})</th>
+      <th>{{ __('xephyguard.collection_table.always_on') }}</th>
+      <th>{{ __('xephyguard.collection_table.practice') }}</th>
+      <th>{{ __('xephyguard.collection_table.test') }}</th>
+    </tr>
+    <tr>
+      <td>{{ __('xephyguard.collection_table.items.processes_ports') }}</td>
+      <td class="font-semibold">{{ ($collect['processes'] ?? false) || ($collect['extensions'] ?? false) ? __('xephyguard.collection_table.yes') : __('xephyguard.collection_table.no') }}</td>
+      <td>{{ __('xephyguard.collection_table.yes') }}</td>
+      <td>{{ __('xephyguard.collection_table.yes') }}</td>
+      <td>{{ __('xephyguard.collection_table.yes') }}</td>
+    </tr>
+    <tr>
+      <td>{{ __('xephyguard.collection_table.items.adapters_usb') }}</td>
+      <td class="font-semibold">{{ ($collect['adapters'] ?? false) || ($collect['devices'] ?? false) ? __('xephyguard.collection_table.yes') : __('xephyguard.collection_table.no') }}</td>
+      <td>{{ __('xephyguard.collection_table.yes') }}</td>
+      <td>{{ __('xephyguard.collection_table.yes') }}</td>
+      <td>{{ __('xephyguard.collection_table.yes') }}</td>
+    </tr>
+    <tr>
+      <td>{{ __('xephyguard.collection_table.items.window_app') }}</td>
+      <td class="font-semibold">{{ ($collect['window'] ?? false) && $titleCapture !== 'off' ? __('xephyguard.collection_table.yes') : __('xephyguard.collection_table.no') }}</td>
+      <td>{{ __('xephyguard.collection_table.no') }}</td>
+      <td>{{ __('xephyguard.collection_table.yes') }}</td>
+      <td>{{ __('xephyguard.collection_table.yes') }}</td>
+    </tr>
+    <tr>
+      <td>{{ __('xephyguard.collection_table.items.window_title') }}</td>
+      <td class="font-semibold">
+        @if (!($collect['window'] ?? false) || $titleCapture === 'off')
+          {{ __('xephyguard.collection_table.no') }}
+        @elseif ($titleCapture === 'full')
+          {{ __('xephyguard.collection_table.full') }}
+        @else
+          {{ __('xephyguard.collection_table.app_only') }}
+        @endif
+      </td>
+      <td>{{ __('xephyguard.collection_table.no') }}</td>
+      <td>{{ __('xephyguard.collection_table.app_only') }}</td>
+      <td>{{ __('xephyguard.collection_table.app_only') }} / {{ __('xephyguard.collection_table.full') }}</td>
+    </tr>
+    <tr>
+      <td>{{ __('xephyguard.collection_table.items.keystats') }}</td>
+      <td class="font-semibold">{{ ($collect['keystats'] ?? false) ? __('xephyguard.collection_table.yes') : __('xephyguard.collection_table.no') }}</td>
+      <td>{{ __('xephyguard.collection_table.no') }}</td>
+      <td>{{ __('xephyguard.collection_table.yes') }}</td>
+      <td>{{ __('xephyguard.collection_table.yes') }}</td>
+    </tr>
+    <tr>
+      <td>{{ __('xephyguard.collection_table.items.paste') }}</td>
+      <td class="font-semibold">{{ ($collect['paste'] ?? false) ? __('xephyguard.collection_table.yes') : __('xephyguard.collection_table.no') }}</td>
+      <td>{{ __('xephyguard.collection_table.no') }}</td>
+      <td>{{ __('xephyguard.collection_table.yes') }}</td>
+      <td>{{ __('xephyguard.collection_table.yes') }}</td>
+    </tr>
+    <tr>
+      <td>{{ __('xephyguard.collection_table.items.files_gpu') }}</td>
+      <td class="font-semibold">{{ ($collect['files'] ?? false) || ($collect['gpu'] ?? false) ? __('xephyguard.collection_table.yes') : __('xephyguard.collection_table.no') }}</td>
+      <td>{{ __('xephyguard.collection_table.no') }}</td>
+      <td>{{ __('xephyguard.collection_table.no') }}</td>
+      <td>{{ __('xephyguard.collection_table.yes') }}</td>
+    </tr>
+    <tr>
+      <td>{{ __('xephyguard.collection_table.items.net_blocks') }}</td>
+      <td class="font-semibold">{{ $blocksAi ? __('xephyguard.collection_table.yes') : __('xephyguard.collection_table.no') }}</td>
+      <td>{{ __('xephyguard.collection_table.no') }}</td>
+      <td>{{ __('xephyguard.collection_table.if_blocking') }}</td>
+      <td>{{ __('xephyguard.collection_table.yes') }}</td>
+    </tr>
   </table>
-  <h2 class="text-lg font-semibold">Never collected</h2>
-  <p>What you type, your clipboard text, screenshots or screen content, passwords, personal messages.</p>
-  <h2 class="text-lg font-semibold">Who decides</h2>
-  <p>XephyGuard only raises flags. A person reviews every flag; nothing is decided automatically. Raw data is deleted after the retention period set by your department.</p>
-  <h2 class="text-lg font-semibold">Research</h2>
-  <p>Data is used for research only if you gave consent, and then only under a pseudonym.</p>
+
+  <h2 class="text-lg font-semibold">{{ __('xephyguard.never_heading') }}</h2>
+  <p>{{ __('xephyguard.never_body') }}</p>
+
+  <h2 class="text-lg font-semibold">{{ __('xephyguard.isolation_heading') }}</h2>
+  <p>{{ __('xephyguard.isolation_body', ['minutes' => $leaseMinutes ?? 10, 'seconds' => $leaseSeconds ?? 600]) }}</p>
+
+  <h2 class="text-lg font-semibold">{{ __('xephyguard.rights_heading') }}</h2>
+  <p>{{ __('xephyguard.rights_body', ['retention_days' => $retentionDays ?? 140]) }}</p>
+
+  <h2 class="text-lg font-semibold">{{ __('xephyguard.remediation_heading') }}</h2>
+  <p>{{ __('xephyguard.remediation_body') }}</p>
+
+  <h2 class="text-lg font-semibold">{{ __('xephyguard.research_heading') }}</h2>
+  <p>{{ __('xephyguard.research_body') }}</p>
+
   <p class="text-xs text-slate-500">{{ $lab?->name }}</p>
 </article>
 @endsection

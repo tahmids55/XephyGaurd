@@ -30,8 +30,12 @@ class NetworkPolicyWriter
                 continue;
             }
             ['profile' => $profile, 'session' => $session, 'override' => $override] = $this->policies->effective($pc);
+            $aiPolicy = PolicyBuilder::resolveAiPolicy($profile, $session, $override);
             $net = $profile->network ?? [];
             $cats = array_values($net['block_categories'] ?? []);
+            if (in_array($aiPolicy, ['permitted_with_disclosure', 'open'], true)) {
+                $cats = array_values(array_diff($cats, ['ai', 'ide']));
+            }
             if (! $session) {
                 continue;
             }
