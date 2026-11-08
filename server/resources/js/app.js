@@ -66,6 +66,9 @@ Alpine.data('labView', (cfg) => ({
         for (const p of Object.values(this.pcs)) {
             if (p.last_seen && now - Date.parse(p.last_seen) > 20000 && p.status !== 'offline') p.status = 'offline';
         }
+        if (this.drawer && this.drawer.pc?.id) {
+            this.open(this.drawer.pc.id);
+        }
     },
     cell(x, y) { const id = this.placement[`${x},${y}`]; return id ? this.pcs[id] : null; },
     get unplaced() {

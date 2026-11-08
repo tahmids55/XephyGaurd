@@ -167,4 +167,162 @@ HTML;
 
         return response()->download($path);
     }
+
+    public function shareIndex(): Response
+    {
+        $text = (string) Setting::get('shared_clipboard', '');
+        $updatedAt = (string) Setting::get('shared_clipboard_at', 'Never');
+        $csrf = csrf_token();
+        $escaped = htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
+
+        $html = <<<HTML
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{$csrf}">
+    <title>XephyGuard Shared Clipboard</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
+        .wrap { max-width: 860px; margin: 0 auto; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; margin-bottom: 18px; }
+        h1 { margin: 0 0 6px 0; font-size: 22px; display: flex; justify-content: space-between; align-items: center; }
+        .sub { color: #94a3b8; font-size: 13px; margin-bottom: 16px; }
+        textarea { width: 100%; min-height: 180px; background: #0f172a; color: #38bdf8; border: 1px solid #475569; border-radius: 8px; padding: 14px; font-family: Consolas, monospace; font-size: 14px; line-height: 1.5; resize: vertical; outline: none; }
+        textarea:focus { border-color: #6366f1; }
+        .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; align-items: center; }
+        button { padding: 10px 18px; border-radius: 7px; border: none; font-weight: 600; font-size: 14px; cursor: pointer; transition: 0.15s; }
+        .btn-save { background: #4f46e5; color: #fff; }
+        .btn-save:hover { background: #4338ca; }
+        .btn-copy { background: #10b981; color: #052e16; }
+        .btn-copy:hover { background: #34d399; }
+        .btn-clear { background: #334155; color: #cbd5e1; }
+        .btn-clear:hover { background: #475569; }
+        .status { font-size: 12px; color: #94a3b8; margin-left: auto; }
+        .preset { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px; margin-top: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+        .preset code { font-family: Consolas, monospace; font-size: 12px; color: #e2e8f0; word-break: break-all; }
+        .preset button { padding: 6px 12px; font-size: 12px; white-space: nowrap; background: #334155; color: #fff; }
+        .preset button:hover { background: #475569; }
+        a { color: #818cf8; text-decoration: none; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="card">
+        <h1>
+            <span>📋 XephyGuard Live Command &amp; Text Share</span>
+            <a href="/downloads" style="font-size:13px;">⬇ Agent Downloads</a>
+        </h1>
+        <div class="sub">Paste any command or text here and click <b>Save &amp; Broadcast</b>. Any PC with this page open can copy it with one click.</div>
+
+        <textarea id="box" placeholder="Paste PowerShell commands, URLs, or text here...">{$escaped}</textarea>
+
+        <div class="actions">
+            <button class="btn-copy" onclick="copyText(document.getElementById('box').value, this)">📋 Copy Text</button>
+            <button class="btn-save" onclick="saveText()">💾 Save &amp; Broadcast</button>
+            <button class="btn-clear" onclick="document.getElementById('box').value=''; saveText();">Clear</button>
+            <span class="status" id="status">Last updated: {$updatedAt}</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <div style="font-weight:600; font-size:15px; margin-bottom:8px;">⚡ Quick Test Commands (Click to Copy)</div>
+        <div class="preset">
+            <code>python -m http.server 11434 --bind 127.0.0.1</code>
+            <button onclick="copyText('python -m http.server 11434 --bind 127.0.0.1', this)">📋 Copy (Test Port 11434)</button>
+        </div>
+        <div class="preset">
+            <code>python -c "from http.server import BaseHTTPRequestHandler,HTTPServer; H=type('H',(BaseHTTPRequestHandler,),{'do_GET':lambda s:(s.send_response(200),s.send_header('Content-Type','application/json'),s.end_headers(),s.wfile.write(b'{\"data\":[{\"id\":\"llama3\"}]}'))}); HTTPServer(('127.0.0.1',8080),H).serve_forever()"</code>
+            <button onclick="copyText(this.previousElementSibling.innerText, this)">📋 Copy (Test LLM Probe :8080)</button>
+        </div>
+    </div>
+</div>
+
+<script>
+let lastSaved = document.getElementById('box').value;
+let isTyping = false;
+const box = document.getElementById('box');
+box.addEventListener('focus', () => isTyping = true);
+box.addEventListener('blur', () => isTyping = false);
+
+function copyText(str, btn) {
+    const done = () => {
+        const old = btn.innerText;
+        btn.innerText = '✅ Copied!';
+        setTimeout(() => btn.innerText = old, 1500);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(str).then(done);
+    } else {
+        const t = document.createElement('textarea');
+        t.value = str;
+        t.style.position = 'fixed';
+        t.style.opacity = '0';
+        document.body.appendChild(t);
+        t.focus();
+        t.select();
+        document.execCommand('copy');
+        document.body.removeChild(t);
+        done();
+    }
+}
+
+async function saveText() {
+    const text = box.value;
+    const res = await fetch('/share', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+        },
+        body: JSON.stringify({ text })
+    });
+    if (res.ok) {
+        const d = await res.json();
+        lastSaved = text;
+        document.getElementById('status').innerText = 'Saved at ' + d.updated_at;
+    }
+}
+
+setInterval(async () => {
+    if (isTyping && box.value !== lastSaved) return;
+    try {
+        const res = await fetch('/share/raw');
+        if (!res.ok) return;
+        const d = await res.json();
+        if (d.text !== lastSaved) {
+            box.value = d.text;
+            lastSaved = d.text;
+            document.getElementById('status').innerText = 'Updated live at ' + d.updated_at;
+        }
+    } catch (e) {}
+}, 2500);
+</script>
+</body>
+</html>
+HTML;
+
+        return response($html, 200, ['Content-Type' => 'text/html; charset=utf-8']);
+    }
+
+    public function shareSave()
+    {
+        $text = (string) request()->input('text', '');
+        $at = now()->format('H:i:s');
+        Setting::set('shared_clipboard', mb_substr($text, 0, 65000));
+        Setting::set('shared_clipboard_at', $at);
+
+        return response()->json(['ok' => true, 'updated_at' => $at]);
+    }
+
+    public function shareRaw()
+    {
+        return response()->json([
+            'text' => (string) Setting::get('shared_clipboard', ''),
+            'updated_at' => (string) Setting::get('shared_clipboard_at', 'Never'),
+        ]);
+    }
 }

@@ -31,7 +31,7 @@ class DashboardController extends Controller
             'seats' => Seat::query()->where('lab_id', $lab->id)->get(['id', 'label', 'x', 'y']),
             'pcs' => Pc::query()->active()->where('lab_id', $lab->id)->orderBy('name')->get()->map->tile(),
             'profiles' => Profile::query()->orderBy('mode')->get(['id', 'name', 'mode']),
-            'recentAlerts' => Alert::query()->with('pc:id,name')->latest('occurred_at')->limit(15)->get()->map->broadcastPayload(),
+            'recentAlerts' => Alert::query()->with('pc:id,name')->latest('occurred_at')->limit(30)->get()->map->broadcastPayload(),
         ]);
     }
 
@@ -39,7 +39,7 @@ class DashboardController extends Controller
     public function pc(Pc $pc): JsonResponse
     {
         $session = LabSession::activeFor($pc->lab_id);
-        $since = $session?->started_at ?? now()->subHours(2);
+        $since = $session?->started_at ?? now()->subHours(24);
         $events = Event::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)
             ->whereNotIn('type', ['key_stats', 'heartbeat', 'process_snapshot'])->latest('occurred_at')->limit(200)->get(['type', 'occurred_at', 'data', 'user']);
         $latestSnap = Event::query()->where('pc_id', $pc->id)->where('type', 'process_snapshot')->latest('seq')->first(['occurred_at', 'data']);
@@ -61,6 +61,39 @@ class DashboardController extends Controller
             'processes_updated_at' => $latestSnap?->occurred_at?->format('H:i:s'),
             'processes' => $events->whereIn('type', ['process_start', 'process_stop'])->values()
                 ->map(fn ($e) => ['at' => $e->occurred_at->format('H:i:s'), 'type' => $e->type, 'pid' => $e->data['pid'] ?? null, 'exe' => $e->data['exe'] ?? '', 'rule' => $e->data['rule_id'] ?? '']),
+            'adapters' => Event::query()->where('pc_id', $pc->id)->where('type', 'net_adapter')->latest('occurred_at')
+                ->limit(30)->get(['occurred_at', 'data'])->map(fn ($e) => [
+                    'at' => $e->occurred_at->format('H:i:s'),
+                    'change' => $e->data['change'] ?? '',
+                    'name' => $e->data['name'] ?? '',
+                    'description' => $e->data['description'] ?? '',
+                    'driver' => $e->data['driver'] ?? '',
+                    'addresses' => $e->data['addresses'] ?? [],
+                    'up' => (bool) ($e->data['up'] ?? false),
+                    'wireless' => (bool) ($e->data['wireless'] ?? false),
+                    'default_route' => (bool) ($e->data['default_route'] ?? false),
+                    'kind' => $e->data['kind'] ?? '',
+                ]),
+            'listening_ports' => $events->where('type', 'listening_port')->values()
+                ->map(fn ($e) => [
+                    'at' => $e->occurred_at->format('H:i:s'),
+                    'port' => $e->data['port'] ?? 0,
+                    'address' => $e->data['address'] ?? '',
+                    'process' => $e->data['process'] ?? '',
+                    'pid' => $e->data['pid'] ?? null,
+                    'rule_id' => $e->data['rule_id'] ?? '',
+                    'probed' => (bool) ($e->data['probed'] ?? false),
+                ]),
+            'devices' => $events->where('type', 'device')->values()
+                ->map(fn ($e) => [
+                    'at' => $e->occurred_at->format('H:i:s'),
+                    'action' => $e->data['action'] ?? '',
+                    'class' => $e->data['class'] ?? '',
+                    'vendor' => $e->data['vendor'] ?? '',
+                    'product' => $e->data['product'] ?? '',
+                    'model' => $e->data['model'] ?? '',
+                    'rule_id' => $e->data['rule_id'] ?? '',
+                ]),
             'network' => NetEvent::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)->latest('occurred_at')
                 ->limit(100)->get(['host', 'path', 'layer', 'action', 'category', 'occurred_at']),
             'pastes' => PasteEvent::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)->latest('occurred_at')
@@ -77,8 +110,9 @@ class DashboardController extends Controller
             'process_stop' => 'stopped pid '.($d['pid'] ?? '?'),
             'window_focus' => 'focus '.($d['app'] ?? '').(($d['title'] ?? '') && ($d['title'] ?? '') !== ($d['app'] ?? '') ? ': '.$d['title'] : ''),
             'paste', 'copy' => $type.' '.($d['chars'] ?? 0).' chars / '.($d['lines'] ?? 0).' lines'.(($d['code'] ?? false) ? ' (code)' : ''),
-            'net_adapter' => ($d['change'] ?? '').' adapter '.($d['name'] ?? '').' '.($d['driver'] ?? ''),
-            'device' => ($d['action'] ?? '').' '.($d['class'] ?? '').' '.($d['model'] ?? ''),
+            'listening_port' => 'port '.($d['address'] ?? '127.0.0.1').':'.($d['port'] ?? '?').' ('.($d['process'] ?? '?').') ['.($d['rule_id'] ?? '').']',
+            'net_adapter' => ($d['change'] ?? '').' adapter '.($d['name'] ?? '').(! empty($d['description']) ? ' ('.$d['description'].')' : (! empty($d['driver']) ? ' ('.$d['driver'].')' : '')).(! empty($d['kind']) ? ' ['.$d['kind'].']' : ''),
+            'device' => ($d['action'] ?? '').' '.($d['class'] ?? 'usb').' '.(($d['model'] ?? '') ?: (($d['vendor'] ?? '') ? ($d['vendor'].':'.($d['product'] ?? '')) : '')).(! empty($d['rule_id']) ? ' ['.$d['rule_id'].']' : ''),
             'tamper' => 'TAMPER '.($d['kind'] ?? ''),
             'extension_scan' => ($d['count'] ?? 0).' extensions, AI: '.count($d['ai'] ?? []),
             'artifact_scan' => ($d['count'] ?? 0).' model files found',

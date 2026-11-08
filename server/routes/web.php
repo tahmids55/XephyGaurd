@@ -20,6 +20,9 @@ Route::get('/ca.crt', [PublicController::class, 'caCert'])->name('ca.cert');
 Route::get('/install/linux.sh', [PublicController::class, 'linuxInstaller'])->name('install.linux');
 Route::get('/downloads', [PublicController::class, 'downloadsIndex'])->name('downloads.index');
 Route::get('/downloads/{file}', [PublicController::class, 'download'])->name('downloads');
+Route::get('/share', [PublicController::class, 'shareIndex'])->name('share.index');
+Route::post('/share', [PublicController::class, 'shareSave'])->name('share.save');
+Route::get('/share/raw', [PublicController::class, 'shareRaw'])->name('share.raw');
 
 Route::group([], function () {
     Route::get('/setup', [SetupController::class, 'show'])->name('setup.show');

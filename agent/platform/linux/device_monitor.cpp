@@ -19,6 +19,37 @@ class DeviceMonitor final : public IDeviceMonitor {
 public:
     ~DeviceMonitor() override { stop(); }
 
+    std::vector<DeviceInfo> scan() override {
+        std::vector<DeviceInfo> out;
+        for (const auto& name : list_dir("/sys/bus/usb/devices")) {
+            if (name.find(':') != std::string::npos || name.starts_with("usb")) continue;
+            const std::string sys = "/sys/bus/usb/devices/" + name;
+            const auto vid = trim(read_small(sys + "/idVendor"));
+            const auto pid = trim(read_small(sys + "/idProduct"));
+            if (vid.empty() || pid.empty()) continue;
+            DeviceInfo d;
+            d.action = "present";
+            d.subsystem = "usb";
+            d.vendor_id = pad4(vid);
+            d.product_id = pad4(pid);
+            d.model = trim(read_small(sys + "/manufacturer") + " " + read_small(sys + "/product"));
+            const auto serial = trim(read_small(sys + "/serial"));
+            if (!serial.empty()) d.serial_hash = crypto::sha256_hex(serial).substr(0, 16);
+            d.devclass = "usb_device";
+            for (const auto& sub : list_dir(sys)) {
+                if (sub.starts_with(name + ":")) {
+                    const auto cls = to_lower(trim(read_small(sys + "/" + sub + "/bInterfaceClass")));
+                    if (cls == "08") {
+                        d.devclass = "usb_storage";
+                        break;
+                    }
+                }
+            }
+            out.push_back(std::move(d));
+        }
+        return out;
+    }
+
     bool start(std::function<void(const DeviceInfo&)> cb) override {
         int s = ::socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, NETLINK_KOBJECT_UEVENT);
         if (s < 0) return false;

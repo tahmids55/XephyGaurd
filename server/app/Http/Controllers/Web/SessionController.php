@@ -91,7 +91,7 @@ class SessionController extends Controller
 
     public function rescan(Request $request, Pc $pc)
     {
-        $d = $request->validate(['what' => 'nullable|in:processes,extensions,artifacts,all']);
+        $d = $request->validate(['what' => 'nullable|in:processes,network,ports,devices,extensions,artifacts,all']);
         $cmd = $this->commands->send($pc, 'rescan', ['what' => $d['what'] ?? 'processes'], $request->user());
 
         return $request->expectsJson() ? response()->json(['command_id' => $cmd->id]) : back()->with('status', 'Rescan requested.');

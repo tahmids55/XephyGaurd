@@ -182,8 +182,77 @@
                 <td class="text-right"><button class="btn btn-sm text-xs" x-show="p.type==='process_start' && p.exe" @click="kill(drawer.pc, p.exe, p.pid)">Close</button></td></tr></template></table>
             </div>
           </div>
-          <div x-show="tab==='network'"><table class="tbl"><template x-for="n in drawer.network"><tr><td class="font-mono text-xs" x-text="(n.occurred_at||'').substring(11,19)"></td>
-            <td><span class="badge" :class="n.action==='blocked' ? 'sev-high' : 'sev-info'" x-text="n.action"></span></td><td x-text="n.host + (n.path||'')"></td><td class="text-xs" x-text="n.layer + ' ' + (n.category||'')"></td></tr></template></table></div>
+          <div x-show="tab==='network'" class="space-y-4">
+            <div class="flex items-center justify-between">
+              <div class="label">Network Adapters, AI Ports &amp; External Devices</div>
+              <button type="button" class="btn btn-sm" @click="rescan(drawer.pc, 'network')">↻ Refresh</button>
+            </div>
+            <div>
+              <div class="text-xs font-semibold text-slate-600 mb-1">Network Interfaces &amp; Tethering / VPN</div>
+              <table class="tbl" x-show="(drawer.adapters||[]).length">
+                <thead><tr><th>Time</th><th>Change</th><th>Interface</th><th>IP / Route</th><th>Rule</th></tr></thead>
+                <tbody>
+                  <template x-for="a in drawer.adapters">
+                    <tr :class="a.kind ? 'bg-amber-50/60' : ''">
+                      <td class="font-mono text-xs text-slate-500" x-text="a.at"></td>
+                      <td><span class="badge" :class="a.up ? 'sev-info' : 'sev-low'" x-text="a.change"></span></td>
+                      <td>
+                        <div class="font-semibold text-xs" x-text="a.name"></div>
+                        <div class="text-[10px] text-slate-400" x-text="a.description || a.driver"></div>
+                      </td>
+                      <td class="font-mono text-xs text-slate-600">
+                        <span x-text="(a.addresses||[]).join(', ') || '—'"></span>
+                        <span x-show="a.default_route" class="ml-1 rounded bg-slate-200 px-1 text-[10px]">default-gw</span>
+                      </td>
+                      <td><span x-show="a.kind" class="badge sev-high text-[10px]" x-text="a.kind"></span></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <p x-show="!(drawer.adapters||[]).length" class="text-xs text-slate-400">No network adapter events yet.</p>
+            </div>
+            <div>
+              <div class="text-xs font-semibold text-slate-600 mb-1">Detected Local LLM / AI Listening Ports</div>
+              <table class="tbl" x-show="(drawer.listening_ports||[]).length">
+                <thead><tr><th>Time</th><th>Port</th><th>Process</th><th>Rule</th><th></th></tr></thead>
+                <tbody>
+                  <template x-for="lp in drawer.listening_ports">
+                    <tr class="bg-red-50/70">
+                      <td class="font-mono text-xs text-slate-500" x-text="lp.at"></td>
+                      <td class="font-mono text-xs font-bold" x-text="(lp.address || '127.0.0.1') + ':' + lp.port"></td>
+                      <td class="text-xs"><span class="font-semibold" x-text="lp.process || 'unknown'"></span> <span class="font-mono text-slate-400" x-show="lp.pid" x-text="'(PID ' + lp.pid + ')'"></span></td>
+                      <td><span class="badge sev-high text-[10px]" x-text="lp.rule_id + (lp.probed ? ' (probed)' : '')"></span></td>
+                      <td class="text-right"><button class="btn btn-sm text-xs" x-show="lp.pid || lp.process" @click="kill(drawer.pc, lp.process, lp.pid)">End task</button></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <p x-show="!(drawer.listening_ports||[]).length" class="text-xs text-slate-400">No flagged local LLM listening ports detected.</p>
+            </div>
+            <div>
+              <div class="text-xs font-semibold text-slate-600 mb-1">USB Storage &amp; External Devices (Phones / Drives)</div>
+              <table class="tbl" x-show="(drawer.devices||[]).length">
+                <thead><tr><th>Time</th><th>Action</th><th>Class</th><th>Device / Vendor</th><th>Rule</th></tr></thead>
+                <tbody>
+                  <template x-for="d in drawer.devices">
+                    <tr :class="d.rule_id ? 'bg-amber-50/70' : ''">
+                      <td class="font-mono text-xs text-slate-500" x-text="d.at"></td>
+                      <td class="text-xs font-semibold" x-text="d.action"></td>
+                      <td class="text-xs" x-text="d.class"></td>
+                      <td class="text-xs"><span x-text="d.model || 'USB device'"></span> <span class="font-mono text-[10px] text-slate-400" x-show="d.vendor" x-text="'(' + d.vendor + ':' + d.product + ')'"></span></td>
+                      <td><span x-show="d.rule_id" class="badge sev-medium text-[10px]" x-text="d.rule_id"></span></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <p x-show="!(drawer.devices||[]).length" class="text-xs text-slate-400">No USB storage or phone events recorded.</p>
+            </div>
+            <div x-show="(drawer.network||[]).length">
+              <div class="text-xs font-semibold text-slate-600 mb-1">Gateway DNS / Proxy Events</div>
+              <table class="tbl"><template x-for="n in drawer.network"><tr><td class="font-mono text-xs" x-text="(n.occurred_at||'').substring(11,19)"></td>
+                <td><span class="badge" :class="n.action==='blocked' ? 'sev-high' : 'sev-info'" x-text="n.action"></span></td><td x-text="n.host + (n.path||'')"></td><td class="text-xs" x-text="n.layer + ' ' + (n.category||'')"></td></tr></template></table>
+            </div>
+          </div>
           <div x-show="tab==='typing'">
             <div class="label">Keys per minute (timing only — no characters are recorded)</div>
             <div class="flex h-40 items-end gap-[2px] border-b border-slate-300">

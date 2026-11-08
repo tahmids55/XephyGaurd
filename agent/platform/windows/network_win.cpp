@@ -49,13 +49,27 @@ public:
             i.name = to_utf8(a->FriendlyName);
             i.description = to_utf8(a->Description);
             const auto desc = to_lower(i.description);
-            // Map the description to a driver-like token so the shared adapter rules apply.
-            if (icontains(desc, "remote ndis")) i.driver = "rndis";
+            const auto fname = to_lower(i.name);
+            // Map the description/type to a driver-like token so the shared adapter rules apply.
+            if (icontains(desc, "remote ndis") || icontains(desc, "rndis") || icontains(desc, "usb ncm") ||
+                icontains(desc, "cdc_ncm") || icontains(desc, "cdc ether") || icontains(desc, "mobile broadband") ||
+                a->IfType == 243 || a->IfType == 244)
+                i.driver = "rndis";
             else if (icontains(desc, "apple mobile device ethernet")) i.driver = "ipheth";
-            else if (icontains(desc, "wintun") || icontains(desc, "wireguard")) i.driver = "wintun";
-            else if (icontains(desc, "tap-windows") || icontains(desc, "tap-win32")) i.driver = "tap-windows";
+            else if (icontains(desc, "wintun") || icontains(desc, "wireguard") || icontains(desc, "nordlynx") ||
+                     icontains(desc, "tailscale") || icontains(desc, "cloudflare") || icontains(desc, "warp") ||
+                     icontains(desc, "protonvpn") || icontains(desc, "mullvad") || icontains(fname, "wireguard") ||
+                     icontains(fname, "tailscale"))
+                i.driver = "wintun";
+            else if (icontains(desc, "tap-windows") || icontains(desc, "tap-win32") || icontains(desc, "ovpn-dco") ||
+                     icontains(desc, "openvpn") || icontains(desc, "anyconnect") || icontains(desc, "zerotier") ||
+                     icontains(desc, "fortissl"))
+                i.driver = "tap-windows";
             else if (a->IfType == IF_TYPE_PPP || a->IfType == IF_TYPE_TUNNEL) i.driver = "tun";
-            else if (icontains(desc, "usb") && icontains(desc, "ethernet")) i.driver = "r8152";
+            else if (icontains(desc, "usb") &&
+                     (icontains(desc, "ethernet") || icontains(desc, "gigabit") || icontains(desc, "lan") ||
+                      icontains(desc, "realtek") || icontains(desc, "asix")))
+                i.driver = "r8152";
             for (ULONG k = 0; k < a->PhysicalAddressLength; ++k) {
                 char hx[4];
                 snprintf(hx, sizeof hx, k ? ":%02x" : "%02x", a->PhysicalAddress[k]);
@@ -101,7 +115,10 @@ public:
                 for (DWORD i = 0; i < t->dwNumEntries; ++i) {
                     ListeningSocket s;
                     s.port = ntohs(u_short(t->table[i].dwLocalPort));
-                    s.address = "::";
+                    in6_addr a6{};
+                    std::memcpy(&a6, t->table[i].ucLocalAddr, 16);
+                    char b[INET6_ADDRSTRLEN] = {0};
+                    s.address = inet_ntop(AF_INET6, &a6, b, sizeof b) ? b : "::";
                     s.pid = t->table[i].dwOwningPid;
                     out.push_back(s);
                 }
@@ -109,14 +126,23 @@ public:
         };
         collect(AF_INET);
         collect(AF_INET6);
+        std::map<int64_t, std::pair<std::string, uint64_t>> pid_cache;
         for (auto& s : out) {
-            s.process = path_basename(process_image(DWORD(s.pid)));
-            HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, DWORD(s.pid));
-            if (h) {
-                PROCESS_MEMORY_COUNTERS pmc{};
-                if (GetProcessMemoryInfo(h, &pmc, sizeof pmc)) s.rss_bytes = pmc.WorkingSetSize;
-                CloseHandle(h);
+            if (s.pid <= 4) continue;
+            auto it = pid_cache.find(s.pid);
+            if (it == pid_cache.end()) {
+                std::string proc = path_basename(process_image(DWORD(s.pid)));
+                uint64_t rss = 0;
+                HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, DWORD(s.pid));
+                if (h) {
+                    PROCESS_MEMORY_COUNTERS pmc{};
+                    if (GetProcessMemoryInfo(h, &pmc, sizeof pmc)) rss = pmc.WorkingSetSize;
+                    CloseHandle(h);
+                }
+                it = pid_cache.emplace(s.pid, std::make_pair(std::move(proc), rss)).first;
             }
+            s.process = it->second.first;
+            s.rss_bytes = it->second.second;
         }
         return out;
     }

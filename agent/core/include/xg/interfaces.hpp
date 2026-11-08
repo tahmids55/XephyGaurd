@@ -78,6 +78,7 @@ public:
 class IDeviceMonitor {
 public:
     virtual ~IDeviceMonitor() = default;
+    virtual std::vector<DeviceInfo> scan() { return {}; }
     virtual bool start(std::function<void(const DeviceInfo&)> cb) = 0;
     virtual void stop() = 0;
 };

@@ -192,7 +192,11 @@ class EventIngestor
                 if (in_array('isolate', $actions, true) && ! $pc->isolated) {
                     $this->sessions->isolate($pc, true, null, 'rule '.$str('rule_id'));
                 }
-                if (! in_array('alert', $actions, true)) {
+                $sev = $str('severity', 16) ?? 'medium';
+                $shouldAlert = in_array('alert', $actions, true)
+                    || ($d['mode'] ?? $pc->mode) === 'always_on'
+                    || in_array($sev, ['low', 'medium', 'high', 'critical'], true);
+                if (! $shouldAlert) {
                     return null;
                 }
                 $title = ($d['description'] ?? 'Rule matched').': '.($str('subject', 120) ?? '');
@@ -204,8 +208,8 @@ class EventIngestor
                     return null;
                 }
 
-                return $this->alert($pc, $sid, $str('rule_id') ?? 'rule', $str('severity', 16) ?? 'medium',
-                    $str('category', 32), ($d['description'] ?? 'Rule matched').': '.($str('subject', 120) ?? ''), $d, $at, $str('user'));
+                return $this->alert($pc, $sid, $str('rule_id') ?? 'rule', $sev,
+                    $str('category', 32), $title, $d, $at, $str('user'));
 
             case 'tamper':
                 $kind = $str('kind', 48) ?? 'unknown';
@@ -279,13 +283,35 @@ class EventIngestor
 
                 return null;
 
+            case 'listening_port':
+                $port = $int('port');
+                $proc = $str('process', 64) ?: 'unknown';
+                $rule = $str('rule_id', 64) ?: 'port.detected';
+                $pc->last_event = mb_substr("Listening port {$port} ({$proc}) [{$rule}]", 0, 160);
+
+                return null;
+
             case 'net_adapter':
                 $pc->last_event = mb_substr('Network: '.($str('change', 16) ?? '').' '.($str('name') ?? ''), 0, 160);
 
                 return null;
 
             case 'device':
-                $pc->last_event = mb_substr('Device '.($str('action', 8) ?? '').': '.($str('model', 80) ?: $str('class', 32)), 0, 160);
+                $action = $str('action', 16) ?? '';
+                $label = $str('model', 80) ?: (($str('vendor', 8) && $str('product', 8)) ? ($str('vendor', 8).':'.$str('product', 8)) : ($str('class', 32) ?? 'usb'));
+                $pc->last_event = mb_substr("Device {$action}: {$label}", 0, 160);
+                if (in_array($action, ['add', 'present'], true)) {
+                    $rule = $str('rule_id', 64) ?: 'dev.usb_device';
+                    $title = ($d['class'] ?? '') === 'usb_storage'
+                        ? "USB storage attached: {$label}"
+                        : "External USB device attached: {$label}";
+                    $dup = Alert::query()->where('pc_id', $pc->id)
+                        ->where(fn ($q) => $q->where('rule_id', $rule)->orWhere('category', 'device'))
+                        ->where('occurred_at', '>', $at->subMinutes(5))->exists();
+                    if (! $dup) {
+                        return $this->alert($pc, $sid, $rule, $str('rule_id') ? 'medium' : 'low', 'device', $title, $d, $at, $str('user'));
+                    }
+                }
 
                 return null;
 

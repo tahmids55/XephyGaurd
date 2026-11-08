@@ -303,8 +303,12 @@ void Agent::scan_ports() {
         const bool candidate = needs_probe || (s.port > 1024 && s.rss_bytes >= probe.min_rss_mb * 1024 * 1024);
         if (!hit && probe.enabled && candidate && !probed_ports_.contains(key)) {
             probed_ports_.insert(key);
+            const std::string primary_host = (s.address == "::1") ? "::1" : "127.0.0.1";
             for (const auto& path : probe.paths) {
-                auto r = net::http_get_plain("127.0.0.1", s.port, path, 400);
+                auto r = net::http_get_plain(primary_host, s.port, path, 400);
+                if (r.status == 0 && s.address == "::") {
+                    r = net::http_get_plain("::1", s.port, path, 400);
+                }
                 if ((r.status == 200 || r.status == 400 || r.status == 405 || r.status == 422) &&
                     (icontains(r.headers["content-type"], "json") || r.body.starts_with("{")) &&
                     (path.find("models") == std::string::npos || r.body.find("\"data\"") != std::string::npos ||
@@ -366,6 +370,21 @@ void Agent::scan_network() {
             handle_rule_hit(*hit, "default_route", json{{"default_routes", routes}});
     adapters_ = std::move(now);
     default_routes_ = routes;
+}
+
+// --------------------------------------------------------------------------------------- devices
+void Agent::scan_devices() {
+    if (!plat_.devices || !policy().collect.devices) return;
+    for (const auto& d : plat_.devices->scan()) {
+        auto hit = rules_.match_device(d);
+        if (!hit && d.devclass != "usb_storage") continue;
+        sink_->emit(ev::device, {{"action", d.action}, {"subsystem", d.subsystem}, {"class", d.devclass},
+                                 {"vendor", d.vendor_id}, {"product", d.product_id}, {"model", limit(d.model, 128)},
+                                 {"serial_hash", d.serial_hash}, {"rule_id", hit ? hit->rule_id : ""}});
+        if (hit)
+            handle_rule_hit(*hit, d.vendor_id + ":" + d.product_id + ":" + d.serial_hash,
+                            json{{"class", d.devclass}, {"vendor", d.vendor_id}, {"model", d.model}});
+    }
 }
 
 // ------------------------------------------------------------------------------------ extensions
@@ -934,6 +953,14 @@ void Agent::handle_command(const protocol::Command& cmd) {
             next_run_.erase("proc");
             next_run_.erase("snap");
         }
+        if (what == "network" || what == "ports" || what == "all") {
+            known_ports_.clear();
+            scan_ports();
+            scan_network();
+        }
+        if (what == "devices" || what == "network" || what == "all") {
+            scan_devices();
+        }
         command_result(cmd.id, "ok", json::object());
     } else if (cmd.type == "flush" || cmd.type == "ping") {
         wake_uplink();
@@ -988,6 +1015,7 @@ void Agent::reevaluate_all() {
     network_dirty_ = true;
     rescan_extensions_ = true;
     next_run_.erase("ports");
+    scan_devices();
 }
 
 void Agent::run_periodic(int64_t now) {
@@ -1053,7 +1081,8 @@ int Agent::run(std::atomic<bool>& stop) {
             if (fresh && policy().collect.processes) on_process_started(p);
         });
     if (plat_.network) plat_.network->watch([this] { network_dirty_ = true; });
-    if (plat_.devices)
+    if (plat_.devices) {
+        scan_devices();
         plat_.devices->start([this](const DeviceInfo& d) {
             if (!policy().collect.devices) return;
             auto hit = rules_.match_device(d);
@@ -1064,6 +1093,7 @@ int Agent::run(std::atomic<bool>& stop) {
                 handle_rule_hit(*hit, d.vendor_id + ":" + d.product_id + ":" + d.serial_hash,
                                 json{{"class", d.devclass}, {"vendor", d.vendor_id}, {"model", d.model}});
         });
+    }
     restart_watchers();
     push_helper_config();
 

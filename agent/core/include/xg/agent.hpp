@@ -52,6 +52,7 @@ public:
     void process_snapshot();
     void scan_ports();
     void scan_network();
+    void scan_devices();
     void scan_extensions();
     void on_helper_message(const IIpcServer::Peer& peer, const std::string& line);
     void on_process_started(const ProcessInfo& p);
