@@ -22,6 +22,7 @@ public:
     bool note_started(const ProcessInfo& p);
     bool known(int64_t pid) const { return procs_.contains(pid); }
     const ProcessInfo* get(int64_t pid) const;
+    std::vector<ProcessInfo> running() const;
 
     struct NameSnapshot {
         std::string hash;                 // SHA-256 of the sorted unique exe-name list

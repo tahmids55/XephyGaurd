@@ -52,14 +52,14 @@ class CertificateAuthority
             throw new RuntimeException('CA already exists');
         }
         @mkdir($this->dir, 0700, true);
-        $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
         $conf = $this->opensslConfig();
+        $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1', 'config' => $conf]);
         $dn = ['commonName' => $commonName, 'organizationName' => 'XephyGuard'];
         $csr = openssl_csr_new($dn, $key, ['digest_alg' => 'sha256', 'config' => $conf]);
         $cert = openssl_csr_sign($csr, null, $key, $days, ['digest_alg' => 'sha256', 'config' => $conf,
             'x509_extensions' => 'v3_ca'], random_int(1, PHP_INT_MAX));
         openssl_x509_export($cert, $certPem);
-        openssl_pkey_export($key, $keyPem);
+        openssl_pkey_export($key, $keyPem, null, ['config' => $conf]);
         $this->writeSecret($this->keyPath(), $keyPem);
         file_put_contents($this->certPath(), $certPem);
         @unlink($conf);
@@ -88,7 +88,6 @@ class CertificateAuthority
     /** Issues the CCC's own TLS server certificate (SAN = IPs + DNS names). */
     public function issueServerCert(array $ips, array $dnsNames, string $certOut, string $keyOut, int $days = 825): void
     {
-        $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
         $alt = [];
         foreach (array_values($ips) as $i => $ip) {
             $alt[] = 'IP.'.($i + 1).' = '.$ip;
@@ -97,11 +96,12 @@ class CertificateAuthority
             $alt[] = 'DNS.'.($i + 1).' = '.$d;
         }
         $conf = $this->opensslConfig(implode("\n", $alt));
+        $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1', 'config' => $conf]);
         $csr = openssl_csr_new(['commonName' => $dnsNames[0] ?? $ips[0], 'organizationName' => 'XephyGuard CCC'], $key,
             ['digest_alg' => 'sha256', 'config' => $conf]);
         openssl_csr_export($csr, $csrPem);
         $signed = $this->sign($csrPem, $days, 'server_ext', $conf);
-        openssl_pkey_export($key, $keyPem);
+        openssl_pkey_export($key, $keyPem, null, ['config' => $conf]);
         $this->writeSecret($keyOut, $keyPem);
         file_put_contents($certOut, $signed['pem'].$this->certPem());   // chain
         @unlink($conf);
@@ -148,11 +148,12 @@ class CertificateAuthority
         ];
     }
 
-    private function opensslConfig(string $altNames = 'DNS.1 = localhost'): string
+    public function opensslConfig(string $altNames = 'DNS.1 = localhost'): string
     {
         $path = tempnam(sys_get_temp_dir(), 'xgssl');
         file_put_contents($path, <<<CONF
         [ req ]
+        default_bits = 2048
         distinguished_name = req_dn
         [ req_dn ]
         [ v3_ca ]

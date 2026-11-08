@@ -230,14 +230,61 @@ void Agent::scan_processes() {
 
 void Agent::process_snapshot() {
     ProcessTracker::NameSnapshot s;
+    std::vector<ProcessInfo> procs;
+    std::map<int64_t, std::string> rules_by_pid;
     {
         std::lock_guard lk(tracker_mu_);
         s = tracker_.name_snapshot();
+        procs = tracker_.running();
+        rules_by_pid = rule_pids_;
     }
-    // Only names (no command lines) and only the diff; the hash lets the CCC detect divergence.
+    auto is_sys_user = [](const std::string& u) {
+        auto l = to_lower(u);
+        return l.empty() || l == "system" || l == "local service" || l == "network service" || l == "root" ||
+               l.starts_with("dwm-") || l.starts_with("umfd-");
+    };
+    std::sort(procs.begin(), procs.end(), [&](const ProcessInfo& a, const ProcessInfo& b) {
+        const bool a_hit = rules_by_pid.contains(a.pid);
+        const bool b_hit = rules_by_pid.contains(b.pid);
+        if (a_hit != b_hit) return a_hit > b_hit;
+        const bool a_active = (a.cpu_pct > 0.1 || a.net_kbps > 0.1);
+        const bool b_active = (b.cpu_pct > 0.1 || b.net_kbps > 0.1);
+        if (a_active != b_active) return a_active > b_active;
+        const bool a_user = !is_sys_user(a.user);
+        const bool b_user = !is_sys_user(b.user);
+        if (a_user != b_user) return a_user > b_user;
+        if (a.rss_bytes != b.rss_bytes) return a.rss_bytes > b.rss_bytes;
+        return a.pid < b.pid;
+    });
+    json list = json::array();
+    const size_t max_items = std::min<size_t>(procs.size(), 250);
+    for (size_t i = 0; i < max_items; ++i) {
+        const auto& p = procs[i];
+        auto exe = normalize_exe(p.exe_path.empty() ? p.name : p.exe_path);
+        if (exe.empty()) exe = normalize_exe(p.name);
+        auto it = rules_by_pid.find(p.pid);
+        const std::string rule_id = it != rules_by_pid.end() ? it->second : "";
+        const double rss_mb = std::round((double(p.rss_bytes) / (1024.0 * 1024.0)) * 10.0) / 10.0;
+        list.push_back({{"pid", p.pid},
+                        {"ppid", p.ppid},
+                        {"exe", limit(exe, 64)},
+                        {"name", limit(p.name, 64)},
+                        {"user", limit(p.user, 32)},
+                        {"rss_mb", rss_mb},
+                        {"cpu_pct", p.cpu_pct},
+                        {"net_kbps", p.net_kbps},
+                        {"net_conns", p.net_conns},
+                        {"rule_id", rule_id}});
+    }
+    // Only names (no command lines) and bounded process table; the hash lets the CCC detect divergence.
     if (s.added.size() > 200) s.added.resize(200);
     if (s.removed.size() > 200) s.removed.resize(200);
-    sink_->emit(ev::process_snapshot, {{"hash", s.hash}, {"count", s.count}, {"added", s.added}, {"removed", s.removed}});
+    sink_->emit(ev::process_snapshot, {{"hash", s.hash},
+                                       {"count", s.count},
+                                       {"total_running", procs.size()},
+                                       {"added", s.added},
+                                       {"removed", s.removed},
+                                       {"list", std::move(list)}});
 }
 
 // ----------------------------------------------------------------------------------------- ports
@@ -867,6 +914,8 @@ void Agent::handle_command(const protocol::Command& cmd) {
             killed.push_back({{"pid", pid}, {"exe", exe}, {"killed", ok}});
         }
         notify_student("XephyGuard", "A program was closed by your instructor.", false);
+        next_run_.erase("proc");
+        next_run_.erase("snap");
         command_result(cmd.id, "ok", {{"processes", killed}});
     } else if (cmd.type == "isolate_notice") {
         status_.isolated = cmd.args.value("isolated", false);
@@ -879,7 +928,12 @@ void Agent::handle_command(const protocol::Command& cmd) {
         const auto what = cmd.args.value("what", "all");
         if (what == "extensions" || what == "all") rescan_extensions_ = true;
         if (what == "artifacts" || what == "all") rescan_artifacts_ = true;
-        if (what == "processes" || what == "all") next_run_.erase("proc");
+        if (what == "processes" || what == "all") {
+            scan_processes();
+            process_snapshot();
+            next_run_.erase("proc");
+            next_run_.erase("snap");
+        }
         command_result(cmd.id, "ok", json::object());
     } else if (cmd.type == "flush" || cmd.type == "ping") {
         wake_uplink();

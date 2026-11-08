@@ -41,7 +41,8 @@ class DashboardController extends Controller
         $session = LabSession::activeFor($pc->lab_id);
         $since = $session?->started_at ?? now()->subHours(2);
         $events = Event::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)
-            ->whereNotIn('type', ['key_stats', 'heartbeat'])->latest('occurred_at')->limit(200)->get(['type', 'occurred_at', 'data', 'user']);
+            ->whereNotIn('type', ['key_stats', 'heartbeat', 'process_snapshot'])->latest('occurred_at')->limit(200)->get(['type', 'occurred_at', 'data', 'user']);
+        $latestSnap = Event::query()->where('pc_id', $pc->id)->where('type', 'process_snapshot')->latest('seq')->first(['occurred_at', 'data']);
         $keys = KeyStat::query()->where('pc_id', $pc->id)->where('window_start', '>=', $since)->orderBy('window_start')
             ->get(['window_start', 'window_s', 'keys', 'backspaces', 'paste_chords']);
         // Bucket per minute for the key-rate chart.
@@ -56,8 +57,10 @@ class DashboardController extends Controller
                 ->limit(50)->get(['id', 'rule_id', 'severity', 'title', 'occurred_at', 'acknowledged_at']),
             'timeline' => $events->map(fn ($e) => ['type' => $e->type, 'at' => $e->occurred_at->format('H:i:s'),
                 'summary' => self::summarize($e->type, $e->data), 'user' => $e->user]),
+            'running_processes' => $latestSnap?->data['list'] ?? [],
+            'processes_updated_at' => $latestSnap?->occurred_at?->format('H:i:s'),
             'processes' => $events->whereIn('type', ['process_start', 'process_stop'])->values()
-                ->map(fn ($e) => ['at' => $e->occurred_at->format('H:i:s'), 'type' => $e->type, 'exe' => $e->data['exe'] ?? '', 'rule' => $e->data['rule_id'] ?? '']),
+                ->map(fn ($e) => ['at' => $e->occurred_at->format('H:i:s'), 'type' => $e->type, 'pid' => $e->data['pid'] ?? null, 'exe' => $e->data['exe'] ?? '', 'rule' => $e->data['rule_id'] ?? '']),
             'network' => NetEvent::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)->latest('occurred_at')
                 ->limit(100)->get(['host', 'path', 'layer', 'action', 'category', 'occurred_at']),
             'pastes' => PasteEvent::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)->latest('occurred_at')

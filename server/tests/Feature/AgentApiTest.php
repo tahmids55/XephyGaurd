@@ -77,9 +77,20 @@ class AgentApiTest extends TestCase
         $this->assertSame(3, Alert::count());
 
         // Agent restarted (its local de-dup is reset) and reports the same hit with new seq numbers.
-        $again = [$this->ev(6, 'rule_hit', $events[0]['data'])];
+        $again = [
+            $this->ev(6, 'rule_hit', $events[0]['data']),
+            $this->ev(7, 'process_snapshot', ['hash' => 'h1', 'count' => 1, 'list' => [['pid' => 10, 'exe' => 'code', 'user' => 'alice', 'rss_mb' => 120, 'rule_id' => '']]]),
+            $this->ev(8, 'process_snapshot', ['hash' => 'h2', 'count' => 2, 'list' => [['pid' => 42, 'exe' => 'ollama', 'user' => 'alice', 'rss_mb' => 800, 'rule_id' => 'proc.ollama'], ['pid' => 10, 'exe' => 'code', 'user' => 'alice', 'rss_mb' => 125, 'rule_id' => '']]]),
+        ];
         $this->withHeaders($h)->postJson('/api/agent/v1/events', $this->batch($pc->id, $again))->assertOk();
         $this->assertSame(3, Alert::count());
+        // Only the latest process_snapshot row is kept per PC (zero DB bloat)
+        $this->assertSame(1, Event::where('pc_id', $pc->id)->where('type', 'process_snapshot')->count());
+        $this->actingAs($this->user('instructor'))
+            ->getJson("/pcs/{$pc->id}")
+            ->assertOk()
+            ->assertJsonPath('running_processes.0.exe', 'ollama')
+            ->assertJsonPath('running_processes.1.exe', 'code');
     }
 
     public function test_rejects_malformed_and_foreign_batches(): void

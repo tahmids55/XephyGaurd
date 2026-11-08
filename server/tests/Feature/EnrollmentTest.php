@@ -14,8 +14,10 @@ class EnrollmentTest extends TestCase
 
     private function csr(): string
     {
-        $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
-        openssl_csr_export(openssl_csr_new(['commonName' => 'lab-pc-07'], $key, ['digest_alg' => 'sha256']), $pem);
+        $conf = app(\App\Services\CertificateAuthority::class)->opensslConfig();
+        $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1', 'config' => $conf]);
+        openssl_csr_export(openssl_csr_new(['commonName' => 'lab-pc-07'], $key, ['digest_alg' => 'sha256', 'config' => $conf]), $pem);
+        @unlink($conf);
 
         return $pem;
     }
@@ -41,7 +43,8 @@ class EnrollmentTest extends TestCase
         $this->assertSame('approved', $creds['status']);
         $this->assertSame('A3', $creds['name']);
         $this->assertSame(1, openssl_x509_verify($creds['cert_pem'], openssl_pkey_get_public($creds['ca_pem'])));
-        $this->assertStringContainsString('TLS Web Client Authentication', shell_exec('echo '.escapeshellarg($creds['cert_pem']).' | openssl x509 -noout -text'));
+        $parsedCert = openssl_x509_parse($creds['cert_pem']);
+        $this->assertStringContainsString('TLS Web Client Authentication', $parsedCert['extensions']['extendedKeyUsage'] ?? '');
         // the token is handed out exactly once
         $this->getJson("/api/agent/v1/enroll/$id?poll_token=$poll")->assertJson(['status' => 'collected']);
         // ... and works with the issued certificate

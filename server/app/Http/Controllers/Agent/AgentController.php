@@ -35,8 +35,7 @@ class AgentController extends Controller
         $data = $request->validate(['socket_id' => ['required', 'regex:/^\d+\.\d+$/'], 'channel_name' => 'required|string']);
         $agent = $this->agent($request);
 
-        // Allow the authenticated agent to subscribe to its channel (including past channel if ID shifted)
-        if (! str_starts_with($data['channel_name'], 'private-pc.')) {
+        if ($data['channel_name'] !== "private-pc.{$agent->pc_id}") {
             \Illuminate\Support\Facades\Log::warning("AgentController broadcastAuth 403: requested={$data['channel_name']}, expected=private-pc.{$agent->pc_id}");
             return response()->json(['error' => 'agents may only subscribe to their own channel'], 403);
         }

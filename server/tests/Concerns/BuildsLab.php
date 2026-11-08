@@ -38,10 +38,13 @@ trait BuildsLab
     /** Creates an enrolled PC + agent and returns [pc, token, cert_pem]. */
     protected function enrolledPc(string $ip = '192.168.10.21', string $name = 'PC-01'): array
     {
-        $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
-        $csr = openssl_csr_new(['commonName' => $name], $key, ['digest_alg' => 'sha256']);
+        $ca = app(CertificateAuthority::class);
+        $conf = $ca->opensslConfig();
+        $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1', 'config' => $conf]);
+        $csr = openssl_csr_new(['commonName' => $name], $key, ['digest_alg' => 'sha256', 'config' => $conf]);
+        @unlink($conf);
         openssl_csr_export($csr, $csrPem);
-        $signed = app(CertificateAuthority::class)->signClientCsr($csrPem, 30);
+        $signed = $ca->signClientCsr($csrPem, 30);
         $pc = Pc::create(['lab_id' => Lab::current()->id, 'name' => $name, 'hostname' => strtolower($name), 'ip' => $ip,
             'os' => 'Linux', 'macs' => ['aa:bb:cc:00:00:'.substr(md5($name), 0, 2)]]);
         $token = Str::random(64);

@@ -72,6 +72,7 @@ inline json sample_signatures() {
         {"id":"proc.llamacpp","category":"local_llm","severity":"high","description":"llama.cpp","match":{"exe_prefix":["llama-"]}},
         {"id":"proc.cli.claude_code","category":"cli_agent","severity":"high","description":"Claude Code",
          "match":{"exe":["claude"],"interpreters":["node"],"cmdline_contains":["@anthropic-ai/claude-code"]}},
+        {"id":"proc.editor.cursor","category":"ai_editor","severity":"high","description":"Cursor","match":{"exe":["cursor"]}},
         {"id":"vm.container","category":"virtualization","severity":"low","description":"Docker","match":{"exe":["dockerd"]}}
       ],
       "extensions": [

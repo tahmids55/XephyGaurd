@@ -44,6 +44,7 @@ Route::group([], function () {
             Route::post('/sessions/message', [SessionController::class, 'message'])->name('sessions.message');
             Route::post('/pcs/{pc}/isolate', [SessionController::class, 'isolate'])->name('pcs.isolate');
             Route::post('/pcs/{pc}/kill', [SessionController::class, 'kill'])->name('pcs.kill');
+            Route::post('/pcs/{pc}/rescan', [SessionController::class, 'rescan'])->name('pcs.rescan');
 
             Route::get('/enroll', [EnrollmentController::class, 'index'])->name('enroll.index');
             Route::post('/enroll/{enrollment}/approve', [EnrollmentController::class, 'approve'])->name('enroll.approve');

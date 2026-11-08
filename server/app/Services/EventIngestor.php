@@ -86,6 +86,14 @@ class EventIngestor
                     $alerts[] = $a;
                 }
             }
+            $latestSnapSeq = $events->where('type', 'process_snapshot')->max('seq');
+            if ($latestSnapSeq) {
+                Event::query()
+                    ->where('pc_id', $pc->id)
+                    ->where('type', 'process_snapshot')
+                    ->where('seq', '<', (int) $latestSnapSeq)
+                    ->delete();
+            }
             if ($events->isNotEmpty()) {
                 $agent->last_seq = max($agent->last_seq, (int) $events->max('seq'));
             }

@@ -38,6 +38,10 @@ Alpine.data('labView', (cfg) => ({
     drawer: null,
     tab: 'timeline',
     filter: '',
+    procSearch: '',
+    procFilter: 'all',
+    procSort: 'ram',
+    procSortDir: 'desc',
     init() {
         for (const s of this.seats) {
             const pc = Object.values(this.pcs).find((p) => p.seat_id === s.id);
@@ -122,11 +126,65 @@ Alpine.data('labView', (cfg) => ({
         this.pcs[pc.id].isolated = on;
         if (this.drawer) this.drawer.pc.isolated = on;
     },
-    async kill(pc, exe) {
-        exe = exe || prompt('Program to close (executable name, e.g. ollama):');
-        if (!exe) return;
-        await api(`/pcs/${pc.id}/kill`, { method: 'POST', body: JSON.stringify({ exe }) });
-        Alpine.store('toasts').push({ title: `Close "${exe}" sent to ${pc.name}`, severity: 'info' });
+    async kill(pc, exe, pid = null) {
+        if (!exe && !pid) {
+            exe = prompt('Program to close (executable name, e.g. ollama):');
+            if (!exe) return;
+        }
+        const payload = pid ? { pid: Number(pid), ...(exe ? { exe } : {}) } : { exe };
+        await api(`/pcs/${pc.id}/kill`, { method: 'POST', body: JSON.stringify(payload) });
+        Alpine.store('toasts').push({ title: `Close "${exe || ('PID ' + pid)}" sent to ${pc.name}`, severity: 'info' });
+        setTimeout(() => { if (this.drawer && this.drawer.pc.id === pc.id) this.open(pc.id); }, 1500);
+    },
+    async rescan(pc, what = 'processes') {
+        await api(`/pcs/${pc.id}/rescan`, { method: 'POST', body: JSON.stringify({ what }) });
+        Alpine.store('toasts').push({ title: `Refreshing ${what} on ${pc.name}…`, severity: 'info' });
+        setTimeout(() => { if (this.drawer && this.drawer.pc.id === pc.id) this.open(pc.id); }, 1500);
+    },
+    setProcSort(col) {
+        if (this.procSort === col) {
+            this.procSortDir = this.procSortDir === 'desc' ? 'asc' : 'desc';
+        } else {
+            this.procSort = col;
+            this.procSortDir = 'desc';
+        }
+    },
+    filteredProcesses() {
+        const list = this.drawer?.running_processes || [];
+        const q = (this.procSearch || '').trim().toLowerCase();
+        const isSys = (u) => {
+            const l = (u || '').toLowerCase();
+            return !l || l === 'system' || l === 'local service' || l === 'network service' || l === 'root' || l.startsWith('dwm-') || l.startsWith('umfd-');
+        };
+        const filtered = list.filter((p) => {
+            if (this.procFilter === 'flagged' && !p.rule_id) return false;
+            if (this.procFilter === 'user' && isSys(p.user) && !p.rule_id) return false;
+            if (!q) return true;
+            return (p.exe || '').toLowerCase().includes(q) ||
+                   (p.name || '').toLowerCase().includes(q) ||
+                   (p.user || '').toLowerCase().includes(q) ||
+                   (p.rule_id || '').toLowerCase().includes(q) ||
+                   String(p.pid || '').includes(q);
+        });
+        const dir = this.procSortDir === 'asc' ? 1 : -1;
+        const col = this.procSort || 'ram';
+        return [...filtered].sort((a, b) => {
+            let va = 0, vb = 0;
+            if (col === 'cpu') {
+                va = Number(a.cpu_pct || 0);
+                vb = Number(b.cpu_pct || 0);
+            } else if (col === 'net') {
+                va = Number(a.net_kbps || 0) * 1000 + Number(a.net_conns || 0);
+                vb = Number(b.net_kbps || 0) * 1000 + Number(b.net_conns || 0);
+            } else {
+                va = Number(a.rss_mb || 0);
+                vb = Number(b.rss_mb || 0);
+            }
+            if (va !== vb) return (va - vb) * dir;
+            const ra = Number(a.rss_mb || 0), rb = Number(b.rss_mb || 0);
+            if (ra !== rb) return rb - ra;
+            return Number(a.pid || 0) - Number(b.pid || 0);
+        });
     },
     async ack(alert) {
         await api(`/alerts/${alert.id}/ack`, { method: 'POST', body: JSON.stringify({}) });

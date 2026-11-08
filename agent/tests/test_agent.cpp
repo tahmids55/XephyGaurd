@@ -170,12 +170,23 @@ TEST_CASE("commands are executed and acknowledged") {
     h.agent->apply_policy(Policy::default_for(Mode::test));
     h.agent->handle_command({"c1", "message", {{"text", "Ten minutes left"}}});
     CHECK(h.ipc->count_containing("Ten minutes left") == 1);
-    h.procs->procs = {{77, 1, "/usr/bin/cursor", "cursor", "", "alice", 0, 1}};
+    h.procs->procs = {{77, 1, "/usr/bin/cursor", "cursor", "", "alice", 256ull * 1024 * 1024, 1},
+                      {88, 1, "/usr/bin/firefox", "firefox", "", "alice", 512ull * 1024 * 1024, 2}};
+    h.agent->handle_command({"c_scan", "rescan", {{"what", "processes"}}});
+    auto snaps = h.of(ev::process_snapshot);
+    REQUIRE(snaps.size() == 1);
+    REQUIRE(snaps[0].data["list"].size() == 2);
+    // Flagged AI process (cursor) is sorted first ahead of higher-RAM non-flagged process (firefox)
+    CHECK(snaps[0].data["list"][0]["exe"] == "cursor");
+    CHECK(snaps[0].data["list"][0]["rule_id"] == "proc.editor.cursor");
+    CHECK(snaps[0].data["list"][1]["exe"] == "firefox");
+    CHECK(snaps[0].data["list"][1]["rss_mb"] == 512);
+
     h.agent->handle_command({"c2", "kill", {{"exe", "cursor"}}});
     CHECK(h.procs->killed == std::vector<int64_t>{77});
     auto res = h.of(ev::command_result);
-    REQUIRE(res.size() == 2);
-    CHECK(res[1].data["command_id"] == "c2");
+    REQUIRE(res.size() == 3);
+    CHECK(res[2].data["command_id"] == "c2");
     auto hb = h.agent->build_heartbeat();
     CHECK(hb["mode"] == "test");
     CHECK(hb["signatures_version"] == "test-1");

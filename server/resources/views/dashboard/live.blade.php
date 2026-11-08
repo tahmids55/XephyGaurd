@@ -120,9 +120,68 @@
           <div x-show="tab==='timeline'"><table class="tbl"><template x-for="e in drawer.timeline"><tr><td class="w-16 font-mono text-xs" x-text="e.at"></td><td class="text-xs text-slate-500" x-text="e.type"></td><td x-text="e.summary"></td></tr></template></table></div>
           <div x-show="tab==='alerts'"><table class="tbl"><template x-for="a in drawer.alerts"><tr><td><span class="badge" :class="'sev-'+a.severity" x-text="a.severity"></span></td><td x-text="a.title"></td>
             <td class="text-xs" x-text="(a.occurred_at||'').substring(11,19)"></td><td><button class="btn btn-sm" x-show="!a.acknowledged_at" @click="ack(a)">Ack</button><span x-show="a.acknowledged_at" class="text-xs text-slate-400">acked</span></td></tr></template></table></div>
-          <div x-show="tab==='processes'"><table class="tbl"><template x-for="p in drawer.processes"><tr><td class="font-mono text-xs" x-text="p.at"></td><td x-text="p.type.replace('process_','')"></td><td class="font-semibold" x-text="p.exe"></td><td class="text-xs" x-text="p.rule"></td>
-            <td><button class="btn btn-sm" x-show="p.type==='process_start' && p.exe" @click="kill(drawer.pc, p.exe)">Close</button></td></tr></template></table>
-            <p x-show="!drawer.processes.length" class="text-sm text-slate-500">Only processes matching AI signatures are listed.</p></div>
+          <div x-show="tab==='processes'" class="space-y-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <input type="search" x-model="procSearch" placeholder="Search process, PID, or user…" class="input w-48 text-xs">
+              <div class="flex rounded border border-slate-200 text-xs">
+                <button type="button" class="px-2 py-1" :class="procFilter==='all' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-600'" @click="procFilter='all'">All (<span x-text="(drawer.running_processes||[]).length"></span>)</button>
+                <button type="button" class="border-l border-slate-200 px-2 py-1" :class="procFilter==='user' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-600'" @click="procFilter='user'">User Apps</button>
+                <button type="button" class="border-l border-slate-200 px-2 py-1" :class="procFilter==='flagged' ? 'bg-red-600 text-white font-semibold' : 'text-slate-600'" @click="procFilter='flagged'">AI Flagged</button>
+              </div>
+              <div class="flex items-center rounded border border-slate-200 text-xs">
+                <span class="bg-slate-50 px-2 py-1 text-[11px] text-slate-500">Sort:</span>
+                <button type="button" class="border-l border-slate-200 px-2 py-1" :class="procSort==='ram' ? 'bg-slate-800 text-white font-semibold' : 'text-slate-600'" @click="setProcSort('ram')">RAM <span x-show="procSort==='ram'" x-text="procSortDir==='desc' ? '↓' : '↑'"></span></button>
+                <button type="button" class="border-l border-slate-200 px-2 py-1" :class="procSort==='cpu' ? 'bg-slate-800 text-white font-semibold' : 'text-slate-600'" @click="setProcSort('cpu')">CPU <span x-show="procSort==='cpu'" x-text="procSortDir==='desc' ? '↓' : '↑'"></span></button>
+                <button type="button" class="border-l border-slate-200 px-2 py-1" :class="procSort==='net' ? 'bg-slate-800 text-white font-semibold' : 'text-slate-600'" @click="setProcSort('net')">Net <span x-show="procSort==='net'" x-text="procSortDir==='desc' ? '↓' : '↑'"></span></button>
+              </div>
+              <button type="button" class="btn btn-sm ml-auto" @click="rescan(drawer.pc, 'processes')">↻ Refresh</button>
+            </div>
+            <div class="text-[11px] text-slate-400" x-show="drawer.processes_updated_at">
+              Live snapshot at <span class="font-mono" x-text="drawer.processes_updated_at"></span>
+            </div>
+            <div class="max-h-80 overflow-y-auto border border-slate-100 rounded">
+              <table class="tbl">
+                <thead>
+                  <tr>
+                    <th>PID</th>
+                    <th>Process</th>
+                    <th>User</th>
+                    <th class="cursor-pointer select-none hover:text-indigo-600" @click="setProcSort('cpu')">CPU <span x-show="procSort==='cpu'" x-text="procSortDir==='desc' ? '↓' : '↑'"></span></th>
+                    <th class="cursor-pointer select-none hover:text-indigo-600" @click="setProcSort('ram')">RAM <span x-show="procSort==='ram'" x-text="procSortDir==='desc' ? '↓' : '↑'"></span></th>
+                    <th class="cursor-pointer select-none hover:text-indigo-600" @click="setProcSort('net')">Network <span x-show="procSort==='net'" x-text="procSortDir==='desc' ? '↓' : '↑'"></span></th>
+                    <th>Rule</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="p in filteredProcesses()" :key="p.pid">
+                    <tr :class="p.rule_id ? 'bg-red-50/70' : ''">
+                      <td class="font-mono text-xs text-slate-500" x-text="p.pid"></td>
+                      <td>
+                        <div class="font-semibold text-xs" x-text="p.exe || p.name"></div>
+                        <div class="text-[10px] text-slate-400" x-show="p.name && p.name !== p.exe" x-text="p.name"></div>
+                      </td>
+                      <td class="text-xs text-slate-600" x-text="p.user || '—'"></td>
+                      <td class="font-mono text-xs" :class="(p.cpu_pct || 0) >= 20 ? 'text-amber-600 font-semibold' : 'text-slate-600'" x-text="Number(p.cpu_pct || 0).toFixed(1) + '%'"></td>
+                      <td class="font-mono text-xs text-slate-600" x-text="(p.rss_mb || 0) + ' MB'"></td>
+                      <td class="font-mono text-xs text-slate-600">
+                        <span :class="(p.net_kbps || 0) > 0 ? 'text-indigo-600 font-semibold' : ''" x-text="Number(p.net_kbps || 0).toFixed(1) + ' KB/s'"></span>
+                        <span class="text-[10px] text-slate-400" x-show="(p.net_conns || 0) > 0" x-text="'(' + p.net_conns + ')'"></span>
+                      </td>
+                      <td><span x-show="p.rule_id" class="badge sev-high text-[10px]" x-text="p.rule_id"></span></td>
+                      <td class="text-right"><button class="btn btn-sm text-xs" @click="kill(drawer.pc, p.exe, p.pid)">End task</button></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <p x-show="!filteredProcesses().length" class="p-3 text-xs text-slate-500">No matching running processes in the current snapshot. Click <b>Refresh</b> to request an immediate scan.</p>
+            </div>
+            <div x-show="(drawer.processes||[]).length" class="pt-2 border-t border-slate-200">
+              <div class="label mb-1">Flagged AI Process History (Session Log)</div>
+              <table class="tbl"><template x-for="p in drawer.processes"><tr><td class="font-mono text-xs" x-text="p.at"></td><td class="text-xs" x-text="p.type.replace('process_','')"></td><td class="font-semibold text-xs" x-text="p.exe"></td><td class="text-xs text-red-600" x-text="p.rule"></td>
+                <td class="text-right"><button class="btn btn-sm text-xs" x-show="p.type==='process_start' && p.exe" @click="kill(drawer.pc, p.exe, p.pid)">Close</button></td></tr></template></table>
+            </div>
+          </div>
           <div x-show="tab==='network'"><table class="tbl"><template x-for="n in drawer.network"><tr><td class="font-mono text-xs" x-text="(n.occurred_at||'').substring(11,19)"></td>
             <td><span class="badge" :class="n.action==='blocked' ? 'sev-high' : 'sev-info'" x-text="n.action"></span></td><td x-text="n.host + (n.path||'')"></td><td class="text-xs" x-text="n.layer + ' ' + (n.category||'')"></td></tr></template></table></div>
           <div x-show="tab==='typing'">

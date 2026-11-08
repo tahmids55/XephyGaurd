@@ -49,6 +49,7 @@ public:
     void handle_command(const protocol::Command& cmd);
     void handle_rule_hit(const RuleHit& hit, const std::string& subject, json context, int64_t pid = 0);
     void scan_processes();
+    void process_snapshot();
     void scan_ports();
     void scan_network();
     void scan_extensions();
@@ -77,7 +78,6 @@ private:
     void run_periodic(int64_t now_steady);
     void check_integrity(bool initial);
     void check_helpers();
-    void process_snapshot();
     void sample_gpu();
     void flush_keystats(int64_t now, bool force);
     void flush_file_activity();

@@ -23,6 +23,13 @@ ProcessTracker::Diff ProcessTracker::update(const std::vector<ProcessInfo>& snap
             d.stopped.push_back(it->second);
             it->second = p;
             if (!first_) d.started.push_back(p);
+        } else {
+            it->second.rss_bytes = p.rss_bytes;
+            it->second.cpu_pct = p.cpu_pct;
+            it->second.net_kbps = p.net_kbps;
+            it->second.net_conns = p.net_conns;
+            if (it->second.user.empty() && !p.user.empty()) it->second.user = p.user;
+            if (it->second.exe_path.empty() && !p.exe_path.empty()) it->second.exe_path = p.exe_path;
         }
     }
     for (auto it = procs_.begin(); it != procs_.end();) {
@@ -54,6 +61,13 @@ bool ProcessTracker::note_started(const ProcessInfo& p) {
 const ProcessInfo* ProcessTracker::get(int64_t pid) const {
     auto it = procs_.find(pid);
     return it == procs_.end() ? nullptr : &it->second;
+}
+
+std::vector<ProcessInfo> ProcessTracker::running() const {
+    std::vector<ProcessInfo> out;
+    out.reserve(procs_.size());
+    for (const auto& [pid, p] : procs_) out.push_back(p);
+    return out;
 }
 
 ProcessTracker::NameSnapshot ProcessTracker::name_snapshot() {

@@ -89,6 +89,14 @@ class SessionController extends Controller
         return $request->expectsJson() ? response()->json(['command_id' => $cmd->id]) : back()->with('status', 'Kill command sent.');
     }
 
+    public function rescan(Request $request, Pc $pc)
+    {
+        $d = $request->validate(['what' => 'nullable|in:processes,extensions,artifacts,all']);
+        $cmd = $this->commands->send($pc, 'rescan', ['what' => $d['what'] ?? 'processes'], $request->user());
+
+        return $request->expectsJson() ? response()->json(['command_id' => $cmd->id]) : back()->with('status', 'Rescan requested.');
+    }
+
     public function override(Request $request, LabSession $session, Pc $pc)
     {
         $d = $request->validate(['profile_id' => 'nullable|exists:profiles,id', 'reason' => 'required|string|max:200']);

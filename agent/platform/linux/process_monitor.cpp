@@ -7,7 +7,9 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <mutex>
 #include <thread>
@@ -20,7 +22,19 @@
 namespace xg::lnx {
 namespace {
 
-bool read_proc(int64_t pid, ProcessInfo& p, bool full) {
+uint64_t read_total_cpu_ticks() {
+    const std::string s = read_small("/proc/stat");
+    auto nl = s.find('\n');
+    const std::string line = nl == std::string::npos ? s : s.substr(0, nl);
+    uint64_t total = 0;
+    for (const auto& f : split(line, ' ')) {
+        if (f.empty() || f == "cpu") continue;
+        total += std::strtoull(f.c_str(), nullptr, 10);
+    }
+    return total;
+}
+
+bool read_proc(int64_t pid, ProcessInfo& p, bool full, uint64_t* out_cpu_ticks = nullptr) {
     const std::string base = "/proc/" + std::to_string(pid);
     const std::string stat = read_small(base + "/stat");
     if (stat.empty()) return false;
@@ -30,10 +44,15 @@ bool read_proc(int64_t pid, ProcessInfo& p, bool full) {
     p.pid = pid;
     p.name = stat.substr(l + 1, r - l - 1);
     auto fields = split(stat.substr(r + 2), ' ');
-    if (fields.size() > 19) {
-        p.ppid = std::stoll(fields[1]);
-        p.start_time = std::stoll(fields[19]);
-        p.rss_bytes = uint64_t(std::stoll(fields[21])) * uint64_t(sysconf(_SC_PAGESIZE));
+    if (fields.size() > 21) {
+        p.ppid = std::strtoll(fields[1].c_str(), nullptr, 10);
+        if (out_cpu_ticks) {
+            *out_cpu_ticks = std::strtoull(fields[11].c_str(), nullptr, 10) +
+                             std::strtoull(fields[12].c_str(), nullptr, 10);
+        }
+        p.start_time = std::strtoll(fields[19].c_str(), nullptr, 10);
+        const long long rss_pages = std::strtoll(fields[21].c_str(), nullptr, 10);
+        if (rss_pages > 0) p.rss_bytes = uint64_t(rss_pages) * uint64_t(sysconf(_SC_PAGESIZE));
     }
     if (!full) return true;
     p.exe_path = read_link(base + "/exe");
@@ -53,22 +72,37 @@ public:
     std::vector<ProcessInfo> snapshot() override {
         std::vector<ProcessInfo> out;
         std::unordered_map<int64_t, ProcessInfo> next;
+        std::unordered_map<int64_t, uint64_t> next_cpu;
+        const uint64_t sys_ticks = read_total_cpu_ticks();
+        const uint64_t delta_sys = (last_sys_ticks_ > 0 && sys_ticks > last_sys_ticks_) ? (sys_ticks - last_sys_ticks_) : 0;
+        last_sys_ticks_ = sys_ticks;
+
         for (const auto& d : list_dir("/proc")) {
             if (d.empty() || !std::isdigit(static_cast<unsigned char>(d[0]))) continue;
-            const int64_t pid = std::stoll(d);
+            const int64_t pid = std::strtoll(d.c_str(), nullptr, 10);
             ProcessInfo light;
-            if (!read_proc(pid, light, false)) continue;
+            uint64_t cpu_ticks = 0;
+            if (!read_proc(pid, light, false, &cpu_ticks)) continue;
+            double cpu_pct = 0.0;
+            if (auto cit = cpu_ticks_.find(pid); cit != cpu_ticks_.end() && delta_sys > 0 && cpu_ticks >= cit->second) {
+                cpu_pct = std::clamp(std::round((double(cpu_ticks - cit->second) / double(delta_sys)) * 1000.0) / 10.0, 0.0, 100.0);
+            }
+            next_cpu[pid] = cpu_ticks;
+
             auto it = cache_.find(pid);
             if (it != cache_.end() && it->second.start_time == light.start_time) {
                 it->second.rss_bytes = light.rss_bytes;
+                it->second.cpu_pct = cpu_pct;
                 next.emplace(pid, it->second);
             } else {
                 ProcessInfo full;
                 if (!read_proc(pid, full, true)) continue;
+                full.cpu_pct = cpu_pct;
                 next.emplace(pid, std::move(full));
             }
         }
         cache_.swap(next);
+        cpu_ticks_.swap(next_cpu);
         out.reserve(cache_.size());
         for (const auto& [pid, p] : cache_) out.push_back(p);
         return out;
@@ -119,10 +153,16 @@ public:
 
     bool kill(int64_t pid) override {
         if (pid <= 1) return false;
+        ProcessInfo target;
+        const bool had_info = read_proc(pid, target, false);
         if (::kill(pid_t(pid), SIGTERM) != 0) return false;
-        // Escalate if the process ignores SIGTERM.
-        std::thread([pid] {
+        // Escalate if the same process (matching start_time) ignores SIGTERM.
+        const int64_t expected_start = target.start_time;
+        std::thread([pid, had_info, expected_start] {
             std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            ProcessInfo check;
+            if (!read_proc(pid, check, false)) return;
+            if (had_info && expected_start != 0 && check.start_time != expected_start) return;
             ::kill(pid_t(pid), SIGKILL);
         }).detach();
         return true;
@@ -137,6 +177,8 @@ public:
 
 private:
     std::unordered_map<int64_t, ProcessInfo> cache_;
+    std::unordered_map<int64_t, uint64_t> cpu_ticks_;
+    uint64_t last_sys_ticks_ = 0;
     std::atomic<bool> running_{false};
     std::thread thread_;
     int fd_ = -1;
