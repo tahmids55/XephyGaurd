@@ -22,8 +22,10 @@ class FakeNetwork : public INetworkMonitor {
 public:
     std::vector<AdapterInfo> list;
     std::vector<ListeningSocket> socks;
+    std::vector<OutboundAiFlow> flows;
     std::vector<AdapterInfo> adapters() override { return list; }
     std::vector<ListeningSocket> listening_sockets() override { return socks; }
+    std::vector<OutboundAiFlow> active_ai_flows() override { return flows; }
     bool watch(std::function<void()>) override { return false; }
     void stop() override {}
 };

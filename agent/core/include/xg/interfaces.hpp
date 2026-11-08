@@ -31,6 +31,7 @@ public:
     virtual ~INetworkMonitor() = default;
     virtual std::vector<AdapterInfo> adapters() = 0;
     virtual std::vector<ListeningSocket> listening_sockets() = 0;
+    virtual std::vector<OutboundAiFlow> active_ai_flows() { return {}; }
     /// Calls `on_change` (debounced by the caller) when links, addresses or routes change.
     virtual bool watch(std::function<void()> on_change) = 0;
     virtual void stop() = 0;

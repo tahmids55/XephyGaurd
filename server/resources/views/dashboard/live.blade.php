@@ -113,7 +113,7 @@
             <button class="btn" @click="kill(drawer.pc)">Close a program…</button>
           </div>
           <div class="mb-3 flex flex-wrap gap-1 border-b border-slate-200 text-sm">
-            <template x-for="t in ['timeline','alerts','processes','installed','network','typing','pastes']">
+            <template x-for="t in ['timeline','alerts','processes','browser','installed','network','typing','pastes']">
               <button class="-mb-px border-b-2 px-3 py-1.5 capitalize" :class="tab===t ? 'border-indigo-600 font-semibold' : 'border-transparent text-slate-500'" @click="tab=t" x-text="t"></button>
             </template>
           </div>
@@ -180,6 +180,70 @@
               <div class="label mb-1">Flagged AI Process History (Session Log)</div>
               <table class="tbl"><template x-for="p in drawer.processes"><tr><td class="font-mono text-xs" x-text="p.at"></td><td class="text-xs" x-text="p.type.replace('process_','')"></td><td class="font-semibold text-xs" x-text="p.exe"></td><td class="text-xs text-red-600" x-text="p.rule"></td>
                 <td class="text-right"><button class="btn btn-sm text-xs" x-show="p.type==='process_start' && p.exe" @click="kill(drawer.pc, p.exe, p.pid)">Close</button></td></tr></template></table>
+            </div>
+          </div>
+          <div x-show="tab==='browser'" class="space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="label">Browser Tabs &amp; Live Outbound AI Network Streams</div>
+                <div class="text-[11px] text-slate-400">Tracks active browser tab titles (WinEventHook) and real-time AI prompt/completion streams (OS DNS + TLS SNI + Kernel Per-Socket Bytes).</div>
+              </div>
+              <button type="button" class="btn btn-sm" @click="rescan(drawer.pc, 'browser')">↻ Refresh</button>
+            </div>
+
+            <div class="border border-slate-100 rounded p-3">
+              <div class="flex items-center justify-between mb-1">
+                <div class="text-xs font-semibold text-slate-700">Live Outbound AI Network Streams (<span x-text="(drawer.ai_traffic||[]).length"></span>)</div>
+                <div class="text-[10px] text-slate-400">OS DNS + TLS SNI + Kernel TCP EStats (Keep-Alive Filtered)</div>
+              </div>
+              <table class="tbl" x-show="(drawer.ai_traffic||[]).length">
+                <thead><tr><th>Time</th><th>Process</th><th>AI Domain</th><th>Traffic</th><th>Rule</th></tr></thead>
+                <tbody>
+                  <template x-for="tr in drawer.ai_traffic">
+                    <tr class="bg-red-50/70">
+                      <td class="font-mono text-xs text-slate-500" x-text="tr.at"></td>
+                      <td class="font-semibold text-xs" x-text="tr.process || '—'"></td>
+                      <td>
+                        <div class="font-mono text-xs font-semibold text-indigo-700" x-text="tr.domain"></div>
+                        <div class="font-mono text-[10px] text-slate-400" x-show="tr.remote_ip" x-text="tr.remote_ip + ':443'"></div>
+                      </td>
+                      <td class="font-mono text-xs text-slate-700">
+                        <span class="text-amber-700" x-text="'↑ ' + Number(tr.sent_kb||0).toFixed(1) + ' KB'"></span>
+                        <span class="mx-1 text-slate-300">·</span>
+                        <span class="text-emerald-700" x-text="'↓ ' + Number(tr.recv_kb||0).toFixed(1) + ' KB'"></span>
+                      </td>
+                      <td><span class="badge sev-high text-[10px]" x-text="tr.rule_id"></span></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <p x-show="!(drawer.ai_traffic||[]).length" class="text-xs text-slate-400">No active outbound AI prompt/completion streams detected in this session window.</p>
+            </div>
+
+            <div class="border border-slate-100 rounded p-3">
+              <div class="flex items-center justify-between mb-1">
+                <div class="text-xs font-semibold text-slate-700">Active Browser Tabs &amp; Foreground Windows (<span x-text="(drawer.browser_tabs||[]).length"></span>)</div>
+              </div>
+              <div class="max-h-72 overflow-y-auto">
+                <table class="tbl" x-show="(drawer.browser_tabs||[]).length">
+                  <thead><tr><th>Time</th><th>App / Browser</th><th>Tab / Window Title</th><th>Status</th></tr></thead>
+                  <tbody>
+                    <template x-for="bt in drawer.browser_tabs">
+                      <tr :class="bt.ai_site ? 'bg-red-50/80' : ''">
+                        <td class="font-mono text-xs text-slate-500 whitespace-nowrap" x-text="bt.at"></td>
+                        <td class="text-xs font-semibold uppercase text-slate-600 whitespace-nowrap" x-text="bt.app || '—'"></td>
+                        <td class="text-xs text-slate-800 break-all" x-text="bt.title || bt.app || '—'"></td>
+                        <td class="whitespace-nowrap">
+                          <span x-show="bt.ai_site" class="badge sev-high text-[10px]" x-text="'AI TAB · ' + bt.ai_site"></span>
+                          <span x-show="!bt.ai_site && ['chrome','msedge','brave','firefox','opera'].includes((bt.app||'').toLowerCase())" class="badge sev-info text-[10px]">Browser Tab</span>
+                          <span x-show="!bt.ai_site && !['chrome','msedge','brave','firefox','opera'].includes((bt.app||'').toLowerCase())" class="badge sev-low text-[10px]">Window</span>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+              <p x-show="!(drawer.browser_tabs||[]).length" class="text-xs text-slate-400">No browser tab or window focus events recorded yet.</p>
             </div>
           </div>
           <div x-show="tab==='installed'" class="space-y-4">

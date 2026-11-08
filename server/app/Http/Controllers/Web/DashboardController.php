@@ -73,6 +73,27 @@ class DashboardController extends Controller
             'artifacts' => $latestArt?->data['found'] ?? [],
             'artifacts_visited' => $latestArt?->data['files_visited'] ?? 0,
             'artifacts_updated_at' => $latestArt?->occurred_at?->format('H:i:s'),
+            'browser_tabs' => Event::query()->where('pc_id', $pc->id)->where('type', 'window_focus')->latest('occurred_at')
+                ->limit(60)->get(['occurred_at', 'user', 'data'])->map(fn ($e) => [
+                    'at' => $e->occurred_at->format('H:i:s'),
+                    'app' => $e->data['app'] ?? '',
+                    'title' => $e->data['title'] ?? '',
+                    'user' => $e->user ?: ($e->data['user'] ?? ''),
+                    'ai_site' => $e->data['ai_site'] ?? '',
+                ]),
+            'ai_traffic' => $events->where('type', 'rule_hit')
+                ->filter(fn ($e) => ! empty($e->data['context']['domain'] ?? ''))
+                ->values()
+                ->map(fn ($e) => [
+                    'at' => $e->occurred_at->format('H:i:s'),
+                    'rule_id' => $e->data['rule_id'] ?? '',
+                    'description' => $e->data['description'] ?? '',
+                    'process' => $e->data['context']['process'] ?? ($e->data['context']['ide'] ?? ''),
+                    'domain' => $e->data['context']['domain'] ?? '',
+                    'remote_ip' => $e->data['context']['remote_ip'] ?? '',
+                    'sent_kb' => $e->data['context']['sent_kb'] ?? 0,
+                    'recv_kb' => $e->data['context']['recv_kb'] ?? 0,
+                ]),
             'processes' => $events->whereIn('type', ['process_start', 'process_stop'])->values()
                 ->map(fn ($e) => ['at' => $e->occurred_at->format('H:i:s'), 'type' => $e->type, 'pid' => $e->data['pid'] ?? null, 'exe' => $e->data['exe'] ?? '', 'rule' => $e->data['rule_id'] ?? '']),
             'adapters' => Event::query()->where('pc_id', $pc->id)->where('type', 'net_adapter')->latest('occurred_at')

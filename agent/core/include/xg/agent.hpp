@@ -52,6 +52,7 @@ public:
     void process_snapshot();
     void scan_ports();
     void scan_network();
+    void scan_ai_traffic();
     void scan_devices();
     void scan_extensions();
     void on_helper_message(const IIpcServer::Peer& peer, const std::string& line);
@@ -118,6 +119,8 @@ private:
     std::map<std::string, std::string> reported_tamper_;
     std::set<std::string> known_ports_, known_adapters_, known_extensions_;
     std::map<std::string, AdapterInfo> adapters_;
+    std::mutex ai_flows_mu_;
+    std::vector<std::pair<int64_t, OutboundAiFlow>> recent_ai_flows_;
     int default_routes_ = -1;
     std::atomic<bool> network_dirty_{true};
     std::atomic<bool> policy_dirty_{true};

@@ -141,13 +141,22 @@ TEST_CASE("agent inventories installed AI extensions and only alerts when active
     CHECK(h.of(ev::extension_scan).back().data["ai"].size() == 1);
     CHECK(h.of(ev::extension_scan).back().data["ai"][0]["active"] == false);
     CHECK(h.of(ev::rule_hit).empty());
-    // Now the student actively uses the extension -> rule_hit is emitted!
-    h.exts->list.back().active = true;
-    h.exts->list.back().activity = "recent storage activity";
+    // Now the student actively uses the extension via outbound AI network stream -> rule_hit is emitted!
+    h.net->flows = {{8356, "copilot-runtime", "140.82.114.22", 443, "api.individual.githubcopilot.com", 4096, 16384}};
     h.agent->scan_extensions();
     CHECK(h.of(ev::extension_scan).size() == 3);
+    CHECK(h.of(ev::extension_scan).back().data["ai"][0]["active"] == true);
     REQUIRE(h.of(ev::rule_hit).size() == 1);
     CHECK(h.of(ev::rule_hit)[0].data["rule_id"] == "ext.copilot");
+    CHECK(h.of(ev::rule_hit)[0].data["context"]["domain"] == "api.individual.githubcopilot.com");
+
+    // Browser AI tab & outbound browser stream detection
+    IIpcServer::Peer peer{1, 1000, 555, "alice"};
+    h.agent->on_helper_message(peer, R"({"t":"window","app":"chrome.exe","title":"ChatGPT - Google Chrome"})");
+    REQUIRE(h.of(ev::window_focus).size() == 1);
+    CHECK(h.of(ev::window_focus)[0].data["ai_site"] == "ChatGPT");
+    CHECK(h.of(ev::rule_hit).size() == 2);
+    CHECK(h.of(ev::rule_hit)[1].data["rule_id"] == "web.ai_tab");
 }
 
 TEST_CASE("ports and helper messages respect policy and privacy") {

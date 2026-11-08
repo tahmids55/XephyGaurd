@@ -94,4 +94,14 @@ struct FileActivity {
     uint64_t total_bytes = 0;
 };
 
+struct OutboundAiFlow {
+    int64_t pid = 0;
+    std::string process;      // normalized exe name, e.g. "copilot-runtime", "code", "idea64", "chrome"
+    std::string remote_ip;
+    uint16_t remote_port = 443;
+    std::string domain;       // resolved via OS DNS cache / TLS SNI, e.g. "api.individual.githubcopilot.com", "chatgpt.com"
+    uint64_t bytes_sent = 0;  // delta bytes sent
+    uint64_t bytes_recv = 0;  // delta bytes received
+};
+
 }  // namespace xg

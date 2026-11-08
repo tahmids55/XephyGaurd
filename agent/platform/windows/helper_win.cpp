@@ -105,14 +105,23 @@ private:
 
 // ------------------------------------------------------------------------------ window monitor
 std::function<void(const WindowInfo&)> g_window_cb;
+std::string g_last_win_app;
+std::string g_last_win_title;
 
-void CALLBACK win_event(HWINEVENTHOOK, DWORD, HWND hwnd, LONG id_object, LONG, DWORD, DWORD) {
-    if (id_object != OBJID_WINDOW || !hwnd || !g_window_cb) return;
+void CALLBACK win_event(HWINEVENTHOOK, DWORD, HWND hwnd, LONG id_object, LONG id_child, DWORD, DWORD) {
+    if (id_object != OBJID_WINDOW || id_child != CHILDID_SELF || !hwnd || !g_window_cb) return;
+    if (hwnd != GetForegroundWindow()) return;
     wchar_t title[512];
     int n = GetWindowTextW(hwnd, title, 512);
+    const std::string app = window_app(hwnd);
+    const std::string utf8_title = to_utf8(std::wstring(title, size_t(n > 0 ? n : 0)));
+    if (app.empty() && utf8_title.empty()) return;
+    if (app == g_last_win_app && utf8_title == g_last_win_title) return;
+    g_last_win_app = app;
+    g_last_win_title = utf8_title;
     DWORD pid = 0;
     GetWindowThreadProcessId(hwnd, &pid);
-    g_window_cb(WindowInfo{window_app(hwnd), to_utf8(std::wstring(title, size_t(n))), int64_t(pid)});
+    g_window_cb(WindowInfo{app, utf8_title, int64_t(pid)});
 }
 
 class WindowMonitor final : public IWindowMonitor, MsgThread {
@@ -121,21 +130,28 @@ public:
     bool available() const override { return true; }
     bool start(std::function<void(const WindowInfo&)> cb) override {
         g_window_cb = std::move(cb);
+        g_last_win_app.clear();
+        g_last_win_title.clear();
         return start_thread(L"XephyGuardWindowMon");
     }
     void stop() override { stop_thread(); }
 
 private:
     void on_thread_start() override {
-        hook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, win_event, 0, 0,
-                                WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
-        if (HWND fg = GetForegroundWindow()) win_event(nullptr, 0, fg, OBJID_WINDOW, 0, 0, 0);
+        hook_fg_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, win_event, 0, 0,
+                                   WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+        hook_name_ = SetWinEventHook(EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_NAMECHANGE, nullptr, win_event, 0, 0,
+                                     WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+        if (HWND fg = GetForegroundWindow()) win_event(nullptr, 0, fg, OBJID_WINDOW, CHILDID_SELF, 0, 0);
     }
     void on_thread_stop() override {
-        if (hook_) UnhookWinEvent(hook_);
-        hook_ = nullptr;
+        if (hook_fg_) UnhookWinEvent(hook_fg_);
+        if (hook_name_) UnhookWinEvent(hook_name_);
+        hook_fg_ = nullptr;
+        hook_name_ = nullptr;
     }
-    HWINEVENTHOOK hook_ = nullptr;
+    HWINEVENTHOOK hook_fg_ = nullptr;
+    HWINEVENTHOOK hook_name_ = nullptr;
 };
 
 // --------------------------------------------------------------------------- clipboard monitor

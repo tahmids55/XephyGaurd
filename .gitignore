@@ -15,3 +15,5 @@ __pycache__/
 /installers/windows/*.exe
 # eval outputs
 /eval/results/
+live_ai_meter.obj
+test_dns.obj
