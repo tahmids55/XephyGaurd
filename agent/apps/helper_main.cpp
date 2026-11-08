@@ -14,6 +14,24 @@
 
 #ifdef _WIN32
 #include <windows.h>
+namespace {
+void set_user_taskmgr_disabled(bool disabled) {
+    HKEY hk = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+                        0, nullptr, 0, KEY_SET_VALUE, nullptr, &hk, nullptr) == ERROR_SUCCESS) {
+        if (disabled) {
+            DWORD one = 1;
+            RegSetValueExW(hk, L"DisableTaskMgr", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&one), sizeof(one));
+        } else {
+            RegDeleteValueW(hk, L"DisableTaskMgr");
+        }
+        RegCloseKey(hk);
+    }
+}
+struct TaskMgrGuard {
+    ~TaskMgrGuard() { set_user_taskmgr_disabled(false); }
+};
+}  // namespace
 #endif
 
 using namespace xg;
@@ -30,6 +48,9 @@ struct HelperState {
 
 int helper_main() {
     log::init("", log::Level::info, true);
+#ifdef _WIN32
+    TaskMgrGuard taskmgr_guard;
+#endif
     auto plat = make_helper_platform();
     HelperState st;
     KeyStatsAggregator keys(5);
@@ -117,6 +138,9 @@ int helper_main() {
                     st.want_clipboard = c.value("clipboard", false);
                     st.want_keys = c.value("keys", false);
                     st.mode = j.value("mode", "always_on");
+#ifdef _WIN32
+                    set_user_taskmgr_disabled(st.mode == "test");
+#endif
                 }
                 apply_config();
             } else if (t == "indicator") {

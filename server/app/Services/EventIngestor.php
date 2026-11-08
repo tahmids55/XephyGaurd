@@ -43,6 +43,7 @@ class EventIngestor
         'clock_change' => 'System clock was changed',
         'helper_missing' => 'Session helper is not running for the logged-in user',
         'signature_invalid' => 'Agent received an invalid signature bundle',
+        'helper_terminated' => 'Session helper was terminated by user (re-launched)',
         'isolation_rule_removed' => 'Network isolation rule was removed locally (re-applied)',
     ];
 

@@ -189,7 +189,7 @@ Section "Agent" SecAgent
   Sleep 500
   nsExec::ExecToLog 'sc.exe create XephyGuardAgent binPath= "\"$INSTDIR\xephyguard-agent.exe\" run" start= auto obj= LocalSystem DisplayName= "XephyGuard Agent"'
   nsExec::ExecToLog 'sc.exe description XephyGuardAgent "Lab AI-use monitoring (see the XephyGuard notice)."'
-  nsExec::ExecToLog 'sc.exe failure XephyGuardAgent reset= 86400 actions= restart/5000/restart/5000/restart/30000'
+  nsExec::ExecToLog 'sc.exe failure XephyGuardAgent reset= 60 actions= restart/0/restart/0/restart/5000'
   nsExec::ExecToLog 'sc.exe failureflag XephyGuardAgent 1'
   ; only administrators may stop/reconfigure the service
   nsExec::ExecToLog 'sc.exe sdset XephyGuardAgent "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)"'
@@ -270,4 +270,5 @@ Section "Uninstall"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\XephyGuard"
   DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Policies\System" "legalnoticecaption"
   DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Policies\System" "legalnoticetext"
+  DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Policies\System" "DisableTaskMgr"
 SectionEnd

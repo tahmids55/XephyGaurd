@@ -94,6 +94,7 @@ void Agent::apply_policy(const Policy& p) {
         reevaluate_ = true;
     }
     next_run_.clear();
+    if (plat_.system) plat_.system->set_exam_mode(p.mode == Mode::test);
     push_helper_config();
     if (stop_) restart_watchers();
 }
@@ -1415,7 +1416,7 @@ void Agent::run_periodic(int64_t now) {
     if (due("files", 10)) flush_file_activity();
     if (p.collect.gpu && due("gpu", p.intervals.gpu_sample_s)) sample_gpu();
     if (due("integrity", p.intervals.integrity_check_s)) check_integrity(false);
-    if (due("helpers", 15)) check_helpers();
+    if (due("helpers", 2)) check_helpers();
     // Anti-tamper: if the isolation rule disappears while the PC is isolated, put it back and report it.
     if (status_.isolated.load() && plat_.isolator && due("isolation", 20) && !plat_.isolator->active()) {
         log::warn("isolation: block rule missing, re-applying");
@@ -1447,10 +1448,15 @@ int Agent::run(std::atomic<bool>& stop) {
                     else helpers_.erase(peer.conn_id);
                     status_.helpers_connected = int(helpers_.size());
                 }
-                if (!connected)
+                if (!connected) {
                     sink_->emit(ev::helper_status, {{"connected", false}, {"user", peer.user}, {"pid", peer.pid}});
-                else
+                    sink_->emit(ev::tamper, {{"kind", "helper_terminated"}, {"user", peer.user},
+                                             {"detail", "session helper process was disconnected or terminated"}});
+                    wake_uplink();
+                    check_helpers();
+                } else {
                     push_helper_config();
+                }
             });
         if (!ok) log::error("ipc: cannot listen on {}", cfg_.ipc_path);
     }
@@ -1512,6 +1518,7 @@ int Agent::run(std::atomic<bool>& stop) {
     threads_.clear();
     if (cfg_.enrolled()) flush_once();
     queue_->kv_set("clean_shutdown", "1");
+    if (plat_.system) plat_.system->set_exam_mode(false);
     if (plat_.processes) plat_.processes->stop();
     if (plat_.network) plat_.network->stop();
     if (plat_.devices) plat_.devices->stop();
