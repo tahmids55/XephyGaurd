@@ -136,7 +136,12 @@ bool Agent::apply_signatures(const json& env, bool require_signature) {
 void Agent::handle_rule_hit(const RuleHit& hit, const std::string& subject, json context, int64_t pid) {
     const Policy pol = policy();
     if (!pol.rule_enabled(hit.rule_id)) return;
-    const auto actions = pol.actions_for(hit.rule_id, hit.severity);
+    auto actions = pol.actions_for(hit.rule_id, hit.severity);
+    // While a PC is isolated, anything high-severity that tries to run is closed, whatever the mode.
+    if (status_.isolated.load() && hit.severity >= Severity::high) {
+        for (auto a : {Action::warn, Action::kill})
+            if (std::find(actions.begin(), actions.end(), a) == actions.end()) actions.push_back(a);
+    }
     const bool wants_kill = std::find(actions.begin(), actions.end(), Action::kill) != actions.end();
 
     auto do_kill = [&]() -> json {
@@ -166,7 +171,9 @@ void Agent::handle_rule_hit(const RuleHit& hit, const std::string& subject, json
         switch (a) {
             case Action::warn:
                 notify_student("XephyGuard notice",
-                               hit.description + " was detected. This has been recorded for your instructor.",
+                               hit.description + (wants_kill && pid > 0
+                                                      ? " is not allowed right now and was closed. This has been recorded for your instructor."
+                                                      : " was detected. This has been recorded for your instructor."),
                                hit.severity >= Severity::high);
                 break;
             case Action::kill:
@@ -464,11 +471,27 @@ void Agent::scan_ai_traffic() {
             return {"web.bolt", "browser_ai", "Bolt.new AI stream (" + dom + ")"};
         if (dom.find("lovable.dev") != std::string::npos)
             return {"web.lovable", "browser_ai", "Lovable AI stream (" + dom + ")"};
+        if (dom.find("copilot.microsoft.com") != std::string::npos || dom.find("copilot.cloud.microsoft") != std::string::npos ||
+            dom.find("m365.cloud.microsoft") != std::string::npos || dom.find("copilot.bing.com") != std::string::npos ||
+            dom.find("sydney.bing.com") != std::string::npos)
+            return {"proc.desktop.copilot", "browser_ai", "Microsoft Copilot stream (" + dom + ")"};
+        if (dom.find("kimi.") != std::string::npos || dom.find("moonshot.") != std::string::npos)
+            return {"web.kimi", "browser_ai", "Kimi (Moonshot) AI stream (" + dom + ")"};
+        if (dom.find("qwen") != std::string::npos || dom.find("tongyi") != std::string::npos ||
+            dom.find("dashscope") != std::string::npos)
+            return {"web.qwen", "browser_ai", "Qwen (Alibaba) AI stream (" + dom + ")"};
+        if (dom.find("cloudcode-pa.googleapis.com") != std::string::npos || dom.find("antigravity.google") != std::string::npos)
+            return {"net.ai_traffic", "browser_ai", "Google Antigravity / Gemini Code Assist stream (" + dom + ")"};
         return {"net.ai_traffic", "browser_ai", "Outbound AI network stream (" + dom + ")"};
     };
 
     auto is_browser_proc = [](const std::string& p) {
         return p == "chrome" || p == "msedge" || p == "brave" || p == "firefox" || p == "opera" || p == "vivaldi" || p == "arc";
+    };
+    // IDE extension hosts: their AI traffic is attributed to the installed extension in scan_extensions().
+    auto is_extension_host = [](const std::string& p) {
+        return p == "code" || p == "code - insiders" || p == "vscodium" || p == "codium" || p == "copilot-runtime" ||
+               p == "copilot-language-server" || p == "copilot" || p == "cursor" || p == "windsurf";
     };
 
     for (const auto& f : flows) {
@@ -476,17 +499,21 @@ void Agent::scan_ai_traffic() {
         auto [rule_id, category, desc] = classify_domain(dom);
         const double sent_kb = std::round((double(f.bytes_sent) / 1024.0) * 10.0) / 10.0;
         const double recv_kb = std::round((double(f.bytes_recv) / 1024.0) * 10.0) / 10.0;
-        // Browser AI streams and standalone API calls emit immediately; IDE extension streams are
-        // also correlated with installed extensions in scan_extensions().
-        if (category == "browser_ai" || is_browser_proc(f.process)) {
+        // Browsers and standalone AI apps / CLIs emit immediately; IDE extension streams are attributed to the
+        // installed extension in scan_extensions().
+        if (category == "browser_ai" || is_browser_proc(f.process) || !is_extension_host(f.process)) {
             RuleHit hit{rule_id, "browser_ai", desc, Severity::high};
+            // A standalone program talking to an AI service (not a browser / IDE host) can be closed in Test mode.
+            const bool closable = !is_browser_proc(f.process) && !is_extension_host(f.process);
             handle_rule_hit(hit, f.process + ":" + dom,
                             json{{"process", f.process},
+                                 {"exe", f.process},
                                  {"pid", f.pid},
                                  {"domain", dom},
                                  {"remote_ip", f.remote_ip},
                                  {"sent_kb", sent_kb},
-                                 {"recv_kb", recv_kb}});
+                                 {"recv_kb", recv_kb}},
+                            closable ? f.pid : 0);
         }
     }
 }
@@ -834,6 +861,31 @@ void Agent::check_helpers() {
     }
 }
 
+// ------------------------------------------------------------------------------- isolation
+void Agent::apply_isolation(bool on) {
+    status_.isolated = on;
+    if (queue_) queue_->kv_set("isolated", on ? "1" : "0");  // survives agent restarts and reboots
+    bool ok = true;
+    if (plat_.isolator) {
+        ok = on ? plat_.isolator->isolate({cfg_.ccc_host}) : plat_.isolator->restore();
+        if (!ok) log::error("isolation: could not {} the network block", on ? "apply" : "remove");
+    }
+    sink_->emit(ev::net_adapter, {{"change", on ? "isolated" : "restored"}, {"name", "Internet"},
+                                  {"description", on ? "Outbound Internet blocked (LAN still reachable)"
+                                                     : "Outbound Internet restored"},
+                                  {"driver", ""}, {"mac", ""}, {"addresses", json::array()}, {"up", !on},
+                                  {"wireless", false}, {"virtual", false}, {"default_route", false},
+                                  {"kind", on ? "net.isolated" : ""}, {"initial", false}});
+    if (on) {
+        {
+            std::lock_guard lk(hit_mu_);
+            dedup_.reset();
+        }
+        reevaluate_ = true;  // close AI apps that are already running
+    }
+    push_helper_config();
+}
+
 // ------------------------------------------------------------------------------- watchers, misc
 void Agent::restart_watchers() {
     const Policy p = policy();
@@ -1150,10 +1202,7 @@ bool Agent::flush_once() {
     const Policy p = policy();
     if (ack->policy_version != 0 && ack->policy_version != p.version) policy_dirty_ = true;
     if (!ack->signatures_version.empty() && ack->signatures_version != rules_.version()) policy_dirty_ = true;
-    if (ack->isolated != status_.isolated.load()) {
-        status_.isolated = ack->isolated;
-        push_helper_config();
-    }
+    if (ack->isolated != status_.isolated.load()) apply_isolation(ack->isolated);
     return included == events.size() || included > 0;
 }
 
@@ -1262,12 +1311,12 @@ void Agent::handle_command(const protocol::Command& cmd) {
         next_run_.erase("snap");
         command_result(cmd.id, "ok", {{"processes", killed}});
     } else if (cmd.type == "isolate_notice") {
-        status_.isolated = cmd.args.value("isolated", false);
-        push_helper_config();
-        notify_student("XephyGuard", status_.isolated ? "Network access for this PC was paused by the instructor."
-                                                      : "Network access for this PC was restored.",
+        const bool on = cmd.args.value("isolated", false);
+        apply_isolation(on);
+        notify_student("XephyGuard", on ? "Internet access for this PC was paused by the instructor. The local network still works."
+                                        : "Internet access for this PC was restored.",
                        true);
-        command_result(cmd.id, "ok", json::object());
+        command_result(cmd.id, "ok", {{"isolated", status_.isolated.load()}});
     } else if (cmd.type == "rescan") {
         const auto what = cmd.args.value("what", "all");
         if (what == "extensions" || what == "installed" || what == "all") rescan_extensions_ = true;
@@ -1367,6 +1416,13 @@ void Agent::run_periodic(int64_t now) {
     if (p.collect.gpu && due("gpu", p.intervals.gpu_sample_s)) sample_gpu();
     if (due("integrity", p.intervals.integrity_check_s)) check_integrity(false);
     if (due("helpers", 15)) check_helpers();
+    // Anti-tamper: if the isolation rule disappears while the PC is isolated, put it back and report it.
+    if (status_.isolated.load() && plat_.isolator && due("isolation", 20) && !plat_.isolator->active()) {
+        log::warn("isolation: block rule missing, re-applying");
+        sink_->emit(ev::tamper, {{"kind", "isolation_rule_removed"}, {"user", active_user()},
+                                 {"detail", "the network isolation rule was removed locally and has been re-applied"}});
+        plat_.isolator->isolate({cfg_.ccc_host});
+    }
 }
 
 int Agent::run(std::atomic<bool>& stop) {
@@ -1423,6 +1479,10 @@ int Agent::run(std::atomic<bool>& stop) {
     }
     restart_watchers();
     push_helper_config();
+    if (queue_->kv_get("isolated").value_or("0") == "1") {
+        log::warn("isolation: PC was isolated before the agent (re)started; re-applying the network block");
+        apply_isolation(true);  // the CCC lifts it with its next ack if the instructor already restored this PC
+    }
 
     threads_.emplace_back([this, &stop] { uplink_loop(stop); });
     threads_.emplace_back([this, &stop] { realtime_loop(stop); });

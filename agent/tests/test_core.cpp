@@ -5,6 +5,7 @@
 #include "fakes.hpp"
 #include "xg/config.hpp"
 #include "xg/event_queue.hpp"
+#include "xg/isolation.hpp"
 #include "xg/keystats.hpp"
 #include "xg/paste.hpp"
 #include "xg/policy.hpp"
@@ -83,9 +84,11 @@ TEST_CASE("rule engine: extensions, ports, artifacts, adapters, devices") {
 TEST_CASE("policy defaults and JSON round trip") {
     auto test = Policy::default_for(Mode::test);
     auto acts = test.actions_for("proc.ollama", Severity::high);
-    CHECK(acts == std::vector<Action>{Action::log, Action::warn, Action::alert});  // kill is opt-in
+    CHECK(acts == std::vector<Action>{Action::log, Action::warn, Action::alert, Action::kill});  // AI apps are closed in tests
     auto always = Policy::default_for(Mode::always_on);
-    CHECK(always.actions_for("x", Severity::critical) == std::vector<Action>{Action::log});
+    CHECK(always.actions_for("x", Severity::critical) == std::vector<Action>{Action::log, Action::alert});  // never closes
+    auto practice = Policy::default_for(Mode::practice);
+    CHECK(practice.actions_for("x", Severity::high) == std::vector<Action>{Action::log, Action::alert});  // never closes
     CHECK_FALSE(always.collect.keys);
 
     json j = {{"version", 7}, {"mode", "test"}, {"session_id", 3}, {"title_capture", "full"},
@@ -217,4 +220,28 @@ TEST_CASE("config round trip") {
     CHECK(d.ccc_host == "192.168.10.2");
     CHECK(d.enrolled());
     fs::remove(path);
+}
+
+TEST_CASE("isolation range math keeps LAN and the CCC reachable") {
+    using namespace xg::isolation;
+    CHECK(parse_ipv4("192.168.0.51") == 0xC0A80033u);
+    CHECK_FALSE(parse_ipv4("300.1.1.1"));
+    CHECK_FALSE(parse_ipv4("1.2.3"));
+    auto in_ranges = [](const std::vector<std::string>& rs, const std::string& ip) {
+        const auto v = *parse_ipv4(ip);
+        for (const auto& r : rs) {
+            const auto dash = r.find('-');
+            if (v >= *parse_ipv4(r.substr(0, dash)) && v <= *parse_ipv4(r.substr(dash + 1))) return true;
+        }
+        return false;
+    };
+    auto blocked = blocked_ipv4_ranges({});
+    for (const char* lan : {"10.1.2.3", "172.16.0.1", "172.31.255.255", "192.168.0.51", "169.254.1.1", "127.0.0.1", "224.0.0.251", "255.255.255.255"})
+        CHECK_FALSE(in_ranges(blocked, lan));
+    for (const char* pub : {"8.8.8.8", "1.1.1.1", "140.82.114.22", "172.15.255.255", "172.32.0.1", "192.167.255.255", "192.169.0.1", "100.64.0.1"})
+        CHECK(in_ranges(blocked, pub));
+    auto carved = blocked_ipv4_ranges({"203.0.113.9", "not-an-ip"});
+    CHECK_FALSE(in_ranges(carved, "203.0.113.9"));
+    CHECK(in_ranges(carved, "203.0.113.8"));
+    CHECK(in_ranges(carved, "203.0.113.10"));
 }

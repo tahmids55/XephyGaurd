@@ -74,11 +74,61 @@ rules:
     severity: high
     description: Void AI editor
     match: { exe: [void] }
+  - id: proc.editor.antigravity
+    category: ai_editor
+    severity: high
+    description: Google Antigravity AI editor
+    match: { exe: [antigravity, "antigravity ide", "antigravity-ide"] }
+  - id: proc.editor.kiro
+    category: ai_editor
+    severity: high
+    description: Kiro AI editor
+    match: { exe: [kiro, "kiro ide"] }
+  - id: proc.editor.trae
+    category: ai_editor
+    severity: high
+    description: Trae AI editor (ByteDance)
+    match: { exe: [trae, "trae cn", trae-cn, "trae ide"] }
+  - id: proc.editor.other_ai
+    category: ai_editor
+    severity: high
+    description: Other AI code editors (PearAI, Aide, Melty, Qoder, Lingma, CodeBuddy, MarsCode, Comate)
+    match: { exe: [pearai, aide, melty, qoder, lingma, codebuddy, marscode, comate, "kilo code", fleet-ai] }
   - id: proc.desktop.chatgpt
     category: ai_desktop
     severity: high
-    description: ChatGPT / Copilot / Perplexity desktop apps (Claude desktop is claude.exe, matched by proc.cli.claude_code)
-    match: { exe: [chatgpt, "claude desktop", copilot, "microsoft copilot", perplexity] }
+    description: ChatGPT / Codex desktop app
+    match: { exe: [chatgpt, "chatgpt atlas", "codex desktop"] }
+  - id: proc.desktop.copilot
+    category: ai_desktop
+    severity: high
+    description: Microsoft Copilot app
+    match: { exe: [copilot, "microsoft copilot", "microsoft.copilot", m365copilot, "m365 copilot", "microsoft 365 copilot", copilotapp, "windows copilot", windowscopilot, "copilot for windows"], exe_prefix: [m365copilot, microsoft.copilot, microsoftcopilot] }
+  - id: proc.desktop.claude
+    category: ai_desktop
+    severity: high
+    description: Claude desktop app
+    match: { exe: ["claude desktop", "claude-desktop", claudedesktop] }
+  - id: proc.desktop.perplexity
+    category: ai_desktop
+    severity: high
+    description: Perplexity / Comet browser
+    match: { exe: [perplexity, comet, "comet browser"] }
+  - id: proc.desktop.gemini
+    category: ai_desktop
+    severity: high
+    description: Google Gemini desktop app
+    match: { exe: ["gemini desktop", geminidesktop, "gemini app", "google gemini"] }
+  - id: proc.desktop.chinese_ai
+    category: ai_desktop
+    severity: high
+    description: Kimi / Qwen / DeepSeek / Doubao / Yuanbao / Tongyi / ChatGLM / MiniMax / Wenxin desktop apps
+    match: { exe: [kimi, "kimi desktop", moonshot, qwen, "qwen desktop", qwenchat, tongyi, deepseek, "deepseek desktop", doubao, yuanbao, hunyuan, chatglm, zhipu, minimax, hailuo, yiyan, wenxin, ernie, baichuan, stepfun, skywork] }
+  - id: proc.desktop.chat_clients
+    category: ai_desktop
+    severity: high
+    description: Third-party AI chat clients (Cherry Studio, Chatbox, AnythingLLM, Msty, LobeChat, 5ire, Poe, Monica, Sider, Grok)
+    match: { exe: ["cherry studio", cherrystudio, chatbox, anythingllm, "anything llm", msty, lobechat, "lobe chat", 5ire, poe, monica, sider, grok, "grok desktop", manus, genspark, "open webui", librechat, "big-agi", "chatgpt-next-web", nextchat, "boltai", "typingmind", "raycast ai"] }
 
   # ---- CLI agents (often node/python scripts) -------------------------------
   - id: proc.cli.claude_code

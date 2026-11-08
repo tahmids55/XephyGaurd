@@ -18,3 +18,41 @@ q.us-east-1.amazonaws.com      [ide]
 cloudcode-pa.googleapis.com    [ide]
 supermaven.com                 [ide]
 blackbox.ai                    [ide]
+
+# ---- Added: more coding-assistant / agent backends ------------------------------------
+antigravity.google
+cloudcode-pa.googleapis.com
+daily-cloudcode-pa.googleapis.com
+autopush-cloudcode-pa.googleapis.com
+kiro.dev
+codewhisperer.us-east-1.amazonaws.com
+trae.ai
+traeapi.us
+augmentcode.com
+cody.sourcegraph.com
+supermaven.com
+qodo.ai
+codium.ai
+warp.dev
+zed.dev
+cline.bot
+kilocode.ai
+roocode.com
+ampcode.com
+sourcegraph.com
+anysphere.inc
+openai.com
+api.openai.com
+chatgpt.com
+copilot.microsoft.com
+githubcopilot.com
+api.githubcopilot.com
+api.individual.githubcopilot.com
+api.business.githubcopilot.com
+api.enterprise.githubcopilot.com
+copilot-proxy.githubusercontent.com
+api.jetbrains.ai
+grazie.ai
+grazie.aws.intellij.net
+aws.amazon.com/q
+q.us-east-1.amazonaws.com

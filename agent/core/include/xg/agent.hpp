@@ -47,6 +47,7 @@ public:
     /// `envelope` = {"version","bundle":"<json text>","signature":"<b64>"} as served by the CCC.
     bool apply_signatures(const json& envelope, bool require_signature = true);
     void handle_command(const protocol::Command& cmd);
+    bool isolated() const { return status_.isolated.load(); }
     void handle_rule_hit(const RuleHit& hit, const std::string& subject, json context, int64_t pid = 0);
     void scan_processes();
     void process_snapshot();
@@ -80,6 +81,8 @@ private:
     void run_periodic(int64_t now_steady);
     void check_integrity(bool initial);
     void check_helpers();
+    /// Turns network isolation on/off (Internet cut, LAN + CCC kept), persists it and re-evaluates running apps.
+    void apply_isolation(bool on);
     void sample_gpu();
     void flush_keystats(int64_t now, bool force);
     void flush_file_activity();

@@ -16,11 +16,15 @@ struct Harness {
     test::FakeNetwork* net;
     test::FakeExtensions* exts;
     test::FakeIpc* ipc;
+    test::FakeIsolator* iso;
     VectorSink sink;
     std::unique_ptr<Agent> agent;
 
     Harness() {
         fs::create_directories(dir);
+        auto iso_p = std::make_unique<test::FakeIsolator>();
+        iso = iso_p.get();
+        plat.isolator = std::move(iso_p);
         auto p = std::make_unique<test::FakeProcesses>();
         procs = p.get();
         plat.processes = std::move(p);
@@ -64,9 +68,9 @@ TEST_CASE("agent reports and warns on an AI process in Test mode") {
     auto hits = h.of(ev::rule_hit);
     REQUIRE(hits.size() == 1);
     CHECK(hits[0].data["rule_id"] == "proc.ollama");
-    CHECK(hits[0].data["actions"] == json({"log", "warn", "alert"}));
+    CHECK(hits[0].data["actions"] == json({"log", "warn", "alert", "kill"}));
     CHECK(h.ipc->count_containing("\"notify\"") == 1);
-    CHECK(h.procs->killed.empty());  // kill is opt-in
+    CHECK(h.procs->killed == std::vector<int64_t>{42});  // Test mode closes AI apps automatically
     REQUIRE(h.of(ev::process_start).size() == 1);
     CHECK(h.of(ev::process_start)[0].data.dump().find("ollama serve") == std::string::npos);  // no cmdline upload
 
@@ -107,7 +111,8 @@ TEST_CASE("always-on mode only logs") {
     h.agent->scan_processes();
     auto hits = h.of(ev::rule_hit);
     REQUIRE(hits.size() == 1);
-    CHECK(hits[0].data["actions"] == json({"log"}));
+    CHECK(hits[0].data["actions"] == json({"log", "alert"}));  // detect + alert, never close
+    CHECK(h.procs->killed.empty());
     CHECK(h.ipc->count_containing("\"notify\"") == 0);
 }
 
@@ -190,7 +195,7 @@ TEST_CASE("ports and helper messages respect policy and privacy") {
 
 TEST_CASE("commands are executed and acknowledged") {
     Harness h;
-    h.agent->apply_policy(Policy::default_for(Mode::test));
+    h.agent->apply_policy(Policy::default_for(Mode::practice));
     h.agent->handle_command({"c1", "message", {{"text", "Ten minutes left"}}});
     CHECK(h.ipc->count_containing("Ten minutes left") == 1);
     h.procs->procs = {{77, 1, "/usr/bin/cursor", "cursor", "", "alice", 256ull * 1024 * 1024, 1},
@@ -211,7 +216,7 @@ TEST_CASE("commands are executed and acknowledged") {
     REQUIRE(res.size() == 3);
     CHECK(res[2].data["command_id"] == "c2");
     auto hb = h.agent->build_heartbeat();
-    CHECK(hb["mode"] == "test");
+    CHECK(hb["mode"] == "practice");
     CHECK(hb["signatures_version"] == "test-1");
 }
 
@@ -221,12 +226,12 @@ TEST_CASE("tools already running are re-evaluated when a Test session starts") {
     h.procs->procs = {{1, 0, "/sbin/init", "init", "", "root", 0, 1}, {42, 1, "/usr/bin/ollama", "ollama", "", "alice", 0, 2}};
     h.agent->scan_processes();
     REQUIRE(h.of(ev::rule_hit).size() == 1);
-    CHECK(h.of(ev::rule_hit)[0].data["actions"] == json({"log"}));
+    CHECK(h.of(ev::rule_hit)[0].data["actions"] == json({"log", "alert"}));
     h.agent->apply_policy(Policy::default_for(Mode::test));
     h.agent->reevaluate_all();
     auto hits = h.of(ev::rule_hit);
     REQUIRE(hits.size() == 2);
-    CHECK(hits[1].data["actions"] == json({"log", "warn", "alert"}));
+    CHECK(hits[1].data["actions"] == json({"log", "warn", "alert", "kill"}));
     CHECK(hits[1].data["mode"] == "test");
 }
 
@@ -239,4 +244,34 @@ TEST_CASE("common dev ports need a positive LLM-API probe") {
     CHECK(h.of(ev::listening_port).empty());
     CHECK(h.agent->rules().match_port(8000) == std::nullopt);
     CHECK(h.agent->rules().match_port(8000, true)->rule_id == "port.vllm");
+}
+
+TEST_CASE("isolate cuts the Internet (LAN + CCC kept) and closes AI apps even outside tests") {
+    Harness h;
+    h.agent->apply_policy(Policy::default_for(Mode::practice));  // practice: detect + alert only
+    h.procs->procs = {{1, 0, "/sbin/init", "init", "", "root", 0, 1}};
+    h.agent->scan_processes();
+    h.procs->procs.push_back({42, 1, "/usr/local/bin/ollama", "ollama", "", "alice", 0, 2});
+    h.agent->scan_processes();
+    CHECK(h.procs->killed.empty());
+
+    h.agent->handle_command({"i1", "isolate_notice", {{"isolated", true}}});
+    CHECK(h.agent->isolated());
+    CHECK(h.iso->on);
+    CHECK(h.iso->isolate_calls == 1);
+    REQUIRE(h.iso->exempt.size() == 1);  // the CCC stays reachable
+    h.agent->reevaluate_all();           // already-running AI app is closed right away
+    CHECK(h.procs->killed == std::vector<int64_t>{42});
+    h.procs->procs.push_back({43, 1, "/usr/local/bin/ollama", "ollama", "", "alice", 0, 3});
+    h.agent->scan_processes();            // and a new launch is closed too
+    CHECK(h.procs->killed.size() == 2);
+    CHECK(h.ipc->count_containing("local network still works") == 1);
+
+    h.agent->handle_command({"i2", "isolate_notice", {{"isolated", false}}});
+    CHECK_FALSE(h.agent->isolated());
+    CHECK_FALSE(h.iso->on);
+    CHECK(h.iso->restore_calls == 1);
+    h.procs->procs.push_back({44, 1, "/usr/local/bin/ollama", "ollama", "", "alice", 0, 4});
+    h.agent->scan_processes();
+    CHECK(h.procs->killed.size() == 2);  // practice mode again: alert only
 }

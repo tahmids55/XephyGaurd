@@ -196,6 +196,7 @@ Section "Agent" SecAgent
 
   ; outbound firewall rule for the agent only (no inbound ports are opened)
   nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="XephyGuard Agent"'
+  nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="XephyGuard Isolate"'
   nsExec::ExecToLog 'netsh advfirewall firewall add rule name="XephyGuard Agent" dir=out action=allow program="$INSTDIR\xephyguard-agent.exe" enable=yes'
 
   ; managed browser policies
@@ -263,6 +264,7 @@ Section "Uninstall"
   Sleep 2000
   nsExec::ExecToLog 'sc.exe delete XephyGuardAgent'
   nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="XephyGuard Agent"'
+  nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="XephyGuard Isolate"'
   Delete /REBOOTOK "$INSTDIR\*.*"
   RMDir /REBOOTOK "$INSTDIR"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\XephyGuard"

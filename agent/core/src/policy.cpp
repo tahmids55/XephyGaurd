@@ -66,8 +66,11 @@ Policy Policy::default_for(Mode m) {
             p.intervals.process_scan_s = 5;
             p.intervals.port_scan_s = 60;
             p.intervals.heartbeat_s = 15;
-            for (auto s : {Severity::info, Severity::low, Severity::medium, Severity::high, Severity::critical})
+            for (auto s : {Severity::info, Severity::low, Severity::medium})
                 p.default_actions[s] = {A::log};
+            // Detect + alert only (never close anything) outside tests.
+            p.default_actions[Severity::high] = {A::log, A::alert};
+            p.default_actions[Severity::critical] = {A::log, A::alert};
             break;
         case Mode::practice:
             p.title_capture = TitleCapture::app_only;
@@ -88,8 +91,8 @@ Policy Policy::default_for(Mode m) {
             p.default_actions[Severity::info] = {A::log};
             p.default_actions[Severity::low] = {A::log};
             p.default_actions[Severity::medium] = {A::log, A::alert};
-            p.default_actions[Severity::high] = {A::log, A::warn, A::alert};
-            p.default_actions[Severity::critical] = {A::log, A::warn, A::alert};
+            p.default_actions[Severity::high] = {A::log, A::warn, A::alert, A::kill};      // AI apps are closed in tests
+            p.default_actions[Severity::critical] = {A::log, A::warn, A::alert, A::kill};
             break;
     }
     // System-critical processes are never killed regardless of rules.

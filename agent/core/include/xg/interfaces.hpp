@@ -37,6 +37,18 @@ public:
     virtual void stop() = 0;
 };
 
+/// Enforces "Isolate": outbound Internet is cut, LAN (and the exempt hosts, i.e. the CCC) keeps working.
+class INetworkIsolator {
+public:
+    virtual ~INetworkIsolator() = default;
+    /// Installs the block rules. Idempotent. `exempt_hosts` are host names / IPs that must stay reachable.
+    virtual bool isolate(const std::vector<std::string>& exempt_hosts) = 0;
+    /// Removes every rule installed by `isolate`.
+    virtual bool restore() = 0;
+    /// True while the block rules are present and enabled (the agent re-checks this periodically).
+    virtual bool active() = 0;
+};
+
 class IWindowMonitor {
 public:
     virtual ~IWindowMonitor() = default;
@@ -171,6 +183,7 @@ public:
 struct ServicePlatform {
     std::unique_ptr<IProcessMonitor> processes;
     std::unique_ptr<INetworkMonitor> network;
+    std::unique_ptr<INetworkIsolator> isolator;
     std::unique_ptr<IDeviceMonitor> devices;
     std::unique_ptr<IExtensionScanner> extensions;
     std::unique_ptr<IFileWatcher> files;

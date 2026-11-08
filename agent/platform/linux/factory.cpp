@@ -11,6 +11,7 @@ std::unique_ptr<ServicePlatform> make_service_platform(const Config& cfg) {
     p->system = lnx::make_system_info();
     p->processes = lnx::make_process_monitor();
     p->network = lnx::make_network_monitor();
+    p->isolator = lnx::make_network_isolator();
     p->devices = lnx::make_device_monitor();
     p->extensions = lnx::make_extension_scanner(p->system.get());
     p->files = lnx::make_file_watcher();

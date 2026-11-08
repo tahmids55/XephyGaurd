@@ -15,6 +15,7 @@ uint32_t file_uid(const std::string& path);
 
 std::unique_ptr<IProcessMonitor> make_process_monitor();
 std::unique_ptr<INetworkMonitor> make_network_monitor();
+std::unique_ptr<INetworkIsolator> make_network_isolator();
 std::unique_ptr<IDeviceMonitor> make_device_monitor();
 std::unique_ptr<IExtensionScanner> make_extension_scanner(ISystemInfo* sys);
 std::unique_ptr<IFileWatcher> make_file_watcher();

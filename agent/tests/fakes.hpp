@@ -30,6 +30,16 @@ public:
     void stop() override {}
 };
 
+class FakeIsolator : public INetworkIsolator {
+public:
+    bool on = false;
+    int isolate_calls = 0, restore_calls = 0;
+    std::vector<std::string> exempt;
+    bool isolate(const std::vector<std::string>& e) override { on = true; ++isolate_calls; exempt = e; return true; }
+    bool restore() override { on = false; ++restore_calls; return true; }
+    bool active() override { return on; }
+};
+
 class FakeExtensions : public IExtensionScanner {
 public:
     std::vector<ExtensionInfo> list;

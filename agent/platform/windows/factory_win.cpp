@@ -7,6 +7,7 @@ std::unique_ptr<ServicePlatform> make_service_platform(const Config& cfg) {
     p->system = win::make_system_info();
     p->processes = win::make_process_monitor();
     p->network = win::make_network_monitor();
+    p->isolator = win::make_network_isolator();
     p->devices = win::make_device_monitor();
     p->extensions = win::make_extension_scanner();
     p->files = win::make_file_watcher();
