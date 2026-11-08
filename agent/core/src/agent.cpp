@@ -512,6 +512,85 @@ void Agent::scan_extensions() {
         }
     }
 
+    std::map<int64_t, ProcessInfo> proc_by_pid;
+    std::set<std::string> running_exes;
+    for (const auto& p : procs) {
+        proc_by_pid[p.pid] = p;
+        running_exes.insert(normalize_exe(p.exe_path.empty() ? p.name : p.exe_path));
+        running_exes.insert(normalize_exe(p.name));
+    }
+
+    auto is_jetbrains_exe = [](const std::string& exe) {
+        return exe == "idea64" || exe == "idea" || exe == "pycharm64" || exe == "pycharm" || exe == "clion64" ||
+               exe == "clion" || exe == "webstorm64" || exe == "webstorm" || exe == "goland64" || exe == "goland" ||
+               exe == "rider64" || exe == "rider" || exe == "phpstorm64" || exe == "phpstorm" || exe == "studio64" ||
+               exe == "rustrover64" || exe == "datagrip64" || exe == "rubymine64";
+    };
+
+    auto ide_is_running = [&](const std::string& ide) {
+        if (procs.empty()) return true;  // allow unit tests that omit process list
+        if (ide == "vscode") return running_exes.contains("code");
+        if (ide == "vscode-insiders") return running_exes.contains("code - insiders");
+        if (ide == "vscodium") return running_exes.contains("vscodium") || running_exes.contains("codium");
+        if (ide == "cursor") return running_exes.contains("cursor");
+        if (ide == "windsurf") return running_exes.contains("windsurf");
+        if (ide == "jetbrains") {
+            return std::any_of(running_exes.begin(), running_exes.end(), is_jetbrains_exe);
+        }
+        if (ide == "chrome") return running_exes.contains("chrome");
+        if (ide == "edge") return running_exes.contains("msedge");
+        if (ide == "brave") return running_exes.contains("brave");
+        if (ide == "firefox") return running_exes.contains("firefox");
+        return false;
+    };
+
+    // Determine which IDE (if any) owns the process/parent-chain of `f`, so VS Code traffic never flags JetBrains plugins.
+    auto flow_belongs_to_ide = [&](const std::string& ide, const OutboundAiFlow& f) {
+        if (!ide_is_running(ide)) return false;
+        std::set<std::string> chain_exes;
+        std::string chain_paths;
+        chain_exes.insert(normalize_exe(f.process));
+        int64_t cur = f.pid;
+        for (int depth = 0; depth < 6 && cur > 4; ++depth) {
+            auto it = proc_by_pid.find(cur);
+            if (it == proc_by_pid.end()) break;
+            chain_exes.insert(normalize_exe(it->second.exe_path.empty() ? it->second.name : it->second.exe_path));
+            chain_exes.insert(normalize_exe(it->second.name));
+            chain_paths += " " + to_lower(it->second.exe_path) + " " + to_lower(it->second.cmdline);
+            if (it->second.ppid == cur) break;
+            cur = it->second.ppid;
+        }
+
+        const bool is_vscode_chain = chain_exes.contains("code") || chain_paths.find(".vscode\\") != std::string::npos ||
+                                     chain_paths.find(".vscode/") != std::string::npos ||
+                                     chain_paths.find("microsoft vs code") != std::string::npos;
+        const bool is_insiders_chain = chain_exes.contains("code - insiders") ||
+                                       chain_paths.find(".vscode-insiders") != std::string::npos;
+        const bool is_vscodium_chain = chain_exes.contains("vscodium") || chain_exes.contains("codium") ||
+                                       chain_paths.find(".vscode-oss") != std::string::npos;
+        const bool is_cursor_chain = chain_exes.contains("cursor") || chain_paths.find(".cursor\\") != std::string::npos ||
+                                     chain_paths.find(".cursor/") != std::string::npos;
+        const bool is_windsurf_chain = chain_exes.contains("windsurf") ||
+                                       chain_paths.find(".windsurf\\") != std::string::npos ||
+                                       chain_paths.find(".windsurf/") != std::string::npos;
+        const bool is_jb_chain = std::any_of(chain_exes.begin(), chain_exes.end(), is_jetbrains_exe) ||
+                                 chain_paths.find("jetbrains") != std::string::npos ||
+                                 chain_paths.find("github-copilot-intellij") != std::string::npos;
+
+        const bool any_specific_ide = is_vscode_chain || is_insiders_chain || is_vscodium_chain || is_cursor_chain ||
+                                      is_windsurf_chain || is_jb_chain;
+        if (any_specific_ide) {
+            if (ide == "vscode") return is_vscode_chain;
+            if (ide == "vscode-insiders") return is_insiders_chain;
+            if (ide == "vscodium") return is_vscodium_chain;
+            if (ide == "cursor") return is_cursor_chain;
+            if (ide == "windsurf") return is_windsurf_chain;
+            if (ide == "jetbrains") return is_jb_chain;
+            return false;
+        }
+        return true;
+    };
+
     auto fmt_kb = [](uint64_t b) {
         double kb = std::round((double(b) / 1024.0) * 10.0) / 10.0;
         std::string s = std::to_string(kb);
@@ -519,7 +598,8 @@ void Agent::scan_extensions() {
         return s;
     };
 
-    auto flow_matches_ext = [](const ExtensionInfo& e, const std::string& rule_id, const OutboundAiFlow& f) {
+    auto flow_matches_ext = [&](const ExtensionInfo& e, const std::string& rule_id, const OutboundAiFlow& f) {
+        if (!flow_belongs_to_ide(e.ide, f)) return false;
         const std::string id = to_lower(e.id);
         const std::string dom = to_lower(f.domain);
         if (id.find("copilot") != std::string::npos || rule_id == "ext.copilot" || rule_id == "ext.jb.copilot")

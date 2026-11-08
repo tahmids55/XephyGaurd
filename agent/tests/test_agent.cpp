@@ -134,20 +134,26 @@ TEST_CASE("agent inventories installed AI extensions and only alerts when active
     h.agent->scan_extensions();
     CHECK(h.of(ev::extension_scan).size() == 1);
     CHECK(h.of(ev::rule_hit).empty());
-    // Installed on disk but idle -> listed in extension_scan.ai, but NO rule_hit alert!
+    // Installed on disk in both VS Code and JetBrains, but idle -> listed in extension_scan.ai, NO rule_hit alert!
     h.exts->list.push_back({"vscode", "github.copilot", "1.2", "alice", "", false, ""});
+    h.exts->list.push_back({"jetbrains", "ml-llm", "1.5", "alice", "", false, ""});
+    h.procs->procs = {{100, 1, "C:\\Users\\alice\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe", "Code.exe", "", "alice", 0, 1},
+                      {8356, 100, "C:\\Users\\alice\\.vscode\\extensions\\github.copilot-chat\\copilot-runtime.exe", "copilot-runtime.exe", "", "alice", 0, 2}};
     h.agent->scan_extensions();
     CHECK(h.of(ev::extension_scan).size() == 2);
-    CHECK(h.of(ev::extension_scan).back().data["ai"].size() == 1);
+    CHECK(h.of(ev::extension_scan).back().data["ai"].size() == 2);
     CHECK(h.of(ev::extension_scan).back().data["ai"][0]["active"] == false);
+    CHECK(h.of(ev::extension_scan).back().data["ai"][1]["active"] == false);
     CHECK(h.of(ev::rule_hit).empty());
-    // Now the student actively uses the extension via outbound AI network stream -> rule_hit is emitted!
+    // Now the student actively uses Copilot in VS Code -> ONLY vscode is marked active, NOT jetbrains!
     h.net->flows = {{8356, "copilot-runtime", "140.82.114.22", 443, "api.individual.githubcopilot.com", 4096, 16384}};
     h.agent->scan_extensions();
     CHECK(h.of(ev::extension_scan).size() == 3);
     CHECK(h.of(ev::extension_scan).back().data["ai"][0]["active"] == true);
+    CHECK(h.of(ev::extension_scan).back().data["ai"][1]["active"] == false);
     REQUIRE(h.of(ev::rule_hit).size() == 1);
     CHECK(h.of(ev::rule_hit)[0].data["rule_id"] == "ext.copilot");
+    CHECK(h.of(ev::rule_hit)[0].data["context"]["ide"] == "vscode");
     CHECK(h.of(ev::rule_hit)[0].data["context"]["domain"] == "api.individual.githubcopilot.com");
 
     // Browser AI tab & outbound browser stream detection
