@@ -35,8 +35,8 @@ struct Policy {
     } collect;
 
     struct Intervals {
-        int heartbeat_s = 5, process_scan_s = 2, snapshot_s = 60, port_scan_s = 15;
-        int extension_scan_s = 300, artifact_scan_s = 1800, gpu_sample_s = 10, keystats_window_s = 5;
+        int heartbeat_s = 5, process_scan_s = 2, snapshot_s = 15, port_scan_s = 15;
+        int extension_scan_s = 15, artifact_scan_s = 1800, gpu_sample_s = 10, keystats_window_s = 5;
         int integrity_check_s = 60;
     } intervals;
 

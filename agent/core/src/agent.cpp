@@ -391,14 +391,75 @@ void Agent::scan_devices() {
 void Agent::scan_extensions() {
     if (!plat_.extensions) return;
     auto exts = plat_.extensions->scan();
+    std::vector<ProcessInfo> procs;
+    {
+        std::lock_guard lk(tracker_mu_);
+        procs = tracker_.running();
+    }
+    if (procs.empty() && plat_.processes) procs = plat_.processes->snapshot();
+
+    // Check which IDEs/browsers are currently running and whether any child process belongs to an extension.
+    std::set<std::string> running_exes;
+    for (const auto& p : procs) {
+        running_exes.insert(normalize_exe(p.exe_path.empty() ? p.name : p.exe_path));
+        running_exes.insert(normalize_exe(p.name));
+    }
+    auto ide_is_running = [&](const std::string& ide) {
+        if (ide == "vscode" || ide == "vscode-insiders" || ide == "vscodium")
+            return running_exes.contains("code") || running_exes.contains("code - insiders") || running_exes.contains("vscodium") || running_exes.contains("codium");
+        if (ide == "cursor") return running_exes.contains("cursor");
+        if (ide == "windsurf") return running_exes.contains("windsurf");
+        if (ide == "jetbrains")
+            return running_exes.contains("idea64") || running_exes.contains("idea") || running_exes.contains("pycharm64") ||
+                   running_exes.contains("pycharm") || running_exes.contains("clion64") || running_exes.contains("clion") ||
+                   running_exes.contains("webstorm64") || running_exes.contains("goland64") || running_exes.contains("rider64") ||
+                   running_exes.contains("phpstorm64") || running_exes.contains("studio64");
+        if (ide == "chrome") return running_exes.contains("chrome");
+        if (ide == "edge") return running_exes.contains("msedge");
+        if (ide == "brave") return running_exes.contains("brave");
+        if (ide == "firefox") return running_exes.contains("firefox");
+        return false;
+    };
+
     std::set<std::string> ids;
     json ai = json::array();
-    std::vector<std::pair<RuleHit, ExtensionInfo>> hits;
-    for (const auto& e : exts) {
-        ids.insert(e.ide + ":" + e.id + ":" + e.user);
+    std::vector<std::pair<RuleHit, ExtensionInfo>> active_hits;
+    for (auto& e : exts) {
+        bool proc_active = false;
+        std::string proc_reason;
+        const std::string needle = to_lower(e.id);
+        for (const auto& p : procs) {
+            const std::string hay = to_lower(p.exe_path + " " + p.cmdline);
+            if (!needle.empty() && hay.find(needle) != std::string::npos) {
+                if (p.net_kbps > 0.0 || p.net_conns > 0 || p.cpu_pct >= 0.5 || !p.cmdline.empty()) {
+                    proc_active = true;
+                    proc_reason = "active extension process (" + normalize_exe(p.name) + ")";
+                    break;
+                }
+            }
+        }
+        if (proc_active) {
+            e.active = true;
+            e.activity = proc_reason;
+        } else if (e.active && !procs.empty() && !ide_is_running(e.ide)) {
+            // Storage activity is only considered live if the host IDE/browser is running (unless procs list is empty in unit tests).
+            e.active = false;
+            e.activity.clear();
+        }
+
+        ids.insert(e.ide + ":" + e.id + ":" + e.user + ":" + (e.active ? "1" : "0"));
         if (auto h = rules_.match_extension(e)) {
-            ai.push_back({{"ide", e.ide}, {"id", e.id}, {"version", e.version}, {"user", e.user}, {"rule_id", h->rule_id}});
-            hits.emplace_back(*h, e);
+            ai.push_back({{"ide", e.ide},
+                          {"id", e.id},
+                          {"version", e.version},
+                          {"user", e.user},
+                          {"rule_id", h->rule_id},
+                          {"description", h->description},
+                          {"active", e.active},
+                          {"activity", e.activity}});
+            if (e.active) {
+                active_hits.emplace_back(*h, e);
+            }
         }
     }
     std::string joined;
@@ -417,9 +478,12 @@ void Agent::scan_extensions() {
         last_ext_hash_ = hash;
         known_extensions_ = std::move(ids);
     }
-    for (const auto& [h, e] : hits)
-        handle_rule_hit(h, e.ide + ":" + e.id + ":" + e.user,
-                        json{{"ide", e.ide}, {"extension", e.id}, {"version", e.version}, {"user", e.user}});
+    for (const auto& [h, e] : active_hits) {
+        RuleHit live_hit = h;
+        live_hit.description = h.description + " (actively used in " + e.ide + ")";
+        handle_rule_hit(live_hit, e.ide + ":" + e.id + ":" + e.user,
+                        json{{"ide", e.ide}, {"extension", e.id}, {"version", e.version}, {"user", e.user}, {"activity", e.activity}});
+    }
 }
 
 // ----------------------------------------------------------------------------------- helper IPC
@@ -945,8 +1009,8 @@ void Agent::handle_command(const protocol::Command& cmd) {
         command_result(cmd.id, "ok", json::object());
     } else if (cmd.type == "rescan") {
         const auto what = cmd.args.value("what", "all");
-        if (what == "extensions" || what == "all") rescan_extensions_ = true;
-        if (what == "artifacts" || what == "all") rescan_artifacts_ = true;
+        if (what == "extensions" || what == "installed" || what == "all") rescan_extensions_ = true;
+        if (what == "artifacts" || what == "extensions" || what == "installed" || what == "all") rescan_artifacts_ = true;
         if (what == "processes" || what == "all") {
             scan_processes();
             process_snapshot();
@@ -972,8 +1036,8 @@ void Agent::handle_command(const protocol::Command& cmd) {
 
 // --------------------------------------------------------------------------------- artifacts
 void Agent::artifact_loop(std::atomic<bool>& stop) {
-    // Delay the first scan so boot is not slowed down.
-    int64_t next = steady_ms() + 60000;
+    // Delay the first scan briefly so service startup is not slowed down.
+    int64_t next = steady_ms() + 5000;
     while (!stop) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         const Policy p = policy();
@@ -983,16 +1047,16 @@ void Agent::artifact_loop(std::atomic<bool>& stop) {
         const auto homes = user_homes();
         auto res = scan_artifacts(rules_, homes, stop);
         json found = json::array();
-        for (const auto& a : res.found)
-            found.push_back({{"path", a.path}, {"size_mb", a.size_bytes / (1024 * 1024)}, {"rule_id", a.rule_id}});
+        for (const auto& a : res.found) {
+            std::string desc = "Local AI model file / store";
+            for (const auto& r : rules_.artifact_rules())
+                if (r.id == a.rule_id) { desc = r.description; break; }
+            const double size_mb = std::round((double(a.size_bytes) / (1024.0 * 1024.0)) * 10.0) / 10.0;
+            found.push_back({{"path", a.path}, {"size_mb", size_mb}, {"rule_id", a.rule_id}, {"description", desc}});
+        }
         sink_->emit(ev::artifact_scan, {{"count", res.found.size()}, {"files_visited", res.files_visited},
                                         {"truncated", res.truncated}, {"found", found}});
-        for (const auto& a : res.found) {
-            RuleHit h{a.rule_id, "local_model", "Local AI model files found", Severity::high};
-            for (const auto& r : rules_.artifact_rules())
-                if (r.id == a.rule_id) { h.description = r.description; h.severity = r.severity; }
-            handle_rule_hit(h, a.path, json{{"path", a.path}, {"size_mb", a.size_bytes / (1024 * 1024)}});
-        }
+        wake_uplink();
     }
 }
 

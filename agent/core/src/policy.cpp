@@ -83,7 +83,7 @@ Policy Policy::default_for(Mode m) {
         case Mode::test:
             p.title_capture = TitleCapture::app_only;
             p.collect.window = p.collect.clipboard = p.collect.keys = p.collect.files = p.collect.gpu = true;
-            p.intervals.extension_scan_s = 120;
+            p.intervals.extension_scan_s = 15;
             p.intervals.artifact_scan_s = 900;
             p.default_actions[Severity::info] = {A::log};
             p.default_actions[Severity::low] = {A::log};
@@ -124,7 +124,7 @@ Policy Policy::from_json(const json& j, std::string* err) {
             i("process_scan_s", p.intervals.process_scan_s, 1, 300);
             i("snapshot_s", p.intervals.snapshot_s, 10, 3600);
             i("port_scan_s", p.intervals.port_scan_s, 2, 3600);
-            i("extension_scan_s", p.intervals.extension_scan_s, 30, 86400);
+            i("extension_scan_s", p.intervals.extension_scan_s, 10, 86400);
             i("artifact_scan_s", p.intervals.artifact_scan_s, 60, 86400);
             i("gpu_sample_s", p.intervals.gpu_sample_s, 2, 3600);
             i("keystats_window_s", p.intervals.keystats_window_s, 1, 60);

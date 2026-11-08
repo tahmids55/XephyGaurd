@@ -112,8 +112,8 @@
             <button class="btn" :class="drawer.pc.isolated ? 'btn-primary' : 'btn-danger'" @click="isolate(drawer.pc)" x-text="drawer.pc.isolated ? 'Restore network' : 'Isolate'"></button>
             <button class="btn" @click="kill(drawer.pc)">Close a program…</button>
           </div>
-          <div class="mb-3 flex gap-1 border-b border-slate-200 text-sm">
-            <template x-for="t in ['timeline','alerts','processes','network','typing','pastes']">
+          <div class="mb-3 flex flex-wrap gap-1 border-b border-slate-200 text-sm">
+            <template x-for="t in ['timeline','alerts','processes','installed','network','typing','pastes']">
               <button class="-mb-px border-b-2 px-3 py-1.5 capitalize" :class="tab===t ? 'border-indigo-600 font-semibold' : 'border-transparent text-slate-500'" @click="tab=t" x-text="t"></button>
             </template>
           </div>
@@ -180,6 +180,65 @@
               <div class="label mb-1">Flagged AI Process History (Session Log)</div>
               <table class="tbl"><template x-for="p in drawer.processes"><tr><td class="font-mono text-xs" x-text="p.at"></td><td class="text-xs" x-text="p.type.replace('process_','')"></td><td class="font-semibold text-xs" x-text="p.exe"></td><td class="text-xs text-red-600" x-text="p.rule"></td>
                 <td class="text-right"><button class="btn btn-sm text-xs" x-show="p.type==='process_start' && p.exe" @click="kill(drawer.pc, p.exe, p.pid)">Close</button></td></tr></template></table>
+            </div>
+          </div>
+          <div x-show="tab==='installed'" class="space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="label">Pre-Installed / On-Disk AI Inventory</div>
+                <div class="text-[11px] text-slate-400">Storage &amp; installed tools are shown here for recognition only. They do not raise alerts unless actively used or launched.</div>
+              </div>
+              <button type="button" class="btn btn-sm" @click="rescan(drawer.pc, 'extensions')">↻ Refresh</button>
+            </div>
+
+            <div class="border border-slate-100 rounded p-3">
+              <div class="flex items-center justify-between mb-1">
+                <div class="text-xs font-semibold text-slate-700">IDE &amp; Browser AI Extensions (<span x-text="(drawer.extensions||[]).length"></span> AI / <span x-text="drawer.extensions_total||0"></span> total)</div>
+                <div class="text-[10px] text-slate-400" x-show="drawer.extensions_updated_at">Scanned at <span class="font-mono" x-text="drawer.extensions_updated_at"></span></div>
+              </div>
+              <table class="tbl" x-show="(drawer.extensions||[]).length">
+                <thead><tr><th>IDE / Browser</th><th>Extension</th><th>User</th><th>Status</th><th>Rule</th></tr></thead>
+                <tbody>
+                  <template x-for="ex in drawer.extensions" :key="ex.ide + ':' + ex.id + ':' + ex.user">
+                    <tr :class="ex.active ? 'bg-red-50/80' : ''">
+                      <td class="text-xs font-semibold uppercase text-slate-600" x-text="ex.ide"></td>
+                      <td>
+                        <div class="font-semibold text-xs" x-text="ex.description || ex.id"></div>
+                        <div class="font-mono text-[10px] text-slate-400" x-text="ex.id + (ex.version ? ' (' + ex.version + ')' : '')"></div>
+                      </td>
+                      <td class="text-xs text-slate-600" x-text="ex.user || '—'"></td>
+                      <td>
+                        <span x-show="ex.active" class="badge sev-high text-[10px]" x-text="'ACTIVE NOW' + (ex.activity ? ' · ' + ex.activity : '')"></span>
+                        <span x-show="!ex.active" class="badge sev-low text-[10px]">Installed (Idle)</span>
+                      </td>
+                      <td><span class="font-mono text-[11px] text-slate-500" x-text="ex.rule_id"></span></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <p x-show="!(drawer.extensions||[]).length" class="text-xs text-slate-400">No AI extensions installed on this PC.</p>
+            </div>
+
+            <div class="border border-slate-100 rounded p-3">
+              <div class="flex items-center justify-between mb-1">
+                <div class="text-xs font-semibold text-slate-700">Local AI Model Files &amp; Caches on Disk (<span x-text="(drawer.artifacts||[]).length"></span> found)</div>
+                <div class="text-[10px] text-slate-400" x-show="drawer.artifacts_updated_at">Scanned at <span class="font-mono" x-text="drawer.artifacts_updated_at"></span> (<span x-text="drawer.artifacts_visited||0"></span> files checked)</div>
+              </div>
+              <table class="tbl" x-show="(drawer.artifacts||[]).length">
+                <thead><tr><th>Model File / Store Path</th><th>Type</th><th>Size</th><th>Status</th><th>Rule</th></tr></thead>
+                <tbody>
+                  <template x-for="art in drawer.artifacts" :key="art.path">
+                    <tr>
+                      <td class="font-mono text-xs break-all text-slate-700" x-text="art.path"></td>
+                      <td class="text-xs text-slate-600" x-text="art.description || 'Local AI model'"></td>
+                      <td class="font-mono text-xs text-slate-600 whitespace-nowrap" x-text="(art.size_mb || 0) + ' MB'"></td>
+                      <td><span class="badge sev-low text-[10px]">On Disk (Storage)</span></td>
+                      <td><span class="font-mono text-[11px] text-slate-500" x-text="art.rule_id"></span></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <p x-show="!(drawer.artifacts||[]).length" class="text-xs text-slate-400">No local AI model files (`.gguf`, `.safetensors`, `.onnx`, `.ollama`, `.lmstudio`, HuggingFace cache) found on disk.</p>
             </div>
           </div>
           <div x-show="tab==='network'" class="space-y-4">

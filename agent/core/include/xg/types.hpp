@@ -17,10 +17,10 @@ struct ProcessInfo {
     std::string cmdline;    // used only for matching on the PC, never uploaded in full
     std::string user;
     uint64_t rss_bytes = 0;
+    int64_t start_time = 0;     // OS-specific start tick; (pid,start_time) identifies a process
     double cpu_pct = 0.0;       // 0..100 total system CPU percentage
     double net_kbps = 0.0;      // per-process network throughput (KB/s)
     uint32_t net_conns = 0;     // active network connections owned by this PID
-    int64_t start_time = 0;     // OS-specific start tick; (pid,start_time) identifies a process
 };
 
 struct ListeningSocket {
@@ -60,6 +60,8 @@ struct ExtensionInfo {
     std::string version;
     std::string user;
     std::string path;
+    bool active = false;      // true only when live runtime activity is detected
+    std::string activity;     // how live usage was detected (e.g. "active process", "storage write")
 };
 
 struct ArtifactInfo {

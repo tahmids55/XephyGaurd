@@ -52,8 +52,22 @@ ArtifactScanResult scan_artifacts(const RuleEngine& rules, const std::vector<std
             const auto& e = *it;
             const auto name = e.path().filename().string();
             if (e.is_directory(ec)) {
-                bool skip = it.depth() >= spec.max_depth || e.is_symlink(ec);
-                for (const auto& s : spec.skip_dirs) if (name == s) skip = true;
+                const auto lname = to_lower(name);
+                bool skip = it.depth() >= spec.max_depth || e.is_symlink(ec) ||
+                            lname == "appdata" || lname == "application data" || lname == "local settings" ||
+                            lname == "$recycle.bin" || lname == "system volume information" || lname == "windows" ||
+                            lname == "program files" || lname == "program files (x86)" || lname == "programdata" ||
+                            lname == "node_modules" || lname == ".git" || lname == ".venv" || lname == "venv" ||
+                            lname == "__pycache__";
+                if (!skip) {
+                    const auto full = e.path().string();
+                    for (const auto& s : spec.skip_dirs) {
+                        if (to_lower(s) == lname || iends_with(full, s)) {
+                            skip = true;
+                            break;
+                        }
+                    }
+                }
                 if (skip) it.disable_recursion_pending();
                 continue;
             }

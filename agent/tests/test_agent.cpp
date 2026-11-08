@@ -127,19 +127,27 @@ TEST_CASE("agent detects tethering, VPN and a second default route") {
     CHECK(h.of(ev::net_adapter).back().data["change"] == "added");
 }
 
-TEST_CASE("agent reports AI extensions once per change") {
+TEST_CASE("agent inventories installed AI extensions and only alerts when actively used") {
     Harness h;
     h.agent->apply_policy(Policy::default_for(Mode::test));
     h.exts->list = {{"vscode", "ms-python.python", "1", "alice", ""}};
     h.agent->scan_extensions();
     CHECK(h.of(ev::extension_scan).size() == 1);
     CHECK(h.of(ev::rule_hit).empty());
-    h.exts->list.push_back({"vscode", "github.copilot", "1.2", "alice", ""});
+    // Installed on disk but idle -> listed in extension_scan.ai, but NO rule_hit alert!
+    h.exts->list.push_back({"vscode", "github.copilot", "1.2", "alice", "", false, ""});
     h.agent->scan_extensions();
     CHECK(h.of(ev::extension_scan).size() == 2);
-    REQUIRE(h.of(ev::rule_hit).size() == 1);
+    CHECK(h.of(ev::extension_scan).back().data["ai"].size() == 1);
+    CHECK(h.of(ev::extension_scan).back().data["ai"][0]["active"] == false);
+    CHECK(h.of(ev::rule_hit).empty());
+    // Now the student actively uses the extension -> rule_hit is emitted!
+    h.exts->list.back().active = true;
+    h.exts->list.back().activity = "recent storage activity";
     h.agent->scan_extensions();
-    CHECK(h.of(ev::extension_scan).size() == 2);  // unchanged list -> no new scan event
+    CHECK(h.of(ev::extension_scan).size() == 3);
+    REQUIRE(h.of(ev::rule_hit).size() == 1);
+    CHECK(h.of(ev::rule_hit)[0].data["rule_id"] == "ext.copilot");
 }
 
 TEST_CASE("ports and helper messages respect policy and privacy") {

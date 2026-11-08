@@ -1,13 +1,16 @@
 # Local model files and model directories. Scanned on a schedule; only path + size are reported.
 version: 1
 rules:
-  - { id: file.gguf,        severity: high,   globs: ["*.gguf", "*.ggml", "*.ggjt"], description: "Quantized LLM weights" }
+  - { id: file.gguf,        severity: high,   globs: ["*.gguf", "*.ggml", "*.ggjt", "*.llamafile"], description: "Quantized LLM weights" }
   - { id: file.safetensors, severity: medium, globs: ["*.safetensors"], min_size_mb: 500, description: "Large safetensors weights" }
+  - { id: file.onnx,        severity: medium, globs: ["*.onnx"], min_size_mb: 300, description: "Large ONNX model weights" }
   - { id: file.ollama_dir,  severity: high,   dirs: ["~/.ollama/models", "/usr/share/ollama/.ollama/models", "%USERPROFILE%\\.ollama\\models"], description: "Ollama model store" }
   - { id: file.lmstudio_dir, severity: high,  dirs: ["~/.lmstudio/models", "~/.cache/lm-studio/models", "%USERPROFILE%\\.lmstudio\\models", "%USERPROFILE%\\.cache\\lm-studio\\models"], description: "LM Studio model store" }
-  - { id: file.hf_cache,    severity: low,    dirs: ["~/.cache/huggingface/hub"], description: "Hugging Face cache present" }
+  - { id: file.gpt4all_dir, severity: high,   dirs: ["~/.local/share/nomic.ai/GPT4All", "%LOCALAPPDATA%\\nomic.ai\\GPT4All"], description: "GPT4All model store" }
+  - { id: file.jan_dir,     severity: high,   dirs: ["~/jan/models", "%APPDATA%\\Jan\\data\\models", "%USERPROFILE%\\jan\\models"], description: "Jan AI model store" }
+  - { id: file.hf_cache,    severity: low,    dirs: ["~/.cache/huggingface/hub", "%USERPROFILE%\\.cache\\huggingface\\hub"], description: "Hugging Face cache present" }
 scan:
   roots: ["~", "/media", "/run/media", "/mnt", "%USERPROFILE%", "D:\\", "E:\\", "F:\\"]
   max_depth: 6
   max_files: 200000
-  skip_dirs: [".git", "node_modules", ".npm", ".cargo", "proc", "sys", "AppData\\Local\\Temp"]
+  skip_dirs: [".git", "node_modules", ".npm", ".cargo", "proc", "sys", "AppData", "AppData\\Local\\Temp"]

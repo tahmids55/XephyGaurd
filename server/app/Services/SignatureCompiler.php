@@ -32,14 +32,23 @@ class SignatureCompiler
                 if (empty($r['id'])) {
                     continue;
                 }
-                $created = Rule::query()->firstOrCreate(['rule_id' => $r['id']], [
-                    'kind' => $kind,
-                    'severity' => $r['severity'] ?? 'medium',
-                    'description' => $r['description'] ?? null,
-                    'definition' => $r,
-                    'enabled' => true,
-                ]);
-                $n += $created->wasRecentlyCreated ? 1 : 0;
+                $rule = Rule::query()->where('rule_id', $r['id'])->first();
+                if (! $rule) {
+                    Rule::query()->create([
+                        'rule_id' => $r['id'],
+                        'kind' => $kind,
+                        'severity' => $r['severity'] ?? 'medium',
+                        'description' => $r['description'] ?? null,
+                        'definition' => $r,
+                        'enabled' => true,
+                    ]);
+                    $n++;
+                } else {
+                    $rule->update([
+                        'description' => $r['description'] ?? $rule->description,
+                        'definition' => $r,
+                    ]);
+                }
             }
             foreach (['probe', 'scan'] as $extra) {
                 if (isset($doc[$extra])) {

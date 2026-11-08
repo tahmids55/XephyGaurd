@@ -94,6 +94,22 @@ class EventIngestor
                     ->where('seq', '<', (int) $latestSnapSeq)
                     ->delete();
             }
+            $latestExtSeq = $events->where('type', 'extension_scan')->max('seq');
+            if ($latestExtSeq) {
+                Event::query()
+                    ->where('pc_id', $pc->id)
+                    ->where('type', 'extension_scan')
+                    ->where('seq', '<', (int) $latestExtSeq)
+                    ->delete();
+            }
+            $latestArtSeq = $events->where('type', 'artifact_scan')->max('seq');
+            if ($latestArtSeq) {
+                Event::query()
+                    ->where('pc_id', $pc->id)
+                    ->where('type', 'artifact_scan')
+                    ->where('seq', '<', (int) $latestArtSeq)
+                    ->delete();
+            }
             if ($events->isNotEmpty()) {
                 $agent->last_seq = max($agent->last_seq, (int) $events->max('seq'));
             }
@@ -187,6 +203,14 @@ class EventIngestor
 
         switch ($type) {
             case 'rule_hit':
+                if (($d['category'] ?? '') === 'extension' && empty($d['context']['activity'] ?? '')) {
+                    // Installed-only extension hits (not actively in use) are shown in the Installed tab, not Alerts.
+                    return null;
+                }
+                if (($d['category'] ?? '') === 'local_model' || str_starts_with((string) ($d['rule_id'] ?? ''), 'file.')) {
+                    // On-disk model files/stores are shown in the Installed tab, not Alerts.
+                    return null;
+                }
                 $actions = is_array($d['actions'] ?? null) ? $d['actions'] : [];
                 $pc->last_event = mb_substr(($d['description'] ?? $d['rule_id'] ?? 'rule hit').' ('.($d['subject'] ?? '').')', 0, 160);
                 if (in_array('isolate', $actions, true) && ! $pc->isolated) {

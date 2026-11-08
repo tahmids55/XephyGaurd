@@ -88,6 +88,8 @@ std::string expand_path(std::string_view path, std::string_view home) {
         std::string name = s.substr(a + 1, b - a - 1);
         std::string val;
         if (name == "USERPROFILE" || name == "HOME") val = std::string(home);
+        else if (name == "APPDATA" && !home.empty()) val = std::string(home) + "\\AppData\\Roaming";
+        else if (name == "LOCALAPPDATA" && !home.empty()) val = std::string(home) + "\\AppData\\Local";
         else if (const char* e = std::getenv(name.c_str())) val = e;
         else { a = b + 1; continue; }
         s.replace(a, b - a + 1, val);

@@ -41,8 +41,16 @@ class DashboardController extends Controller
         $session = LabSession::activeFor($pc->lab_id);
         $since = $session?->started_at ?? now()->subHours(24);
         $events = Event::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)
-            ->whereNotIn('type', ['key_stats', 'heartbeat', 'process_snapshot'])->latest('occurred_at')->limit(200)->get(['type', 'occurred_at', 'data', 'user']);
+            ->whereNotIn('type', ['key_stats', 'heartbeat', 'process_snapshot', 'extension_scan', 'artifact_scan'])->latest('occurred_at')->limit(200)->get(['type', 'occurred_at', 'data', 'user'])
+            ->reject(fn ($e) => $e->type === 'rule_hit' && (
+                (($e->data['category'] ?? '') === 'extension' && empty($e->data['context']['activity'] ?? ''))
+                || ($e->data['category'] ?? '') === 'local_model'
+                || str_starts_with((string) ($e->data['rule_id'] ?? ''), 'file.')
+            ))
+            ->values();
         $latestSnap = Event::query()->where('pc_id', $pc->id)->where('type', 'process_snapshot')->latest('seq')->first(['occurred_at', 'data']);
+        $latestExt = Event::query()->where('pc_id', $pc->id)->where('type', 'extension_scan')->latest('seq')->first(['occurred_at', 'data']);
+        $latestArt = Event::query()->where('pc_id', $pc->id)->where('type', 'artifact_scan')->latest('seq')->first(['occurred_at', 'data']);
         $keys = KeyStat::query()->where('pc_id', $pc->id)->where('window_start', '>=', $since)->orderBy('window_start')
             ->get(['window_start', 'window_s', 'keys', 'backspaces', 'paste_chords']);
         // Bucket per minute for the key-rate chart.
@@ -59,6 +67,12 @@ class DashboardController extends Controller
                 'summary' => self::summarize($e->type, $e->data), 'user' => $e->user]),
             'running_processes' => $latestSnap?->data['list'] ?? [],
             'processes_updated_at' => $latestSnap?->occurred_at?->format('H:i:s'),
+            'extensions' => $latestExt?->data['ai'] ?? [],
+            'extensions_total' => $latestExt?->data['count'] ?? 0,
+            'extensions_updated_at' => $latestExt?->occurred_at?->format('H:i:s'),
+            'artifacts' => $latestArt?->data['found'] ?? [],
+            'artifacts_visited' => $latestArt?->data['files_visited'] ?? 0,
+            'artifacts_updated_at' => $latestArt?->occurred_at?->format('H:i:s'),
             'processes' => $events->whereIn('type', ['process_start', 'process_stop'])->values()
                 ->map(fn ($e) => ['at' => $e->occurred_at->format('H:i:s'), 'type' => $e->type, 'pid' => $e->data['pid'] ?? null, 'exe' => $e->data['exe'] ?? '', 'rule' => $e->data['rule_id'] ?? '']),
             'adapters' => Event::query()->where('pc_id', $pc->id)->where('type', 'net_adapter')->latest('occurred_at')
