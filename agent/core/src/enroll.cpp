@@ -13,6 +13,27 @@ namespace xg {
 
 namespace fs = std::filesystem;
 
+/// Stable per-installation identity, generated on first enrollment and persisted in data_dir.
+/// The server uses it (not hostname/MAC) to tell machines apart, so cloned lab images with
+/// identical hostnames or virtual-adapter MACs enroll as separate PCs.
+static std::string load_or_create_machine_uid(const std::string& data_dir) {
+    const std::string path = (fs::path(data_dir) / "machine_id").string();
+    auto valid = [](const std::string& v) {
+        if (v.size() != 32) return false;
+        for (char c : v)
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+        return true;
+    };
+    bool ok = false;
+    std::string cur = read_file(path, &ok);
+    while (!cur.empty() && (cur.back() == '\n' || cur.back() == '\r' || cur.back() == ' ')) cur.pop_back();
+    cur = to_lower(cur);
+    if (ok && valid(cur)) return cur;
+    std::string fresh = random_hex(16);
+    write_file_atomic(path, fresh + "\n");
+    return fresh;
+}
+
 int enroll(Config& cfg, const std::string& config_path, const EnrollOptions& o, ISystemInfo& sys) {
     if (o.key.empty()) {
         std::cerr << "enroll: --key is required (shown on the CCC 'Add a PC' page)\n";
@@ -86,6 +107,7 @@ int enroll(Config& cfg, const std::string& config_path, const EnrollOptions& o, 
               {"os", sys.os_name()},
               {"os_version", sys.os_version()},
               {"macs", sys.mac_addresses()},
+              {"machine_uid", load_or_create_machine_uid(cfg.data_dir)},
               {"agent_version", XG_VERSION},
               {"csr_pem", *csr}};
     auto r = api.request("POST", protocol::kEnrollPath, body.dump());

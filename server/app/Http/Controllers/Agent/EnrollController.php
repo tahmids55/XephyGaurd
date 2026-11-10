@@ -20,6 +20,7 @@ class EnrollController extends Controller
             'os_version' => 'nullable|string|max:128',
             'macs' => 'nullable|array|max:16',
             'macs.*' => ['string', 'regex:/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i'],
+            'machine_uid' => ['nullable', 'string', 'regex:/^[0-9a-f]{32}$/i'],
             'agent_version' => 'nullable|string|max:32',
             'csr_pem' => 'required|string|max:8192|starts_with:-----BEGIN CERTIFICATE REQUEST-----',
         ]);

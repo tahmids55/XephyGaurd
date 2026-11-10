@@ -21,12 +21,22 @@ class EnrollmentService
         $pollToken = Str::random(48);
         $macs = array_values(array_unique(array_map('strtolower', $data['macs'] ?? [])));
         $hostname = trim($data['hostname'] ?? '');
+        $uid = self::normalizeUid($data['machine_uid'] ?? null);
 
-        // Cancel/supersede any existing pending enrollments for this machine so teacher sees only the latest
-        if ($hostname !== '') {
+        // Cancel/supersede any existing pending enrollments for this machine so teacher sees only the latest.
+        // With a machine_uid the machine is identified exactly; hostname is only a legacy fallback because
+        // cloned lab images share hostnames.
+        if ($uid !== null) {
             Enrollment::query()
                 ->where('lab_id', $lab->id)
                 ->where('status', 'pending')
+                ->where('machine_uid', $uid)
+                ->update(['status' => 'superseded', 'decided_at' => now()]);
+        } elseif ($hostname !== '') {
+            Enrollment::query()
+                ->where('lab_id', $lab->id)
+                ->where('status', 'pending')
+                ->whereNull('machine_uid')
                 ->whereRaw('LOWER(hostname) = ?', [strtolower($hostname)])
                 ->update(['status' => 'superseded', 'decided_at' => now()]);
         }
@@ -34,6 +44,7 @@ class EnrollmentService
         $enrollment = Enrollment::create([
             'lab_id' => $lab->id,
             'hostname' => $data['hostname'],
+            'machine_uid' => $uid,
             'os' => $data['os'] ?? null,
             'os_version' => $data['os_version'] ?? null,
             'macs' => $macs,
@@ -62,34 +73,55 @@ class EnrollmentService
             $cleanMacs = array_values(array_unique(array_map('strtolower', (array) ($e->macs ?? []))));
             $eHost = strtolower(trim($e->hostname ?? ''));
 
-            // 1. Search active PCs by MAC intersection OR exact hostname match
-            $activePcs = Pc::query()->where('lab_id', $e->lab_id)->whereNull('retired_at')->get();
-            $pc = $activePcs->first(function (Pc $p) use ($cleanMacs, $eHost) {
+            $uid = self::normalizeUid($e->machine_uid);
+            $matches = function (Pc $p) use ($cleanMacs, $eHost) {
                 $pMacs = array_map('strtolower', (array) ($p->macs ?? []));
                 $macMatch = ! empty($cleanMacs) && ! empty($pMacs) && ! empty(array_intersect($pMacs, $cleanMacs));
                 $hostMatch = $eHost !== '' && strtolower(trim($p->hostname ?? '')) === $eHost;
-                return $macMatch || $hostMatch;
-            });
 
-            // 2. If not found in active PCs, check retired PCs to restore instead of duplicating
-            if (! $pc) {
-                $retiredPcs = Pc::query()->where('lab_id', $e->lab_id)->whereNotNull('retired_at')->get();
-                $pc = $retiredPcs->first(function (Pc $p) use ($cleanMacs, $eHost) {
-                    $pMacs = array_map('strtolower', (array) ($p->macs ?? []));
-                    $macMatch = ! empty($cleanMacs) && ! empty($pMacs) && ! empty(array_intersect($pMacs, $cleanMacs));
-                    $hostMatch = $eHost !== '' && strtolower(trim($p->hostname ?? '')) === $eHost;
-                    return $macMatch || $hostMatch;
-                });
-                if ($pc) {
-                    $pc->retired_at = null;
+                return [$macMatch, $hostMatch];
+            };
+
+            $pc = null;
+            if ($uid !== null) {
+                // Exact identity: the same installation re-enrolling (active first, then retired).
+                $pc = Pc::query()->where('lab_id', $e->lab_id)->where('machine_uid', $uid)
+                    ->orderByRaw('retired_at IS NOT NULL')->orderByDesc('id')->first();
+
+                // One-time adoption of a pre-uid PC row: only when hostname AND a MAC match and exactly one
+                // such row exists, so identical clones are never merged.
+                if (! $pc) {
+                    $legacy = Pc::query()->where('lab_id', $e->lab_id)->whereNull('machine_uid')->whereNull('retired_at')
+                        ->get()->filter(function (Pc $p) use ($matches) {
+                            [$m, $h] = $matches($p);
+
+                            return $m && $h;
+                        });
+                    if ($legacy->count() === 1) {
+                        $pc = $legacy->first();
+                    }
+                }
+            } else {
+                // Legacy agent without machine_uid: previous behaviour (MAC intersection OR hostname).
+                $pc = Pc::query()->where('lab_id', $e->lab_id)->whereNull('retired_at')->get()
+                    ->first(function (Pc $p) use ($matches) {
+                        return in_array(true, $matches($p), true);
+                    });
+                if (! $pc) {
+                    $pc = Pc::query()->where('lab_id', $e->lab_id)->whereNotNull('retired_at')->get()
+                        ->first(function (Pc $p) use ($matches) {
+                            return in_array(true, $matches($p), true);
+                        });
                 }
             }
 
-            // 3. If still not found, create a new PC
+            // Create a new PC when nothing matched. Duplicate display names get a numeric suffix.
+            $isNew = ! $pc;
             $pc ??= Pc::create([
                 'lab_id' => $e->lab_id,
-                'name' => $name ?: $e->hostname,
+                'name' => $name ?: $this->uniqueName($e->lab_id, (string) $e->hostname),
                 'hostname' => $e->hostname,
+                'machine_uid' => $uid,
                 'status' => 'offline',
             ]);
 
@@ -105,30 +137,35 @@ class EnrollmentService
                 'ip' => $e->ip,
                 'retired_at' => null,
             ]);
+            if ($uid !== null) {
+                $pc->machine_uid = $uid;
+            }
             if ($name) {
                 $pc->name = $name;
             }
             $pc->save();
 
-            // 4. Retire ANY other active PC records in this lab with the same hostname or MACs
-            if ($eHost !== '') {
+            // Legacy agents only: retire other rows of the same hostname (a uid-identified PC never does this,
+            // because identical hostnames are different machines).
+            if ($uid === null && $eHost !== '') {
                 Pc::query()
                     ->where('lab_id', $e->lab_id)
                     ->where('id', '!=', $pc->id)
                     ->whereNull('retired_at')
-                    ->where(function ($q) use ($eHost) {
-                        $q->whereRaw('LOWER(hostname) = ?', [$eHost]);
-                    })
+                    ->whereNull('machine_uid')
+                    ->whereRaw('LOWER(hostname) = ?', [$eHost])
                     ->update(['retired_at' => now()]);
             }
 
-            // 5. Invalidate any other pending enrollments for this hostname
-            if ($eHost !== '') {
-                Enrollment::query()
-                    ->where('lab_id', $e->lab_id)
-                    ->where('id', '!=', $e->id)
-                    ->where('status', 'pending')
-                    ->whereRaw('LOWER(hostname) = ?', [$eHost])
+            // Invalidate other pending enrollments of the same machine.
+            $pending = Enrollment::query()
+                ->where('lab_id', $e->lab_id)
+                ->where('id', '!=', $e->id)
+                ->where('status', 'pending');
+            if ($uid !== null) {
+                $pending->where('machine_uid', $uid)->update(['status' => 'superseded', 'decided_at' => now()]);
+            } elseif ($eHost !== '') {
+                $pending->whereNull('machine_uid')->whereRaw('LOWER(hostname) = ?', [$eHost])
                     ->update(['status' => 'superseded', 'decided_at' => now()]);
             }
 
@@ -146,7 +183,7 @@ class EnrollmentService
                 'status' => 'approved', 'pc_id' => $pc->id, 'cert_pem' => $signed['pem'], 'issued_token' => $token,
                 'decided_by' => $by?->id, 'decided_at' => now(),
             ])->save();
-            Audit::log('enrollment.approve', $e, ['pc_id' => $pc->id, 'hostname' => $e->hostname, 'auto' => $by === null]);
+            Audit::log('enrollment.approve', $e, ['pc_id' => $pc->id, 'hostname' => $e->hostname, 'auto' => $by === null, 'new_pc' => $isNew, 'machine_uid' => $uid]);
 
             return $pc;
         });
@@ -181,5 +218,25 @@ class EnrollmentService
         $e->forceFill(['issued_token' => null])->save();
 
         return $out;
+    }
+
+    private static function normalizeUid(?string $uid): ?string
+    {
+        $uid = strtolower(trim((string) $uid));
+
+        return preg_match('/^[0-9a-f]{32}$/', $uid) ? $uid : null;
+    }
+
+    private function uniqueName(int $labId, string $base): string
+    {
+        $base = mb_substr(trim($base) !== '' ? trim($base) : 'PC', 0, 56);
+        $taken = Pc::query()->where('lab_id', $labId)->whereNull('retired_at')->pluck('name')
+            ->map(fn ($n) => strtolower($n))->all();
+        $name = $base;
+        for ($i = 2; in_array(strtolower($name), $taken, true); $i++) {
+            $name = $base.' ('.$i.')';
+        }
+
+        return $name;
     }
 }

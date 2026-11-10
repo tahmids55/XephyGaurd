@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Pc extends Model
 {
-    protected $fillable = ['lab_id', 'seat_id', 'name', 'hostname', 'os', 'os_version', 'macs', 'ip', 'status', 'mode',
+    protected $fillable = ['lab_id', 'seat_id', 'name', 'hostname', 'machine_uid', 'os', 'os_version', 'macs', 'ip', 'status', 'mode',
         'current_user', 'active_app', 'last_event', 'live_score', 'isolated', 'last_seen_at', 'clean_shutdown',
         'capabilities', 'usage', 'retired_at', 'silent_alerted_at'];
 
