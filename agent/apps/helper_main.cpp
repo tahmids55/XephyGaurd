@@ -11,6 +11,8 @@
 #include "xg/keystats.hpp"
 #include "xg/log.hpp"
 #include "xg/util.hpp"
+#include "xg/config.hpp"
+#include "screen_streamer.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -261,6 +263,23 @@ int helper_main() {
 
     int64_t last_ping = 0;
     bool was_connected = false;
+
+    ScreenStreamer screen_streamer;
+    auto check_screen_stream = [&]() {
+        bool ok = false;
+        std::string err;
+        Config cfg = Config::load(default_config_path(), &ok, &err);
+        if (ok && !cfg.ccc_host.empty() && !cfg.pc_id.empty()) {
+            try {
+                uint32_t pc_id = static_cast<uint32_t>(std::stoul(cfg.pc_id));
+                if (pc_id > 0) {
+                    screen_streamer.start(cfg.ccc_host, pc_id, 8082);
+                }
+            } catch (...) {}
+        }
+    };
+    check_screen_stream();
+
     while (true) {
         if (!plat->ipc->connected()) {
             if (was_connected) plat->ui->set_indicator("XephyGuard service not reachable", "always_on");
@@ -316,6 +335,7 @@ int helper_main() {
         if (steady_ms() - last_ping > 10000) {
             send({{"t", "ping"}});
             last_ping = steady_ms();
+            check_screen_stream();
         }
     }
 }

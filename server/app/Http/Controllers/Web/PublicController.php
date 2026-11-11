@@ -46,9 +46,9 @@ class PublicController extends Controller
         $files = is_dir($dir) ? array_values(array_diff(scandir($dir), ['.', '..'])) : [];
         $meta = [
             'XephyGuard-Setup-0.1.0.exe' => [
-                'label' => 'Full Agent Installer (Setup)',
-                'desc' => 'Complete Windows background service: keystrokes, AI detection, process tracking, USB events, and network policies.',
-                'badge' => 'Background Service',
+                'label' => 'Full Agent Installer (All-In-One)',
+                'desc' => 'Complete Windows agent with built-in real-time screen streaming, AI detection, process tracking, USB events, and network policies. 100% automated background operation.',
+                'badge' => 'All-In-One Setup',
             ],
             'xgagent.exe' => [
                 'label' => 'Screen View Agent (Live Stream)',

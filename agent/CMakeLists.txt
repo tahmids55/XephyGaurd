@@ -52,12 +52,16 @@ else()
   endif()
 endif()
 
+# ----------------------------------------------------------------- screen streaming
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../xephyguard-screen ${CMAKE_CURRENT_BINARY_DIR}/xephyguard-screen EXCLUDE_FROM_ALL)
+
 # ----------------------------------------------------------------- executables
 add_executable(xephyguard-agent apps/agent_main.cpp)
 target_link_libraries(xephyguard-agent PRIVATE xg_platform)
-add_executable(xephyguard-helper apps/helper_main.cpp)
-target_link_libraries(xephyguard-helper PRIVATE xg_platform)
+add_executable(xephyguard-helper apps/helper_main.cpp apps/screen_streamer.cpp)
+target_link_libraries(xephyguard-helper PRIVATE xg_platform xgcore)
 if(WIN32)
+  target_link_libraries(xephyguard-helper PRIVATE winhttp d3d11 dxgi gdi32)
   set_target_properties(xephyguard-helper PROPERTIES WIN32_EXECUTABLE ON)
 endif()
 

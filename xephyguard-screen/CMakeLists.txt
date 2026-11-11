@@ -34,6 +34,8 @@ target_include_directories(xxhash_lib PUBLIC third_party)
 # libjpeg-turbo
 find_package(TurboJPEG QUIET)
 if(NOT TurboJPEG_FOUND)
+  set(CMAKE_INSTALL_DOCDIR "doc" CACHE STRING "" FORCE)
+  set(CMAKE_SKIP_INSTALL_RULES ON CACHE BOOL "" FORCE)
   set(ENABLE_SHARED OFF CACHE BOOL "" FORCE)
   set(ENABLE_STATIC ON CACHE BOOL "" FORCE)
   set(WITH_SIMD OFF CACHE BOOL "" FORCE)
@@ -118,39 +120,39 @@ else()
   )
 endif()
 
-# ------------------------------------------------------------------ xgtests
-enable_testing()
+# ------------------------------------------------------------------ standalone targets
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  enable_testing()
 
-add_executable(xgtests
-  tests/test_main.cpp
-  tests/test_protocol.cpp
-  tests/test_tiles.cpp
-  tests/test_encoder.cpp
-  tests/test_flow.cpp
-  tests/test_pipeline.cpp
-  tests/test_agent_state.cpp
-  tests/test_downscale.cpp
-  tests/test_capabilities.cpp
-  tests/test_privacy.cpp
-)
-target_include_directories(xgtests PRIVATE core capture agent third_party)
-target_link_libraries(xgtests PRIVATE xgcore)
+  add_executable(xgtests
+    tests/test_main.cpp
+    tests/test_protocol.cpp
+    tests/test_tiles.cpp
+    tests/test_encoder.cpp
+    tests/test_flow.cpp
+    tests/test_pipeline.cpp
+    tests/test_agent_state.cpp
+    tests/test_downscale.cpp
+    tests/test_capabilities.cpp
+    tests/test_privacy.cpp
+  )
+  target_include_directories(xgtests PRIVATE core capture agent third_party)
+  target_link_libraries(xgtests PRIVATE xgcore)
 
-add_test(NAME xgtests COMMAND xgtests)
+  add_test(NAME xgtests COMMAND xgtests)
 
-# ------------------------------------------------------------------ xgagent
-add_executable(xgagent agent/agent_main.cpp)
-target_include_directories(xgagent PRIVATE core capture agent third_party)
-if(WIN32)
-  target_link_libraries(xgagent PRIVATE xgcore winhttp)
-  if(MINGW)
-    target_link_options(xgagent PRIVATE -static -static-libgcc -static-libstdc++)
+  add_executable(xgagent agent/agent_main.cpp)
+  target_include_directories(xgagent PRIVATE core capture agent third_party)
+  if(WIN32)
+    target_link_libraries(xgagent PRIVATE xgcore winhttp)
+    if(MINGW)
+      target_link_options(xgagent PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+  else()
+    target_link_libraries(xgagent PRIVATE xgcore)
   endif()
-else()
-  target_link_libraries(xgagent PRIVATE xgcore)
-endif()
 
-# ------------------------------------------------------------------ xgbench
-add_executable(xgbench bench/load_agents.cpp)
-target_include_directories(xgbench PRIVATE core capture agent third_party)
-target_link_libraries(xgbench PRIVATE xgcore)
+  add_executable(xgbench bench/load_agents.cpp)
+  target_include_directories(xgbench PRIVATE core capture agent third_party)
+  target_link_libraries(xgbench PRIVATE xgcore)
+endif()
