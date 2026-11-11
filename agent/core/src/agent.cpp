@@ -1154,6 +1154,7 @@ bool Agent::poll_enrollment() {
         if (auto h = crypto::sha256_file_hex(config_path_)) file_hashes_[config_path_] = *h;
         log::info("enrollment approved: this PC is #{}", cfg_.pc_id);
         policy_dirty_ = true;
+        push_helper_config();
         return true;
     }
     if (st == "rejected") log::error("enrollment was rejected by the CCC administrator");

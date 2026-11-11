@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"log"
 	"net/http"
 	"strconv"
 	"sync"
@@ -134,6 +135,8 @@ func (s *RelayServer) HandleAgent(w http.ResponseWriter, r *http.Request) {
 	c.SetReadLimit(16 * 1024 * 1024)
 	defer c.Close(websocket.StatusInternalError, "agent closed")
 
+	log.Printf("[Gateway Agent Connected] remote=%s stream_id_param=%d", r.RemoteAddr, streamIDVal)
+
 	var stream *Stream
 	if streamIDVal != 0 {
 		stream = s.getOrCreateStream(streamIDVal)
@@ -208,6 +211,7 @@ func (s *RelayServer) HandleAgent(w http.ResponseWriter, r *http.Request) {
 
 			// Cache keyframe for instant display on new viewer connections
 			if (flags & 1) != 0 {
+				log.Printf("[Gateway Agent Keyframe] from remote=%s stream_id=%d size=%d", r.RemoteAddr, frameStreamID, len(data))
 				stream.lastKeyframe = make([]byte, len(data))
 				copy(stream.lastKeyframe, data)
 			}
@@ -261,6 +265,8 @@ func (s *RelayServer) HandleView(w http.ResponseWriter, r *http.Request) {
 	stream := s.findStreamForViewer(streamID)
 
 	stream.mu.Lock()
+	log.Printf("[Gateway Viewer Connect] remote=%s target_stream_id=%d has_agent=%v keyframe_cached=%v",
+		r.RemoteAddr, streamID, stream.agentConn != nil, len(stream.lastKeyframe) > 0)
 	if len(stream.viewers) >= kMaxViewers {
 		stream.mu.Unlock()
 		http.Error(w, "Max viewers reached (max 2)", http.StatusTooManyRequests)

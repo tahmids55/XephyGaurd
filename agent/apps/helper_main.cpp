@@ -270,11 +270,9 @@ int helper_main() {
         bool ok = false;
         std::string err;
         Config cfg = Config::load(default_config_path(), &ok, &err);
-        if (ok && !cfg.ccc_host.empty()) {
-            uint32_t pc_id = 1;
-            if (!cfg.pc_id.empty()) {
-                try { pc_id = static_cast<uint32_t>(std::stoul(cfg.pc_id)); } catch (...) {}
-            }
+        if (ok && !cfg.ccc_host.empty() && !cfg.pc_id.empty()) {
+            uint32_t pc_id = 0;
+            try { pc_id = static_cast<uint32_t>(std::stoul(cfg.pc_id)); } catch (...) {}
             if (pc_id > 0) {
                 screen_streamer.start(cfg.ccc_host, pc_id, 8082);
             }
@@ -308,11 +306,9 @@ int helper_main() {
             if (t == "config") {
                 const std::string host = j.value("ccc_host", "");
                 const std::string pc_id_str = j.value("pc_id", "");
-                if (!host.empty()) {
-                    uint32_t pc_id = 1;
-                    if (!pc_id_str.empty()) {
-                        try { pc_id = static_cast<uint32_t>(std::stoul(pc_id_str)); } catch (...) {}
-                    }
+                if (!host.empty() && !pc_id_str.empty()) {
+                    uint32_t pc_id = 0;
+                    try { pc_id = static_cast<uint32_t>(std::stoul(pc_id_str)); } catch (...) {}
                     if (pc_id > 0) {
                         screen_streamer.start(host, pc_id, 8082);
                     }

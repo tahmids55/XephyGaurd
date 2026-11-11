@@ -195,6 +195,7 @@ struct ScreenStreamer::Impl {
 
 #if defined(_WIN32)
         rx_thread = std::thread([this, &state_machine]() {
+            auto last_rx_reconnect = std::chrono::steady_clock::now();
             while (running.load()) {
                 if (ws_client && ws_client->is_connected()) {
                     std::vector<uint8_t> rx_data;
@@ -203,7 +204,14 @@ struct ScreenStreamer::Impl {
                     } else {
                         std::this_thread::sleep_for(std::chrono::milliseconds(50));
                     }
-                } else {
+                } else if (running.load()) {
+                    auto now = std::chrono::steady_clock::now();
+                    if (std::chrono::duration_cast<std::chrono::seconds>(now - last_rx_reconnect).count() >= 2) {
+                        last_rx_reconnect = now;
+                        if (ws_client && ws_client->reconnect()) {
+                            state_machine.on_view_start(stream_id, "live");
+                        }
+                    }
                     std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 }
             }
@@ -264,6 +272,11 @@ void ScreenStreamer::stop() {
     if (!impl_ || !impl_->running.load()) return;
 
     impl_->running.store(false);
+#if defined(_WIN32)
+    if (impl_->ws_client) {
+        impl_->ws_client->close();
+    }
+#endif
     if (impl_->worker_thread.joinable()) {
         impl_->worker_thread.join();
     }
