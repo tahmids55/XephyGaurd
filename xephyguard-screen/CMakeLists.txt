@@ -137,3 +137,13 @@ target_include_directories(xgtests PRIVATE core capture agent third_party)
 target_link_libraries(xgtests PRIVATE xgcore)
 
 add_test(NAME xgtests COMMAND xgtests)
+
+# ------------------------------------------------------------------ xgagent
+add_executable(xgagent agent/agent_main.cpp)
+target_include_directories(xgagent PRIVATE core capture agent third_party)
+target_link_libraries(xgagent PRIVATE xgcore)
+
+# ------------------------------------------------------------------ xgbench
+add_executable(xgbench bench/load_agents.cpp)
+target_include_directories(xgbench PRIVATE core capture agent third_party)
+target_link_libraries(xgbench PRIVATE xgcore)
