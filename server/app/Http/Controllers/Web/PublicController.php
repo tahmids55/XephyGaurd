@@ -44,11 +44,33 @@ class PublicController extends Controller
     {
         $dir = storage_path('app/public/downloads');
         $files = is_dir($dir) ? array_values(array_diff(scandir($dir), ['.', '..'])) : [];
+        $meta = [
+            'XephyGuard-Setup-0.1.0.exe' => [
+                'label' => 'Full Agent Installer (Setup)',
+                'desc' => 'Complete Windows background service: keystrokes, AI detection, process tracking, USB events, and network policies.',
+                'badge' => 'Background Service',
+            ],
+            'xgagent.exe' => [
+                'label' => 'Screen View Agent (Live Stream)',
+                'desc' => 'Portable DXGI/GDI screen capture executable for instructor live screen monitoring and snapshots.',
+                'badge' => 'Screen Monitor',
+            ],
+        ];
+
         $items = '';
         foreach ($files as $f) {
             if (preg_match('/^[A-Za-z0-9._-]+\.(deb|rpm|msi|exe|sha256)$/', $f)) {
                 $size = round(filesize($dir.'/'.$f) / 1048576, 2);
-                $items .= "<li style='margin:12px 0;'><a href='/downloads/{$f}' style='display:inline-block;padding:12px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:15px;box-shadow:0 2px 4px rgba(37,99,235,0.2);'>⬇ Download {$f}</a> <span style='color:#64748b;margin-left:10px;font-weight:500;'>({$size} MB)</span></li>";
+                $info = $meta[$f] ?? ['label' => $f, 'desc' => '', 'badge' => 'Installer'];
+                $label = htmlspecialchars($info['label']);
+                $desc = htmlspecialchars($info['desc']);
+                $badge = htmlspecialchars($info['badge']);
+
+                $items .= "<li style='margin:18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;'>";
+                $items .= "<div style='display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;'>";
+                $items .= "<div><strong style='font-size:16px;color:#0f172a;'>{$label}</strong> <span style='display:inline-block;margin-left:8px;padding:2px 8px;background:#e0e7ff;color:#4338ca;border-radius:4px;font-size:11px;font-weight:600;'>{$badge}</span><div style='font-size:13px;color:#64748b;margin-top:4px;'>{$desc}</div></div>";
+                $items .= "<div><a href='/downloads/{$f}' style='display:inline-block;padding:10px 18px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;box-shadow:0 2px 4px rgba(37,99,235,0.2);'>⬇ Download {$f}</a> <span style='color:#64748b;margin-left:8px;font-size:13px;'>({$size} MB)</span></div>";
+                $items .= "</div></li>";
             }
         }
 
