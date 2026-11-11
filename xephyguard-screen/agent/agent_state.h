@@ -1,9 +1,11 @@
 #pragma once
 #include "../capture/capture.h"
+#include "../core/downscale.h"
 #include "../core/encoder.h"
 #include "../core/flow.h"
 #include "../core/protocol.h"
 #include "../core/tiles.h"
+#include "privacy.h"
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -35,8 +37,10 @@ public:
 
   void set_frame_sender(FrameSender sender);
   void set_privacy_checker(PrivacyChecker checker);
+  void set_privacy_filter(std::shared_ptr<PrivacyFilter> filter);
 
   AgentState state() const;
+  const std::string& mode() const;
 
   // Control messages
   bool on_view_start(uint32_t stream_id, const std::string& mode = "live");
@@ -44,6 +48,9 @@ public:
   void on_network_disconnected();
   void on_network_connected();
   void on_privacy_mask_changed(bool masked);
+
+  // Separate cursor messaging
+  void send_cursor(uint16_t x, uint16_t y, const std::vector<uint8_t>& shape_data = {});
 
   // Incoming binary protocol messages (ACK, KeyframeReq)
   void on_incoming_message(const uint8_t* data, size_t len);
@@ -60,6 +67,7 @@ private:
   EncoderConfig enc_cfg_;
   FrameSender sender_;
   PrivacyChecker privacy_checker_;
+  std::shared_ptr<PrivacyFilter> privacy_filter_;
 
   mutable std::recursive_mutex mutex_;
   AgentState state_ = AgentState::Idle;

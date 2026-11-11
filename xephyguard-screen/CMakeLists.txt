@@ -88,8 +88,12 @@ add_library(xgcore STATIC
   core/tiles.cpp
   core/encoder.cpp
   core/flow.cpp
+  core/downscale.cpp
   capture/fake_capture.cpp
   agent/agent_state.cpp
+  agent/privacy.cpp
+  agent/capabilities.cpp
+  agent/indicator.cpp
 )
 target_include_directories(xgcore PUBLIC
   core
@@ -125,6 +129,9 @@ add_executable(xgtests
   tests/test_flow.cpp
   tests/test_pipeline.cpp
   tests/test_agent_state.cpp
+  tests/test_downscale.cpp
+  tests/test_capabilities.cpp
+  tests/test_privacy.cpp
 )
 target_include_directories(xgtests PRIVATE core capture agent third_party)
 target_link_libraries(xgtests PRIVATE xgcore)

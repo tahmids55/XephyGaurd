@@ -31,9 +31,19 @@ void AgentStateMachine::set_privacy_checker(PrivacyChecker checker) {
   privacy_checker_ = std::move(checker);
 }
 
+void AgentStateMachine::set_privacy_filter(std::shared_ptr<PrivacyFilter> filter) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  privacy_filter_ = std::move(filter);
+}
+
 AgentState AgentStateMachine::state() const {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
   return state_;
+}
+
+const std::string& AgentStateMachine::mode() const {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  return mode_;
 }
 
 uint32_t AgentStateMachine::stream_id() const {
@@ -65,7 +75,13 @@ bool AgentStateMachine::on_view_start(uint32_t stream_id, const std::string& mod
     return false;
   }
 
-  encoder_ = std::make_unique<FrameEncoder>(enc_cfg_);
+  EncoderConfig cfg = enc_cfg_;
+  if (mode == "snapshot") {
+    cfg.quality_text = 95;
+    cfg.full_frame_threshold = 0.0; // Force full frame
+  }
+
+  encoder_ = std::make_unique<FrameEncoder>(cfg);
   flow_ = std::make_unique<FlowControl>(3);
   tracker_.reset();
 
@@ -143,6 +159,30 @@ void AgentStateMachine::on_privacy_mask_changed(bool masked) {
   }
 }
 
+void AgentStateMachine::send_cursor(uint16_t x, uint16_t y, const std::vector<uint8_t>& shape_data) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (!sender_ || state_ == AgentState::Idle) return;
+
+  Message msg{};
+  msg.type = MsgType::Cursor;
+  msg.flags = Flags::CURSOR_F;
+  msg.stream_id = stream_id_;
+  msg.seq = ++seq_;
+  msg.width = x;
+  msg.height = y;
+
+  if (!shape_data.empty()) {
+    TileRec rec;
+    rec.x = 0;
+    rec.y = 0;
+    rec.codec = Codec::Raw;
+    rec.payload = shape_data;
+    msg.tiles.push_back(std::move(rec));
+  }
+
+  sender_(encode(msg));
+}
+
 void AgentStateMachine::on_incoming_message(const uint8_t* data, size_t len) {
   auto opt = decode(data, len);
   if (!opt.has_value()) return;
@@ -165,47 +205,46 @@ void AgentStateMachine::on_incoming_message(const uint8_t* data, size_t len) {
 
 void AgentStateMachine::capture_loop() {
   while (running_.load()) {
-    {
-      std::lock_guard<std::recursive_mutex> lock(mutex_);
-      if (state_ == AgentState::PausedDisconnected) {
-        // Disconnected from network, pause capturing
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        continue;
-      }
-
-      if (privacy_checker_) {
-        bool masked = false;
-        try {
-          masked = privacy_checker_();
-        } catch (...) {
-          masked = true; // Fallback to safe mask if detection throws
-        }
-        if (masked) {
-          if (state_ != AgentState::PausedMasked) {
-            state_ = AgentState::PausedMasked;
-            if (sender_) {
-              Message placeholder{};
-              placeholder.type = MsgType::Frame;
-              placeholder.flags = Flags::MASKED;
-              placeholder.stream_id = stream_id_;
-              sender_(encode(placeholder));
-            }
-          }
-          std::this_thread::sleep_for(std::chrono::milliseconds(50));
-          continue;
-        } else if (state_ == AgentState::PausedMasked) {
-          state_ = AgentState::Streaming;
-          if (flow_) flow_->reset();
-          if (tracker_) tracker_->force_all_pending();
-        }
-      }
-    }
-
     uint64_t now_ms = get_now_ms();
 
     {
       std::lock_guard<std::recursive_mutex> lock(mutex_);
-      if (flow_ && !flow_->can_send(now_ms)) {
+      if (state_ == AgentState::PausedDisconnected) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        continue;
+      }
+
+      bool masked = false;
+      if (privacy_filter_) {
+        masked = privacy_filter_->check_masked(now_ms);
+      } else if (privacy_checker_) {
+        try {
+          masked = privacy_checker_();
+        } catch (...) {
+          masked = true;
+        }
+      }
+
+      if (masked) {
+        if (state_ != AgentState::PausedMasked) {
+          state_ = AgentState::PausedMasked;
+          if (sender_) {
+            Message placeholder{};
+            placeholder.type = MsgType::Frame;
+            placeholder.flags = Flags::MASKED;
+            placeholder.stream_id = stream_id_;
+            sender_(encode(placeholder));
+          }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        continue;
+      } else if (state_ == AgentState::PausedMasked) {
+        state_ = AgentState::Streaming;
+        if (flow_) flow_->reset();
+        if (tracker_) tracker_->force_all_pending();
+      }
+
+      if (mode_ != "wall" && flow_ && !flow_->can_send(now_ms)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         continue;
       }
@@ -247,6 +286,7 @@ void AgentStateMachine::capture_loop() {
     if (status == CaptureStatus::Ok) {
       std::vector<uint8_t> wire_data;
       bool is_snapshot = false;
+      bool is_wall = false;
 
       {
         std::lock_guard<std::recursive_mutex> lock(mutex_);
@@ -254,35 +294,57 @@ void AgentStateMachine::capture_loop() {
           state_ = AgentState::Streaming;
         }
 
-        if (!tracker_) {
-          tracker_ = std::make_unique<TileTracker>(frame.width, frame.height);
-        }
+        if (mode_ == "wall") {
+          is_wall = true;
+          int out_h = 0;
+          auto downscaled = downscale_box(frame, 320, &out_h);
 
-        tracker_->update(frame);
-        const auto& pending = tracker_->pending();
+          Frame wall_frame;
+          wall_frame.width = 320;
+          wall_frame.height = out_h;
+          wall_frame.stride = 320 * 4;
+          wall_frame.bgra = std::move(downscaled);
+          wall_frame.full_dirty = true;
 
-        if (pending.empty() && !flow_->needs_keyframe()) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(10));
-          continue;
-        }
+          TileTracker wall_tracker(wall_frame.width, wall_frame.height);
+          wall_tracker.update(wall_frame);
 
-        bool keyframe = flow_->needs_keyframe();
-        ++seq_;
-        uint32_t base = keyframe ? 0 : last_sent_seq_;
+          ++seq_;
+          // Wall mode: always full keyframes, never deltas
+          auto msg = encoder_->build(wall_frame, wall_tracker.pending(), stream_id_, seq_, 0, true);
+          wire_data = encode(msg);
+          last_sent_seq_ = seq_;
+        } else {
+          if (!tracker_) {
+            tracker_ = std::make_unique<TileTracker>(frame.width, frame.height);
+          }
 
-        encoder_->set_quality_scale(flow_->quality_scale());
-        auto msg = encoder_->build(frame, pending, stream_id_, seq_, base, keyframe);
-        wire_data = encode(msg);
+          tracker_->update(frame);
+          const auto& pending = tracker_->pending();
 
-        tracker_->mark_sent();
-        flow_->on_sent(seq_, now_ms);
-        if (keyframe) {
-          flow_->note_keyframe_sent();
-        }
-        last_sent_seq_ = seq_;
+          if (pending.empty() && !flow_->needs_keyframe()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+          }
 
-        if (mode_ == "snapshot") {
-          is_snapshot = true;
+          bool keyframe = flow_->needs_keyframe();
+          ++seq_;
+          uint32_t base = keyframe ? 0 : last_sent_seq_;
+
+          encoder_->set_quality_scale(flow_->quality_scale());
+          auto msg = encoder_->build(frame, pending, stream_id_, seq_, base, keyframe);
+          wire_data = encode(msg);
+
+          tracker_->mark_sent();
+          flow_->on_sent(seq_, now_ms);
+          if (keyframe) {
+            flow_->note_keyframe_sent();
+          }
+          last_sent_seq_ = seq_;
+
+          if (mode_ == "snapshot") {
+            is_snapshot = true;
+          }
         }
       }
 
@@ -295,6 +357,14 @@ void AgentStateMachine::capture_loop() {
         running_.store(false);
         state_ = AgentState::Armed;
         break;
+      }
+
+      if (is_wall) {
+        // Wall mode: pace between 5 to 10 seconds (default 5s)
+        for (int i = 0; i < 50 && running_.load(); ++i) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        continue;
       }
     }
 

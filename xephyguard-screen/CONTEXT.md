@@ -128,3 +128,42 @@
 - Test suite: 25 test cases, 1054 assertions passing (100% green).
 - `ctest` runs 100% green.
 
+
+## WP4: Privacy, Modes, Capabilities (T12, T15, T16) - COMPLETE & VERIFIED
+
+### What exists now
+- **Privacy & Audit (`agent/privacy.h`, `agent/privacy.cpp`):**
+  - `PrivacyFilter`: Configurable rules with `process_name` (case-insensitive), `window_class`, and `title_regex`.
+  - Fail-safe masking: Any rule match or provider exception triggers `MASKED` placeholder frame.
+  - Exam profile override: Disables privacy masking, allowing unhindered exam monitoring.
+  - Audit logging: Tracks mask start and end transitions with duration in milliseconds.
+- **Downscaling & Wall Mode (`core/downscale.h`, `core/downscale.cpp`):**
+  - `downscale_box`: Area box filter downscaling raw BGRA frames preserving aspect ratio.
+  - Computes weighted area averaging over 2D pixel blocks.
+  - Integrated into `AgentStateMachine` for `wall` mode (320px wide thumbnails, 5-second pacing, full keyframes only).
+- **Capabilities Reporting (`agent/capabilities.h`, `agent/capabilities.cpp`):**
+  - `query_capabilities`: Identifies OS and session type.
+  - Wayland detection (`XDG_SESSION_TYPE=wayland`): Sets `silent_capture=false`, `live=false`, `snapshot=false`, `delta=false`, `multi_monitor=false`.
+  - JSON serialization (`to_json`): Formats capabilities into compact JSON string for CCC reporting.
+- **Indicator (`agent/indicator.h`, `agent/indicator.cpp`):**
+  - Persistent indicator management for active screen viewing states.
+- **Agent Modes & Cursor:**
+  - `snapshot`: Encodes single frame at quality 95 and returns to `ARMED`.
+  - `live`: Flow-controlled adaptive delta streaming (1–5 FPS).
+  - `wall`: Downscales to 320px thumbnails every 5s, never deltas.
+  - `send_cursor`: Separate `MsgType::Cursor` wire protocol messages for pointer positions and shapes.
+- **Tests (`tests/test_downscale.cpp`, `tests/test_capabilities.cpp`, `tests/test_privacy.cpp`):**
+  - `Downscale: Preserves aspect ratio`: Aspect ratio calculation for 1080p, 768p, and error conditions.
+  - `Downscale: Averages correctly on checkerboard`: Multi-channel color averaging across 4x4, 2x2, and 1x1 grids.
+  - `Capabilities: Wayland session sets capture to false`: Environment mocking disables capture on Wayland.
+  - `PrivacyFilter: Rule matching by process, class, and title regex`: Multi-criteria matching.
+  - `PrivacyFilter: Provider failure or throw triggers safe MASKED`: Fail-safe protection on OS errors.
+  - `PrivacyFilter: Exam mode overrides all masking rules and errors`: Exam policy enforcement.
+  - `PrivacyFilter: Audit logging records mask transitions and duration`: Millisecond timing precision.
+
+### Status
+- Build: GCC 14.2.0 (MinGW) / C++17 clean (0 warnings).
+- Test suite: 34 test cases, 1925 assertions passing (100% green).
+- `ctest` runs 100% green.
+
+
