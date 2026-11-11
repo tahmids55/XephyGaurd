@@ -23,3 +23,10 @@ Route::prefix('internal')->middleware('internal')->group(function () {
     Route::post('/net-events', [NetEventsController::class, 'store']);
     Route::get('/eval/results', [EvalController::class, 'results']);
 });
+
+// Screen view gateway token issuance and lease renewal
+Route::middleware(['web', 'auth'])->group(function () {
+    Route::post('/screen/{student}/token', [\App\Http\Controllers\Api\ViewTokenController::class, 'issueToken']);
+    Route::post('/screen/{audit}/renew', [\App\Http\Controllers\Api\ViewTokenController::class, 'renewToken']);
+    Route::post('/screen/{audit}/stop', [\App\Http\Controllers\Api\ViewTokenController::class, 'stopView']);
+});

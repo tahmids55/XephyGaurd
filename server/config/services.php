@@ -35,4 +35,11 @@ return [
         ],
     ],
 
+    'screen_gateway' => [
+        'secret' => env('SCREEN_GATEWAY_SECRET', 'dev-secret-change-in-production-12345'),
+        'issuer' => env('SCREEN_GATEWAY_ISSUER', 'xephyguard-ccc'),
+        'audience' => env('SCREEN_GATEWAY_AUDIENCE', 'xephyguard-gateway'),
+        'url' => env('SCREEN_GATEWAY_URL', 'ws://127.0.0.1:8082'),
+    ],
+
 ];

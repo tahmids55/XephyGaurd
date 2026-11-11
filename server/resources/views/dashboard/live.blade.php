@@ -113,9 +113,47 @@
             <button class="btn" @click="kill(drawer.pc)">Close a program…</button>
           </div>
           <div class="mb-3 flex flex-wrap gap-1 border-b border-slate-200 text-sm">
-            <template x-for="t in ['timeline','alerts','processes','browser','installed','network','typing','pastes']">
+            <template x-for="t in ['screen','timeline','alerts','processes','browser','installed','network','typing','pastes']">
               <button class="-mb-px border-b-2 px-3 py-1.5 capitalize" :class="tab===t ? 'border-indigo-600 font-semibold' : 'border-transparent text-slate-500'" @click="tab=t" x-text="t"></button>
             </template>
+          </div>
+          <div x-show="tab==='screen'" class="space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-2 p-3 bg-slate-50 rounded border border-slate-200">
+              <div class="space-y-1">
+                <div class="text-xs font-semibold text-slate-700">Capabilities & Controls</div>
+                <div class="flex flex-wrap items-center gap-1.5 text-xs">
+                  <template x-if="drawer.pc.capabilities?.session_type === 'wayland'">
+                    <span class="badge bg-red-100 text-red-700 font-semibold">Wayland (Unsupported)</span>
+                  </template>
+                  <template x-if="drawer.pc.capabilities?.session_type !== 'wayland'">
+                    <div class="flex flex-wrap gap-1">
+                      <span class="badge bg-slate-200 text-slate-700 font-mono" x-text="drawer.pc.capabilities?.os || drawer.pc.os"></span>
+                      <span class="badge" :class="drawer.pc.capabilities?.snapshot !== false ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'">Snapshot</span>
+                      <span class="badge" :class="drawer.pc.capabilities?.live !== false ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'">Live</span>
+                      <span class="badge" :class="drawer.pc.capabilities?.delta !== false ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'">Delta</span>
+                      <span class="badge" :class="drawer.pc.capabilities?.multi_monitor ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'">Multi-Monitor</span>
+                      <span class="badge" :class="drawer.pc.capabilities?.secure_desktop ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-400'">Secure Desktop</span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <button type="button" class="btn btn-sm" :disabled="screenStreaming || drawer.pc.capabilities?.session_type === 'wayland'" @click="startScreen('snapshot')">
+                  Snapshot
+                </button>
+                <button type="button" class="btn btn-sm" :class="screenStreaming ? 'btn-danger' : 'btn-primary'" :disabled="drawer.pc.capabilities?.session_type === 'wayland'" @click="screenStreaming ? stopScreen() : startScreen('live')" x-text="screenStreaming ? 'Stop Live' : 'Live Stream'">
+                </button>
+              </div>
+            </div>
+
+            <div x-show="screenStatus" class="text-xs text-slate-500 font-mono" x-text="screenStatus"></div>
+
+            <div class="relative bg-slate-950 rounded-lg overflow-hidden border border-slate-800 flex items-center justify-center min-h-[300px]">
+              <canvas id="xg-screen-canvas" class="w-full max-h-[500px] object-contain block"></canvas>
+              <div x-show="!screenStreaming && !screenHasFrame" class="absolute text-slate-500 text-sm">
+                No active screen feed. Click Snapshot or Live Stream to start.
+              </div>
+            </div>
           </div>
           <div x-show="tab==='timeline'"><table class="tbl"><template x-for="e in drawer.timeline"><tr><td class="w-16 font-mono text-xs" x-text="e.at"></td><td class="text-xs text-slate-500" x-text="e.type"></td><td x-text="e.summary"></td></tr></template></table></div>
           <div x-show="tab==='alerts'"><table class="tbl"><template x-for="a in drawer.alerts"><tr><td><span class="badge" :class="'sev-'+a.severity" x-text="a.severity"></span></td><td x-text="a.title"></td>

@@ -58,9 +58,13 @@ class DashboardController extends Controller
             'keys' => $g->sum('keys'), 'backspaces' => $g->sum('backspaces'), 'pastes' => $g->sum('paste_chords'),
         ]);
 
+        $sessionPc = $session ? \App\Models\SessionPc::where('lab_session_id', $session->id)->where('pc_id', $pc->id)->first() : null;
+        $student = $sessionPc?->student_id ? \App\Models\Student::find($sessionPc->student_id) : \App\Models\Student::forLogin($pc->current_user);
+
         return response()->json([
             'pc' => $pc->tile() + ['hostname' => $pc->hostname, 'os_version' => $pc->os_version, 'ip' => $pc->ip,
                 'capabilities' => $pc->capabilities, 'usage' => $pc->usage, 'agent_version' => $pc->agent?->version],
+            'student' => $student ? ['id' => $student->id, 'name' => $student->name, 'login' => $student->login] : null,
             'alerts' => Alert::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)->latest('occurred_at')
                 ->limit(50)->get(['id', 'rule_id', 'severity', 'title', 'occurred_at', 'acknowledged_at'])
                 ->map(fn ($a) => [

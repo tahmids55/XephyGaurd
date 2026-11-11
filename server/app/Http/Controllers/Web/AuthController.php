@@ -34,6 +34,12 @@ class AuthController extends Controller
 
     public function logout(Request $request)
     {
+        if ($user = $request->user()) {
+            \App\Models\ScreenViewAudit::where('instructor_id', $user->id)
+                ->whereNull('ended_at')
+                ->update(['ended_at' => now()]);
+        }
+
         Audit::log('auth.logout');
         Auth::logout();
         $request->session()->invalidate();

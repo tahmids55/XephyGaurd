@@ -167,3 +167,42 @@
 - `ctest` runs 100% green.
 
 
+## WP5: Laravel CCC API, Screen Health Classifier & Web Viewer UI (T13, T17) - COMPLETE & VERIFIED
+
+### What exists now
+- **API & Token Issuance (`server/app/Http/Controllers/Api/ViewTokenController.php`):**
+  - `POST /api/screen/{student}/token`:
+    - Strict session ownership verification: Only the instructor who started the active lab session (or an admin) can view the student screen; requests from instructors of other labs/sessions are rejected with HTTP 403 Forbidden.
+    - Generates 30-second single-use JWT with HS256 algorithm and required claims (`iss`, `aud`, `sub`, `student_id`, `lab_session_id`, `stream_id`, `mode`, `iat`, `nbf`, `exp`, `jti`).
+    - Records start in `screen_view_audits` database table.
+  - `POST /api/screen/{audit}/renew`:
+    - Renews active stream lease for additional 30 seconds with fresh single-use `jti` while session remains active.
+  - `POST /api/screen/{audit}/stop`:
+    - Terminates screen view stream and records `ended_at` timestamp.
+  - Revocation hook: Instructor logout automatically terminates all active screen view audits.
+- **Database (`server/database/migrations/2026_11_11_000200_create_screen_view_audits_table.php`, `server/app/Models/ScreenViewAudit.php`):**
+  - Migration and model for `screen_view_audits`: `instructor_id`, `student_id`, `lab_session_id`, `stream_id`, `mode`, `started_at`, `ended_at`.
+- **Health Classifier (`server/app/Services/AgentHealthClassifier.php`):**
+  - Pure function `classify($pc, $lab_snapshot, $now)`:
+    - Missed 3 heartbeats (>30s) -> `AGENT_UNAVAILABLE`.
+    - Escalates to `SUSPECTED_TAMPERING` only if ALL four conditions hold:
+      1. Unavailable longer than 5 minutes (>300s).
+      2. At least 80% of other PCs in same lab are still connected.
+      3. No sleep or shutdown event reported by PC.
+      4. No reconnect has occurred.
+    - Whole-lab outage maintains `AGENT_UNAVAILABLE`.
+- **Web Viewer UI & Alpine Integration (`server/resources/views/dashboard/live.blade.php`, `server/resources/js/app.js`):**
+  - Drawer tab: Added `screen` tab to PC detail drawer.
+  - Capabilities badge: Displays platform badges (`Snapshot`, `Live`, `Delta`, `Multi-Monitor`, `Secure Desktop`, or `Wayland (Unsupported)` warning).
+  - Controls: `Snapshot` button and `Live Stream` / `Stop Live` toggle with lease auto-renewal timer.
+  - HTML5 Canvas screen view with `ScreenViewer` integration.
+- **Tests (`server/tests/Unit/AgentHealthClassifierTest.php`, `server/tests/Feature/ViewTokenTest.php`):**
+  - 8/8 unit tests for health classifier rules.
+  - 6/6 feature tests for token issuance, 403 rejection of other instructors, JWT claim verification, audit creation, lease renewal, and stop.
+
+### Status
+- Laravel test suite: 41 test cases, 234 assertions passing (100% green).
+- Vite asset compilation: Clean build with 0 errors (`app.js` & `app.css`).
+
+
+

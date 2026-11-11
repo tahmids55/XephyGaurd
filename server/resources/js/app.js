@@ -1,5 +1,8 @@
 import Alpine from 'alpinejs';
 import './echo';
+import { ScreenViewer } from './screen/viewer.js';
+
+window.ScreenViewer = ScreenViewer;
 
 const csrf = () => document.querySelector('meta[name="csrf-token"]').content;
 
@@ -53,6 +56,12 @@ Alpine.data('labView', (cfg) => ({
     procFilter: 'all',
     procSort: 'ram',
     procSortDir: 'desc',
+    screenStreaming: false,
+    screenHasFrame: false,
+    screenStatus: '',
+    screenAuditId: null,
+    screenViewer: null,
+    screenRenewTimer: null,
     init() {
         for (const s of this.seats) {
             const pc = Object.values(this.pcs).find((p) => p.seat_id === s.id);
@@ -125,7 +134,72 @@ Alpine.data('labView', (cfg) => ({
     },
     async open(id) {
         if (this.editing) return;
+        if (this.drawer && this.drawer.pc?.id !== id) {
+            await this.stopScreen();
+        }
         this.drawer = await api(`/pcs/${id}`);
+    },
+    async startScreen(mode = 'live') {
+        const studentId = this.drawer?.student?.id;
+        if (!studentId) {
+            this.screenStatus = 'No student assigned to this PC in an active session';
+            return;
+        }
+        try {
+            await this.stopScreen();
+            this.screenStatus = `Requesting ${mode} authorization…`;
+            const data = await api(`/api/screen/${studentId}/token`, {
+                method: 'POST',
+                body: JSON.stringify({ mode })
+            });
+
+            this.screenAuditId = data.audit_id;
+            this.screenStreaming = true;
+            this.screenStatus = `Connecting to stream #${data.stream_id}…`;
+
+            const canvas = document.getElementById('xg-screen-canvas');
+            if (canvas) {
+                const wsUrl = `${data.gateway_url}/view?token=${data.token}`;
+                this.screenViewer = new ScreenViewer(wsUrl, canvas);
+                this.screenViewer.connect();
+                this.screenHasFrame = true;
+                this.screenStatus = `Streaming (${mode}) #${data.stream_id}`;
+
+                if (mode === 'live') {
+                    this.screenRenewTimer = setInterval(async () => {
+                        try {
+                            if (this.screenAuditId) {
+                                await api(`/api/screen/${this.screenAuditId}/renew`, { method: 'POST' });
+                            }
+                        } catch (e) {
+                            console.warn('Screen lease renewal failed', e);
+                        }
+                    }, 20000);
+                }
+            }
+        } catch (e) {
+            this.screenStatus = `Error: ${e.message}`;
+            this.screenStreaming = false;
+        }
+    },
+    async stopScreen() {
+        if (this.screenRenewTimer) {
+            clearInterval(this.screenRenewTimer);
+            this.screenRenewTimer = null;
+        }
+        if (this.screenViewer) {
+            this.screenViewer.disconnect();
+            this.screenViewer = null;
+        }
+        if (this.screenAuditId) {
+            const auditId = this.screenAuditId;
+            this.screenAuditId = null;
+            try {
+                await api(`/api/screen/${auditId}/stop`, { method: 'POST' });
+            } catch (e) {}
+        }
+        this.screenStreaming = false;
+        this.screenStatus = 'Stream stopped';
     },
     async message(ids) {
         const text = prompt(ids ? 'Message to this PC:' : 'Message to all PCs:');
