@@ -56,12 +56,15 @@ Alpine.data('labView', (cfg) => ({
     procFilter: 'all',
     procSort: 'ram',
     procSortDir: 'desc',
+    screenMode: 'live',
     screenStreaming: false,
     screenHasFrame: false,
     screenStatus: '',
     screenAuditId: null,
     screenViewer: null,
     screenRenewTimer: null,
+    screenReqSeq: 0,
+    openSeq: 0,
     init() {
         for (const s of this.seats) {
             const pc = Object.values(this.pcs).find((p) => p.seat_id === s.id);
@@ -80,14 +83,19 @@ Alpine.data('labView', (cfg) => ({
         }
         setInterval(() => this.tick(), 5000);
     },
-    tick() {
+    async tick() {
         // Mark tiles offline locally if no update arrived (the server also broadcasts this).
         const now = Date.now();
         for (const p of Object.values(this.pcs)) {
             if (p.last_seen && now - Date.parse(p.last_seen) > 20000 && p.status !== 'offline') p.status = 'offline';
         }
         if (this.drawer && this.drawer.pc?.id) {
-            this.open(this.drawer.pc.id);
+            try {
+                const refreshed = await api(`/pcs/${this.drawer.pc.id}`);
+                if (this.drawer && this.drawer.pc?.id === refreshed.pc?.id) {
+                    this.drawer = refreshed;
+                }
+            } catch (e) {}
         }
     },
     cell(x, y) { const id = this.placement[`${x},${y}`]; return id ? this.pcs[id] : null; },
@@ -134,10 +142,43 @@ Alpine.data('labView', (cfg) => ({
     },
     async open(id) {
         if (this.editing) return;
-        if (this.drawer && this.drawer.pc?.id !== id) {
-            await this.stopScreen();
+        const prevPcId = this.drawer?.pc?.id;
+        const wasStreaming = this.screenStreaming;
+        const currentMode = this.screenMode || 'live';
+        const isScreenTab = this.tab === 'screen';
+
+        if (prevPcId !== id) {
+            await this.stopScreen(false);
         }
-        this.drawer = await api(`/pcs/${id}`);
+
+        const currentOpenSeq = ++this.openSeq;
+        try {
+            const data = await api(`/pcs/${id}`);
+            if (this.openSeq !== currentOpenSeq) return;
+            this.drawer = data;
+
+            // If the instructor was watching screen feeds or is on the screen tab, seamlessly stream the newly selected PC!
+            if (this.drawer?.pc?.id && (wasStreaming || isScreenTab)) {
+                await this.startScreen(currentMode);
+            }
+        } catch (e) {
+            if (this.openSeq === currentOpenSeq) {
+                Alpine.store('toasts').push({ title: `Failed to open PC #${id}: ${e.message}`, severity: 'alert' });
+            }
+        }
+    },
+    switchTab(t) {
+        const prevTab = this.tab;
+        this.tab = t;
+        if (t === 'screen' && !this.screenStreaming && this.drawer?.pc?.id) {
+            this.startScreen(this.screenMode || 'live');
+        } else if (prevTab === 'screen' && t !== 'screen' && this.screenStreaming) {
+            this.stopScreen();
+        }
+    },
+    async closeDrawer() {
+        await this.stopScreen();
+        this.drawer = null;
     },
     async startScreen(mode = 'live') {
         const studentId = this.drawer?.student?.id;
@@ -146,21 +187,45 @@ Alpine.data('labView', (cfg) => ({
             this.screenStatus = 'No PC selected';
             return;
         }
+
+        this.screenMode = mode;
+        const currentReqSeq = ++this.screenReqSeq;
+        const targetPcId = pcId;
+
         try {
-            await this.stopScreen();
-            this.screenStatus = `Requesting ${mode} authorization…`;
+            await this.stopScreen(false);
+            if (this.screenReqSeq !== currentReqSeq) return;
+
+            this.screenStreaming = true;
+            this.screenHasFrame = false;
+            this.screenStatus = `Connecting to ${this.drawer?.pc?.name || 'PC'} (${mode})…`;
+
             const tokenUrl = studentId ? `/api/screen/${studentId}/token` : `/api/screen/pc/${pcId}/token`;
             const data = await api(tokenUrl, {
                 method: 'POST',
                 body: JSON.stringify({ mode })
             });
 
+            if (this.screenReqSeq !== currentReqSeq || this.drawer?.pc?.id !== targetPcId) {
+                if (data.audit_id) {
+                    api(`/api/screen/${data.audit_id}/stop`, { method: 'POST' }).catch(() => {});
+                }
+                return;
+            }
+
             this.screenAuditId = data.audit_id;
-            this.screenStreaming = true;
             this.screenStatus = `Connecting to stream #${data.stream_id}…`;
+
+            // Wait a tick to ensure canvas is in DOM
+            await new Promise((r) => setTimeout(r, 20));
 
             const canvas = document.getElementById('xg-screen-canvas');
             if (canvas) {
+                const ctx = (canvas && typeof canvas.getContext === 'function') ? canvas.getContext('2d') : null;
+                if (ctx && canvas.width > 0 && canvas.height > 0) {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                }
+
                 let gwUrl = data.gateway_url;
                 try {
                     const parsed = new URL(gwUrl);
@@ -171,15 +236,35 @@ Alpine.data('labView', (cfg) => ({
                 } catch (e) {}
 
                 const wsUrl = `${gwUrl}/view?token=${data.token}`;
-                this.screenViewer = new ScreenViewer(canvas);
+                this.screenViewer = new ScreenViewer(canvas, {
+                    onOpen: () => {
+                        if (this.screenReqSeq === currentReqSeq) {
+                            this.screenStatus = `Connected · ${this.drawer?.pc?.name || 'PC'} (${mode})`;
+                        }
+                    },
+                    onFrame: () => {
+                        if (this.screenReqSeq === currentReqSeq) {
+                            this.screenHasFrame = true;
+                            this.screenStatus = `${mode === 'live' ? 'Live stream' : 'Snapshot'} · ${this.drawer?.pc?.name || 'PC'}`;
+                        }
+                    },
+                    onError: (err) => {
+                        if (this.screenReqSeq === currentReqSeq) {
+                            this.screenStatus = 'Screen feed error';
+                        }
+                    },
+                    onClose: () => {
+                        if (this.screenReqSeq === currentReqSeq && this.screenStreaming) {
+                            this.screenStatus = 'Stream disconnected';
+                        }
+                    }
+                });
                 this.screenViewer.connect(wsUrl);
-                this.screenHasFrame = true;
-                this.screenStatus = `Streaming (${mode}) #${data.stream_id}`;
 
                 if (mode === 'live') {
                     this.screenRenewTimer = setInterval(async () => {
                         try {
-                            if (this.screenAuditId) {
+                            if (this.screenAuditId && this.screenStreaming) {
                                 await api(`/api/screen/${this.screenAuditId}/renew`, { method: 'POST' });
                             }
                         } catch (e) {
@@ -189,11 +274,14 @@ Alpine.data('labView', (cfg) => ({
                 }
             }
         } catch (e) {
-            this.screenStatus = `Error: ${e.message}`;
-            this.screenStreaming = false;
+            if (this.screenReqSeq === currentReqSeq) {
+                this.screenStatus = `Error: ${e.message}`;
+                this.screenStreaming = false;
+                this.screenHasFrame = false;
+            }
         }
     },
-    async stopScreen() {
+    async stopScreen(clearStatus = true) {
         if (this.screenRenewTimer) {
             clearInterval(this.screenRenewTimer);
             this.screenRenewTimer = null;
@@ -210,7 +298,10 @@ Alpine.data('labView', (cfg) => ({
             } catch (e) {}
         }
         this.screenStreaming = false;
-        this.screenStatus = 'Stream stopped';
+        this.screenHasFrame = false;
+        if (clearStatus) {
+            this.screenStatus = 'Stream stopped';
+        }
     },
     async message(ids) {
         const text = prompt(ids ? 'Message to this PC:' : 'Message to all PCs:');

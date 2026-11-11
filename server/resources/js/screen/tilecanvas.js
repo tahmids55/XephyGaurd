@@ -10,7 +10,7 @@ export class TileCanvas {
    */
   constructor(canvas) {
     this.canvas = canvas;
-    this.ctx = canvas ? canvas.getContext('2d') : null;
+    this.ctx = (canvas && typeof canvas.getContext === 'function') ? canvas.getContext('2d') : null;
     this.width = 0;
     this.height = 0;
     this.pendingTiles = [];

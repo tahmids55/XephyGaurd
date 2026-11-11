@@ -94,7 +94,7 @@
   </aside>
 
   {{-- PC detail drawer --}}
-  <div x-show="drawer" x-cloak class="fixed inset-0 z-40 flex justify-end bg-black/30" @click.self="drawer = null" @keydown.escape.window="drawer = null">
+  <div x-show="drawer" x-cloak class="fixed inset-0 z-40 flex justify-end bg-black/30" @click.self="closeDrawer()" @keydown.escape.window="closeDrawer()">
     <div class="h-full w-full max-w-2xl overflow-y-auto bg-white p-5 shadow-xl" x-show="drawer">
       <template x-if="drawer">
         <div>
@@ -105,7 +105,7 @@
               <div class="mt-1 text-xs text-slate-500" x-show="drawer.pc.capabilities">
                 Can see: <template x-for="(v,k) in drawer.pc.capabilities"><span class="mr-1" :class="v ? 'text-emerald-700' : 'text-red-600 line-through'" x-text="k"></span></template>
               </div></div>
-            <button class="btn" @click="drawer=null">✕</button>
+            <button class="btn" @click="closeDrawer()">✕</button>
           </div>
           <div class="my-3 flex flex-wrap gap-2">
             <button class="btn" @click="message([drawer.pc.id])">Message</button>
@@ -114,7 +114,7 @@
           </div>
           <div class="mb-3 flex flex-wrap gap-1 border-b border-slate-200 text-sm">
             <template x-for="t in ['screen','timeline','alerts','processes','browser','installed','network','typing','pastes']">
-              <button class="-mb-px border-b-2 px-3 py-1.5 capitalize" :class="tab===t ? 'border-indigo-600 font-semibold' : 'border-transparent text-slate-500'" @click="tab=t" x-text="t"></button>
+              <button class="-mb-px border-b-2 px-3 py-1.5 capitalize" :class="tab===t ? 'border-indigo-600 font-semibold' : 'border-transparent text-slate-500'" @click="switchTab(t)" x-text="t"></button>
             </template>
           </div>
           <div x-show="tab==='screen'" class="space-y-4">
@@ -138,20 +138,33 @@
                 </div>
               </div>
               <div class="flex items-center gap-2">
-                <button type="button" class="btn btn-sm" :disabled="screenStreaming || drawer.pc.capabilities?.session_type === 'wayland'" @click="startScreen('snapshot')">
+                <button type="button" class="btn btn-sm" :disabled="drawer.pc.capabilities?.session_type === 'wayland'" @click="startScreen('snapshot')">
                   Snapshot
                 </button>
-                <button type="button" class="btn btn-sm" :class="screenStreaming ? 'btn-danger' : 'btn-primary'" :disabled="drawer.pc.capabilities?.session_type === 'wayland'" @click="screenStreaming ? stopScreen() : startScreen('live')" x-text="screenStreaming ? 'Stop Live' : 'Live Stream'">
+                <button type="button" class="btn btn-sm" :class="screenStreaming && screenMode === 'live' ? 'btn-danger' : 'btn-primary'" :disabled="drawer.pc.capabilities?.session_type === 'wayland'" @click="screenStreaming && screenMode === 'live' ? stopScreen() : startScreen('live')" x-text="screenStreaming && screenMode === 'live' ? 'Stop Live' : 'Live Stream'">
                 </button>
               </div>
             </div>
 
-            <div x-show="screenStatus" class="text-xs text-slate-500 font-mono" x-text="screenStatus"></div>
+            <div class="flex items-center justify-between text-xs font-mono text-slate-500">
+              <span x-text="screenStatus"></span>
+              <span x-show="screenStreaming" class="inline-flex items-center gap-1.5 font-sans font-semibold text-xs" :class="screenMode === 'live' ? 'text-emerald-600' : 'text-indigo-600'">
+                <span class="inline-block w-2 h-2 rounded-full animate-pulse" :class="screenMode === 'live' ? 'bg-emerald-500' : 'bg-indigo-500'"></span>
+                <span x-text="screenMode === 'live' ? 'LIVE FEED' : 'SNAPSHOT'"></span>
+              </span>
+            </div>
 
-            <div class="relative bg-slate-950 rounded-lg overflow-hidden border border-slate-800 flex items-center justify-center min-h-[300px]">
+            <div class="relative bg-slate-950 rounded-lg overflow-hidden border border-slate-800 flex items-center justify-center min-h-[340px]">
               <canvas id="xg-screen-canvas" class="w-full max-h-[500px] object-contain block"></canvas>
               <div x-show="!screenStreaming && !screenHasFrame" class="absolute text-slate-500 text-sm">
                 No active screen feed. Click Snapshot or Live Stream to start.
+              </div>
+              <div x-show="screenStreaming && !screenHasFrame" class="absolute flex flex-col items-center gap-2 text-slate-300 text-sm bg-slate-900/80 px-4 py-3 rounded-lg border border-slate-700">
+                <svg class="animate-spin h-5 w-5 text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                </svg>
+                <span x-text="screenStatus || 'Connecting to screen feed…'"></span>
               </div>
             </div>
           </div>

@@ -210,7 +210,7 @@ export class ScreenViewer {
       : null;
     this.ws = null;
     this.lastAppliedSeq = 0;
-    this.waitingForKeyframe = false;
+    this.waitingForKeyframe = true;
   }
 
   connect(url) {
@@ -221,10 +221,12 @@ export class ScreenViewer {
     if (this.ws) {
       this.disconnect();
     }
+    this.waitingForKeyframe = true;
     this.ws = new WebSocket(targetUrl);
     this.ws.binaryType = 'arraybuffer';
 
     this.ws.onopen = () => {
+      this.waitingForKeyframe = true;
       this.requestKeyframe(0, 0);
       if (this.options.onOpen) this.options.onOpen();
     };
@@ -343,6 +345,10 @@ export class ScreenViewer {
     // Batch draw on canvas
     this.tileCanvas.drawTiles(decodedTiles);
 
+    if (this.options.onFrame) {
+      this.options.onFrame(msg);
+    }
+
     // Send ACK back to gateway/agent
     this.sendAck(msg.streamId, msg.monitorId, msg.seq);
   }
@@ -366,6 +372,8 @@ export class ScreenViewer {
       this.ws.close();
       this.ws = null;
     }
-    this.tileCanvas.clear();
+    if (this.tileCanvas) {
+      this.tileCanvas.clear();
+    }
   }
 }

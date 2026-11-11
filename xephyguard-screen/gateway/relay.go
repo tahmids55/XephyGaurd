@@ -81,19 +81,7 @@ func (s *RelayServer) findStreamForViewer(preferredID uint32) *Stream {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 1. If preferred stream has an active agent connection, use it
-	if st, exists := s.streams[preferredID]; exists && st.agentConn != nil {
-		return st
-	}
-
-	// 2. If preferred stream has no agent, check if another active stream has an agent
-	for _, st := range s.streams {
-		if st.agentConn != nil {
-			return st
-		}
-	}
-
-	// 3. Fallback: get or create preferred stream
+	// Get or create the specific stream for this PC/student
 	st, exists := s.streams[preferredID]
 	if !exists {
 		st = newStream(preferredID)
@@ -149,6 +137,10 @@ func (s *RelayServer) HandleAgent(w http.ResponseWriter, r *http.Request) {
 	var stream *Stream
 	if streamIDVal != 0 {
 		stream = s.getOrCreateStream(streamIDVal)
+		stream.mu.Lock()
+		stream.agentConn = c
+		stream.agentID = agentID
+		stream.mu.Unlock()
 	}
 
 	ctx, cancel := context.WithCancel(r.Context())
@@ -251,7 +243,11 @@ func (s *RelayServer) HandleAgent(w http.ResponseWriter, r *http.Request) {
 	<-agentWriterDone
 
 	if stream != nil {
-		s.removeStream(stream.streamID)
+		stream.mu.Lock()
+		if stream.agentConn == c {
+			stream.agentConn = nil
+		}
+		stream.mu.Unlock()
 	}
 }
 
