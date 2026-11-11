@@ -98,3 +98,33 @@
   - All Go tests passing 100% under `go test -race -v ./...`.
 - `viewer/viewer.test.js`:
   - All 5 test cases passing (100%) in Node.js test runner against generated fixtures.
+
+
+## WP3 & Windows Capture: Agent State Machine and Capture Backends (T8, T9, T10) - COMPLETE & VERIFIED
+
+### What exists now
+- **Agent State Machine (`agent/`):**
+  - `agent/agent_state.h` & `agent/agent_state.cpp`: `AgentStateMachine` implementing states:
+    - `IDLE`, `ARMED`, `STREAMING`, `PAUSED_MASKED`, `PAUSED_SECURE`, `PAUSED_DISCONNECTED`.
+    - Threaded capture loop with `FlowControl` pacing, dynamically encoding changed tiles.
+    - Zero capture threads and ~0% CPU usage in `IDLE`.
+    - Handles incoming `view_start{mode, stream_id}` (live and snapshot modes) and `view_stop`.
+    - Processes incoming binary `Ack` and `KeyframeReq` messages.
+    - Clean shutdown and thread join semantics with recursive mutex protection against deadlocks.
+- **Capture Implementations (`capture/`):**
+  - `capture/win_gdi_capture.h` & `capture/win_gdi_capture.cpp`: Win32 GDI `BitBlt` capture implementing `ScreenCapture` using `CreateCompatibleDC` and `CreateDIBSection` with full dirty flagging.
+  - `capture/win_dxgi_capture.h` & `capture/win_dxgi_capture.cpp`: DXGI Desktop Duplication on owning adapter with `EnumAdapters1`, `DuplicateOutput`, dirty rect extraction via `GetFrameDirtyRects`, staging texture mapping, and automatic `ACCESS_LOST` / `ACCESS_DENIED` status reporting.
+  - `capture/x11_capture.cpp`: Linux X11 capture using `XShmGetImage`, `XDamage` dirty rectangle tracking, and `XRandR` display resolution change detection.
+- **Tests (`tests/test_agent_state.cpp`):**
+  - 10-frame streaming capture verification through `AgentStateMachine`.
+  - Capture thread lifecycle and clean termination on `view_stop`.
+  - Snapshot mode: captures exactly one frame then transitions back to `ARMED` with thread joined.
+  - Privacy masking state transitions (`PAUSED_MASKED`).
+  - Secure desktop detection (`PAUSED_SECURE`).
+  - Network disconnection and recovery (`PAUSED_DISCONNECTED` -> `ARMED`).
+
+### Status
+- Build: GCC 14.2.0 (MinGW) / C++17 clean (0 warnings).
+- Test suite: 25 test cases, 1054 assertions passing (100% green).
+- `ctest` runs 100% green.
+

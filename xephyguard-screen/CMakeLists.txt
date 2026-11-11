@@ -89,16 +89,30 @@ add_library(xgcore STATIC
   core/encoder.cpp
   core/flow.cpp
   capture/fake_capture.cpp
+  agent/agent_state.cpp
 )
 target_include_directories(xgcore PUBLIC
   core
   capture
+  agent
   third_party
   ${libjpeg_turbo_SOURCE_DIR}
   ${libjpeg_turbo_BINARY_DIR}
   ${libwebp_SOURCE_DIR}/src
 )
 target_link_libraries(xgcore PUBLIC xxhash_lib turbojpeg-static webp)
+
+if(WIN32)
+  target_sources(xgcore PRIVATE
+    capture/win_gdi_capture.cpp
+    capture/win_dxgi_capture.cpp
+  )
+  target_link_libraries(xgcore PUBLIC d3d11 dxgi gdi32)
+else()
+  target_sources(xgcore PRIVATE
+    capture/x11_capture.cpp
+  )
+endif()
 
 # ------------------------------------------------------------------ xgtests
 enable_testing()
@@ -110,8 +124,9 @@ add_executable(xgtests
   tests/test_encoder.cpp
   tests/test_flow.cpp
   tests/test_pipeline.cpp
+  tests/test_agent_state.cpp
 )
-target_include_directories(xgtests PRIVATE core capture third_party)
+target_include_directories(xgtests PRIVATE core capture agent third_party)
 target_link_libraries(xgtests PRIVATE xgcore)
 
 add_test(NAME xgtests COMMAND xgtests)
