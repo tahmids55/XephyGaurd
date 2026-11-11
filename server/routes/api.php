@@ -27,6 +27,7 @@ Route::prefix('internal')->middleware('internal')->group(function () {
 // Screen view gateway token issuance and lease renewal
 Route::middleware(['web', 'auth'])->group(function () {
     Route::post('/screen/{student}/token', [\App\Http\Controllers\Api\ViewTokenController::class, 'issueToken']);
+    Route::post('/screen/pc/{pc}/token', [\App\Http\Controllers\Api\ViewTokenController::class, 'issuePcToken']);
     Route::post('/screen/{audit}/renew', [\App\Http\Controllers\Api\ViewTokenController::class, 'renewToken']);
     Route::post('/screen/{audit}/stop', [\App\Http\Controllers\Api\ViewTokenController::class, 'stopView']);
 });

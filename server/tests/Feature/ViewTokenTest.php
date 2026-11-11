@@ -220,4 +220,24 @@ class ViewTokenTest extends TestCase
         $renewEnded = $this->actingAs($instructor)->postJson("/api/screen/{$audit->id}/renew");
         $renewEnded->assertStatus(422);
     }
+
+    public function test_issue_token_directly_for_pc_without_session(): void
+    {
+        $this->bootLab();
+        $instructor = $this->user('instructor');
+        [$pc] = $this->enrolledPc('192.168.10.40', 'PC-DIRECT');
+
+        $res = $this->actingAs($instructor)->postJson("/api/screen/pc/{$pc->id}/token", [
+            'mode' => 'live',
+        ]);
+
+        $res->assertOk();
+        $res->assertJsonStructure(['token', 'stream_id', 'audit_id', 'gateway_url', 'mode']);
+        $this->assertEquals($pc->id, $res->json('stream_id'));
+
+        $audit = ScreenViewAudit::findOrFail($res->json('audit_id'));
+        $this->assertEquals($pc->id, $audit->pc_id);
+        $this->assertNull($audit->student_id);
+        $this->assertNull($audit->lab_session_id);
+    }
 }

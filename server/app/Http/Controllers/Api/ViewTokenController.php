@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\LabSession;
+use App\Models\Pc;
 use App\Models\ScreenViewAudit;
 use App\Models\SessionPc;
 use App\Models\Student;
@@ -108,6 +109,85 @@ class ViewTokenController extends Controller
     }
 
     /**
+     * Issues a short-lived (~30s) JWT token for viewing a PC's screen directly.
+     * Works both during an active session and for ad-hoc / lab supervision.
+     */
+    public function issuePcToken(Request $request, Pc $pc): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user) {
+            abort(Response::HTTP_UNAUTHORIZED, 'Authentication required');
+        }
+
+        // Check if there is an active session on this PC
+        $sessionPc = SessionPc::where('pc_id', $pc->id)
+            ->whereHas('session', function ($q) {
+                $q->active();
+            })
+            ->with(['session', 'student'])
+            ->first();
+
+        $session = $sessionPc?->session;
+        $student = $sessionPc?->student;
+
+        // If in an active session, verify instructor owns the session or is admin
+        if ($session && $session->started_by !== $user->id && !$user->hasRole('admin')) {
+            return response()->json([
+                'message' => 'Forbidden: You do not own this lab session',
+            ], Response::HTTP_FORBIDDEN);
+        }
+
+        $validated = $request->validate([
+            'mode' => 'nullable|string|in:live,snapshot,wall',
+            'stream_id' => 'nullable|integer',
+        ]);
+
+        $mode = $validated['mode'] ?? 'live';
+        $streamId = (int) ($validated['stream_id'] ?? $pc->id);
+
+        $cfg = config('services.screen_gateway');
+        $now = time();
+        $exp = $now + 30; // 30 second lease
+        $jti = bin2hex(random_bytes(16));
+
+        $payload = [
+            'iss' => $cfg['issuer'],
+            'aud' => $cfg['audience'],
+            'sub' => (string) $user->id,
+            'student_id' => (int) ($student?->id ?? 0),
+            'lab_session_id' => (int) ($session?->id ?? 0),
+            'pc_id' => (int) $pc->id,
+            'stream_id' => $streamId,
+            'mode' => $mode,
+            'iat' => $now,
+            'nbf' => $now,
+            'exp' => $exp,
+            'jti' => $jti,
+        ];
+
+        $token = JWT::encode($payload, $cfg['secret'], 'HS256');
+
+        $audit = ScreenViewAudit::create([
+            'instructor_id' => $user->id,
+            'student_id' => $student?->id,
+            'pc_id' => $pc->id,
+            'lab_session_id' => $session?->id,
+            'stream_id' => $streamId,
+            'mode' => $mode,
+            'started_at' => now(),
+        ]);
+
+        return response()->json([
+            'token' => $token,
+            'stream_id' => $streamId,
+            'audit_id' => $audit->id,
+            'expires_at' => $exp,
+            'gateway_url' => $cfg['url'],
+            'mode' => $mode,
+        ]);
+    }
+
+    /**
      * Renews the short-lived lease for an active stream view.
      */
     public function renewToken(Request $request, ScreenViewAudit $audit): JsonResponse
@@ -144,7 +224,7 @@ class ViewTokenController extends Controller
             'iss' => $cfg['issuer'],
             'aud' => $cfg['audience'],
             'sub' => (string) $user->id,
-            'student_id' => (int) $audit->student_id,
+            'student_id' => (int) ($audit->student_id ?? 0),
             'lab_session_id' => (int) ($audit->lab_session_id ?? 0),
             'stream_id' => (int) $audit->stream_id,
             'mode' => $audit->mode,

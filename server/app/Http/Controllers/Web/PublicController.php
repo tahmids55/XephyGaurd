@@ -55,11 +55,16 @@ class PublicController extends Controller
                 'desc' => 'Portable DXGI/GDI screen capture executable for instructor live screen monitoring and snapshots.',
                 'badge' => 'Screen Monitor',
             ],
+            'start-screen-stream.bat' => [
+                'label' => '1-Click Screen Stream Launcher (Windows Batch)',
+                'desc' => 'Double-click script to run xgagent.exe connected to this server with auto-prompted or default settings.',
+                'badge' => 'Helper Script',
+            ],
         ];
 
         $items = '';
         foreach ($files as $f) {
-            if (preg_match('/^[A-Za-z0-9._-]+\.(deb|rpm|msi|exe|sha256)$/', $f)) {
+            if (preg_match('/^[A-Za-z0-9._-]+\.(deb|rpm|msi|exe|bat|sha256)$/', $f)) {
                 $size = round(filesize($dir.'/'.$f) / 1048576, 2);
                 $info = $meta[$f] ?? ['label' => $f, 'desc' => '', 'badge' => 'Installer'];
                 $label = htmlspecialchars($info['label']);

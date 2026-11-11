@@ -12,6 +12,7 @@ class ScreenViewAudit extends Model
     protected $fillable = [
         'instructor_id',
         'student_id',
+        'pc_id',
         'lab_session_id',
         'stream_id',
         'mode',
@@ -33,6 +34,11 @@ class ScreenViewAudit extends Model
     public function student(): BelongsTo
     {
         return $this->belongsTo(Student::class, 'student_id');
+    }
+
+    public function pc(): BelongsTo
+    {
+        return $this->belongsTo(Pc::class, 'pc_id');
     }
 
     public function labSession(): BelongsTo

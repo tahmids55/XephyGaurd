@@ -141,14 +141,16 @@ Alpine.data('labView', (cfg) => ({
     },
     async startScreen(mode = 'live') {
         const studentId = this.drawer?.student?.id;
-        if (!studentId) {
-            this.screenStatus = 'No student assigned to this PC in an active session';
+        const pcId = this.drawer?.pc?.id;
+        if (!studentId && !pcId) {
+            this.screenStatus = 'No PC selected';
             return;
         }
         try {
             await this.stopScreen();
             this.screenStatus = `Requesting ${mode} authorization…`;
-            const data = await api(`/api/screen/${studentId}/token`, {
+            const tokenUrl = studentId ? `/api/screen/${studentId}/token` : `/api/screen/pc/${pcId}/token`;
+            const data = await api(tokenUrl, {
                 method: 'POST',
                 body: JSON.stringify({ mode })
             });
@@ -159,7 +161,16 @@ Alpine.data('labView', (cfg) => ({
 
             const canvas = document.getElementById('xg-screen-canvas');
             if (canvas) {
-                const wsUrl = `${data.gateway_url}/view?token=${data.token}`;
+                let gwUrl = data.gateway_url;
+                try {
+                    const parsed = new URL(gwUrl);
+                    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+                        parsed.hostname = window.location.hostname;
+                        gwUrl = parsed.toString().replace(/\/$/, '');
+                    }
+                } catch (e) {}
+
+                const wsUrl = `${gwUrl}/view?token=${data.token}`;
                 this.screenViewer = new ScreenViewer(wsUrl, canvas);
                 this.screenViewer.connect();
                 this.screenHasFrame = true;
