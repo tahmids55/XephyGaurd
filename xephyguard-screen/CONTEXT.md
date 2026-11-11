@@ -62,3 +62,39 @@
 - Build: GCC 14.2.0 (MinGW) / C++17 clean (0 warnings).
 - Test suite: 21 test cases, 1026 assertions, 100% passing.
 - `ctest` runs 1/1 tests passed (100%).
+
+
+## WP2: Gateway Relay and Browser Viewer (T6 Relay, T7) - COMPLETE & VERIFIED
+
+### What exists now
+- **Gateway (`gateway/`):**
+  - `gateway/auth_iface.go`: Fixed contract defining `Authenticator` interface (`AuthViewer` and `AuthAgent`).
+  - `gateway/relay.go`: High-performance WebSocket relay using `github.com/coder/websocket`.
+    - `/agent`: Authenticated with `AuthAgent`, bidirectional binary streaming and text control frame handling.
+    - `/view`: Authenticated with `AuthViewer`, pairs by `stream_id`, enforces maximum 2 viewers per stream.
+    - Bounded channels per viewer (capacity 8): on queue overflow, drops oldest message and issues `KEYFRAME_REQ` (msg type 4) to the agent.
+    - Sets 16 MB websocket read limit to support high-resolution full frames.
+    - Zero frame storage, zero goroutine leaks on disconnect.
+  - `gateway/main.go`: Gateway entrypoint listening on `:8082` with dev/production flag options.
+  - `gateway/auth.go`: Production implementation of `Authenticator` using `golang-jwt/jwt/v5`.
+    - Validates `iss`, `aud`, `exp`, `nbf`, `student_id`.
+    - Enforces strictly pinned `HS256` signing algorithm (rejects `none` and mismatches).
+    - Single-use `jti` replay prevention with thread-safe TTL map and expiration cleanup.
+    - Agent identification via SHA-256 client certificate fingerprint from mTLS (`r.TLS.PeerCertificates[0]`).
+- **Browser Viewer (`viewer/`):**
+  - `viewer/tilecanvas.js`: HTML5 Canvas manager for batch tile rendering on `requestAnimationFrame`, automatic resizing, and privacy/secure desktop banner overlays.
+  - `viewer/viewer.js`: Safe binary protocol parser using little-endian `DataView`, `ACK` and `KEYFRAME_REQ` encoders, and `ScreenViewer` managing WebSocket streaming, delta continuity checking, and `createImageBitmap` tile decoding.
+  - `viewer/viewer.test.js`: Node.js test suite testing parser against WP1 golden fixtures (`keyframe.bin`, `delta.bin`, `full.bin`), fuzz testing, and protocol builders.
+
+### Tests & Verification
+- `gateway/relay_test.go` and `gateway/auth_test.go`:
+  - `TestPairingAndForwardingBothDirections`: Agent-to-viewer and viewer-to-agent bidirectional flow.
+  - `TestThirdViewerRefused`: Rejection of 3rd viewer with HTTP 429.
+  - `TestQueueOverflowTriggersKeyframeReq`: Fast sender overflowing viewer channel causes drop-oldest and triggers `KEYFRAME_REQ`.
+  - `TestAuthRejections`: HTTP 401 when agent or viewer fail authentication.
+  - `TestDisconnectCleanup`: Clean disconnection without goroutine or channel leaks.
+  - `TestAuthViewerValidationAndReplayPrevention`: Replayed `jti` rejected, expired JWT rejected, wrong audience/issuer rejected, `none` algorithm rejected.
+  - `TestAuthAgentMTLSFingerprint`: Accurate SHA-256 fingerprint extraction from TLS peer certificate.
+  - All Go tests passing 100% under `go test -race -v ./...`.
+- `viewer/viewer.test.js`:
+  - All 5 test cases passing (100%) in Node.js test runner against generated fixtures.

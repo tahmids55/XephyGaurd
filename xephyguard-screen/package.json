@@ -1,0 +1,8 @@
+{
+  "name": "xephyguard-screen",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test viewer/viewer.test.js"
+  }
+}

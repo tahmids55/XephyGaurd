@@ -1,0 +1,324 @@
+package main
+
+import (
+	"context"
+	"encoding/binary"
+	"net/http"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/coder/websocket"
+)
+
+const (
+	kMagic           = uint16(0x5847)
+	kVersion         = uint8(1)
+	kHeaderSize      = 28
+	kMaxViewers      = 2
+	kViewerQueueSize = 8
+	kMsgTypeFrame    = uint8(1)
+	kMsgTypeKeyReq   = uint8(4)
+)
+
+type Viewer struct {
+	id     uint64
+	ch     chan []byte
+	conn   *websocket.Conn
+	closed atomic.Bool
+}
+
+type Stream struct {
+	streamID     uint32
+	agentConn    *websocket.Conn
+	agentID      string
+	agentOut     chan []byte
+	mu           sync.Mutex
+	viewers      map[uint64]*Viewer
+	nextViewerID uint64
+	ctx          context.Context
+	cancel       context.CancelFunc
+}
+
+func newStream(streamID uint32) *Stream {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Stream{
+		streamID: streamID,
+		agentOut: make(chan []byte, 32),
+		viewers:  make(map[uint64]*Viewer),
+		ctx:      ctx,
+		cancel:   cancel,
+	}
+}
+
+type RelayServer struct {
+	auth    Authenticator
+	mu      sync.RWMutex
+	streams map[uint32]*Stream
+}
+
+func NewRelayServer(auth Authenticator) *RelayServer {
+	return &RelayServer{
+		auth:    auth,
+		streams: make(map[uint32]*Stream),
+	}
+}
+
+func (s *RelayServer) getOrCreateStream(streamID uint32) *Stream {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, exists := s.streams[streamID]
+	if !exists {
+		st = newStream(streamID)
+		s.streams[streamID] = st
+	}
+	return st
+}
+
+func (s *RelayServer) removeStream(streamID uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if st, exists := s.streams[streamID]; exists {
+		st.cancel()
+		delete(s.streams, streamID)
+	}
+}
+
+// Build a binary KeyframeReq message according to protocol.h
+func buildKeyframeReq(streamID uint32, monitorID uint16) []byte {
+	buf := make([]byte, kHeaderSize)
+	binary.LittleEndian.PutUint16(buf[0:2], kMagic)
+	buf[2] = kVersion
+	buf[3] = kMsgTypeKeyReq
+	binary.LittleEndian.PutUint16(buf[4:6], 0)
+	binary.LittleEndian.PutUint16(buf[6:8], monitorID)
+	binary.LittleEndian.PutUint32(buf[8:12], streamID)
+	return buf
+}
+
+func (s *RelayServer) HandleAgent(w http.ResponseWriter, r *http.Request) {
+	agentID, err := s.auth.AuthAgent(r)
+	if err != nil {
+		http.Error(w, "Unauthorized agent: "+err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	streamIDVal := uint32(0)
+	if sidStr := r.URL.Query().Get("stream_id"); sidStr != "" {
+		if parsed, err := strconv.ParseUint(sidStr, 10, 32); err == nil {
+			streamIDVal = uint32(parsed)
+		}
+	}
+
+	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
+		return
+	}
+	c.SetReadLimit(16 * 1024 * 1024)
+	defer c.Close(websocket.StatusInternalError, "agent closed")
+
+	var stream *Stream
+	if streamIDVal != 0 {
+		stream = s.getOrCreateStream(streamIDVal)
+	}
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	// Writer loop to agent for ACKs and Keyframe requests
+	agentWriterDone := make(chan struct{})
+	go func() {
+		defer close(agentWriterDone)
+		for {
+			var out []byte
+			if stream != nil {
+				select {
+				case <-ctx.Done():
+					return
+				case out = <-stream.agentOut:
+				}
+			} else {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(50 * time.Millisecond):
+					continue
+				}
+			}
+
+			writeCtx, writeCancel := context.WithTimeout(ctx, 3*time.Second)
+			err := c.Write(writeCtx, websocket.MessageBinary, out)
+			writeCancel()
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	// Reader loop from agent
+	for {
+		msgType, data, err := c.Read(ctx)
+		if err != nil {
+			break
+		}
+
+		if msgType == websocket.MessageText {
+			// Forward control messages or handle control ping/command
+			continue
+		}
+
+		if msgType == websocket.MessageBinary && len(data) >= kHeaderSize {
+			magic := binary.LittleEndian.Uint16(data[0:2])
+			if magic != kMagic {
+				continue
+			}
+
+			frameStreamID := binary.LittleEndian.Uint32(data[8:12])
+			monitorID := binary.LittleEndian.Uint16(data[6:8])
+
+			if stream == nil || stream.streamID != frameStreamID {
+				stream = s.getOrCreateStream(frameStreamID)
+			}
+
+			stream.mu.Lock()
+			stream.agentConn = c
+			stream.agentID = agentID
+
+			// Fan out to viewers
+			for _, v := range stream.viewers {
+				select {
+				case v.ch <- data:
+				default:
+					// Queue full: drop oldest frame
+					select {
+					case <-v.ch:
+					default:
+					}
+					// Queue newest
+					select {
+					case v.ch <- data:
+					default:
+					}
+					// Send KEYFRAME_REQ to agent
+					keyReq := buildKeyframeReq(frameStreamID, monitorID)
+					select {
+					case stream.agentOut <- keyReq:
+					default:
+					}
+				}
+			}
+			stream.mu.Unlock()
+		}
+	}
+
+	cancel()
+	<-agentWriterDone
+
+	if stream != nil {
+		s.removeStream(stream.streamID)
+	}
+}
+
+func (s *RelayServer) HandleView(w http.ResponseWriter, r *http.Request) {
+	streamID, err := s.auth.AuthViewer(r)
+	if err != nil {
+		http.Error(w, "Unauthorized viewer: "+err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	stream := s.getOrCreateStream(streamID)
+
+	stream.mu.Lock()
+	if len(stream.viewers) >= kMaxViewers {
+		stream.mu.Unlock()
+		http.Error(w, "Max viewers reached (max 2)", http.StatusTooManyRequests)
+		return
+	}
+
+	stream.nextViewerID++
+	viewerID := stream.nextViewerID
+	v := &Viewer{
+		id: viewerID,
+		ch: make(chan []byte, kViewerQueueSize),
+	}
+	stream.viewers[viewerID] = v
+	stream.mu.Unlock()
+
+	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
+		stream.mu.Lock()
+		delete(stream.viewers, viewerID)
+		stream.mu.Unlock()
+		return
+	}
+	c.SetReadLimit(16 * 1024 * 1024)
+	v.conn = c
+	defer c.Close(websocket.StatusInternalError, "viewer closed")
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	// Writer goroutine to viewer
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stream.ctx.Done():
+				return
+			case msg, ok := <-v.ch:
+				if !ok {
+					return
+				}
+				writeCtx, writeCancel := context.WithTimeout(ctx, 3*time.Second)
+				err := c.Write(writeCtx, websocket.MessageBinary, msg)
+				writeCancel()
+				if err != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	// Reader goroutine from viewer: forwards ACKs and KEYFRAME_REQs to agent
+	for {
+		msgType, data, err := c.Read(ctx)
+		if err != nil {
+			break
+		}
+
+		if msgType == websocket.MessageBinary && len(data) >= kHeaderSize {
+			select {
+			case stream.agentOut <- data:
+			case <-ctx.Done():
+				break
+			case <-stream.ctx.Done():
+				break
+			default:
+				// Avoid blocking viewer reader if agent queue full
+			}
+		}
+	}
+
+	cancel()
+	<-writerDone
+
+	stream.mu.Lock()
+	delete(stream.viewers, viewerID)
+	v.closed.Store(true)
+	stream.mu.Unlock()
+}
+
+func (s *RelayServer) Routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/agent", s.HandleAgent)
+	mux.HandleFunc("/view", s.HandleView)
+	return mux
+}
