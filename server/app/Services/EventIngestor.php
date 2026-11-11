@@ -43,6 +43,7 @@ class EventIngestor
         'clock_change' => 'System clock was changed',
         'helper_missing' => 'Session helper is not running for the logged-in user',
         'signature_invalid' => 'Agent received an invalid signature bundle',
+        'helper_terminated' => 'Session helper was terminated by user (re-launched)',
         'isolation_rule_removed' => 'Network isolation rule was removed locally (re-applied)',
     ];
 
@@ -70,7 +71,7 @@ class EventIngestor
             $events = collect($batch['events'] ?? [])->filter(fn ($e) => $e['seq'] > $agent->last_seq)->sortBy('seq');
             $rows = [];
             foreach ($events as $e) {
-                $at = CarbonImmutable::createFromTimestampMs($e['ts'] + $offset);
+                $at = CarbonImmutable::createFromTimestampMs($e['ts'] + $offset, config('app.timezone'));
                 $user = is_string($e['data']['user'] ?? null) ? mb_substr($e['data']['user'], 0, 64) : null;
                 $rows[] = [
                     'pc_id' => $pc->id, 'agent_id' => $agent->id, 'seq' => $e['seq'], 'lab_session_id' => $session?->id,
@@ -82,7 +83,7 @@ class EventIngestor
                 Event::query()->insertOrIgnore($chunk);
             }
             foreach ($events as $e) {
-                $at = CarbonImmutable::createFromTimestampMs($e['ts'] + $offset);
+                $at = CarbonImmutable::createFromTimestampMs($e['ts'] + $offset, config('app.timezone'));
                 if ($a = $this->derive($pc, $session, $e['type'], $e['data'], $at)) {
                     $alerts[] = $a;
                 }
@@ -265,7 +266,7 @@ class EventIngestor
             case 'key_stats':
                 KeyStat::create([
                     'pc_id' => $pc->id, 'lab_session_id' => $sid, 'user' => $str('user'),
-                    'window_start' => CarbonImmutable::createFromTimestampMs($int('window_start') ?: $at->getTimestampMs()),
+                    'window_start' => CarbonImmutable::createFromTimestampMs($int('window_start') ?: $at->getTimestampMs(), config('app.timezone')),
                     'window_s' => $int('window_s') ?: 5, 'keys' => $int('keys'), 'backspaces' => $int('backspaces'),
                     'iki_mean' => $d['iki_mean'] ?? null, 'iki_median' => $d['iki_median'] ?? null, 'iki_p90' => $d['iki_p90'] ?? null,
                     'iki_std' => $d['iki_std'] ?? null, 'bursts' => $int('bursts'), 'max_pause' => $int('max_pause') ?: null,

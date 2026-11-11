@@ -85,7 +85,7 @@
     <template x-for="a in alerts" :key="a.id">
       <div class="border-b border-slate-100 py-2 text-sm">
         <div class="flex items-center gap-2"><span class="badge" :class="'sev-'+a.severity" x-text="a.severity"></span>
-          <span class="font-semibold" x-text="a.pc"></span><span class="ml-auto text-xs text-slate-400" x-text="(a.occurred_at||'').substring(11,19)"></span></div>
+          <span class="font-semibold" x-text="a.pc"></span><span class="ml-auto text-xs text-slate-400" x-text="fmtTime(a.occurred_at)"></span></div>
         <div x-text="a.title"></div><div class="text-xs text-slate-500" x-text="a.user || ''"></div>
       </div>
     </template>
@@ -119,7 +119,7 @@
           </div>
           <div x-show="tab==='timeline'"><table class="tbl"><template x-for="e in drawer.timeline"><tr><td class="w-16 font-mono text-xs" x-text="e.at"></td><td class="text-xs text-slate-500" x-text="e.type"></td><td x-text="e.summary"></td></tr></template></table></div>
           <div x-show="tab==='alerts'"><table class="tbl"><template x-for="a in drawer.alerts"><tr><td><span class="badge" :class="'sev-'+a.severity" x-text="a.severity"></span></td><td x-text="a.title"></td>
-            <td class="text-xs" x-text="(a.occurred_at||'').substring(11,19)"></td><td><button class="btn btn-sm" x-show="!a.acknowledged_at" @click="ack(a)">Ack</button><span x-show="a.acknowledged_at" class="text-xs text-slate-400">acked</span></td></tr></template></table></div>
+            <td class="text-xs" x-text="fmtTime(a.occurred_at)"></td><td><button class="btn btn-sm" x-show="!a.acknowledged_at" @click="ack(a)">Ack</button><span x-show="a.acknowledged_at" class="text-xs text-slate-400">acked</span></td></tr></template></table></div>
           <div x-show="tab==='processes'" class="space-y-3">
             <div class="flex flex-wrap items-center gap-2">
               <input type="search" x-model="procSearch" placeholder="Search process, PID, or user…" class="input w-48 text-xs">
@@ -372,7 +372,7 @@
             </div>
             <div x-show="(drawer.network||[]).length">
               <div class="text-xs font-semibold text-slate-600 mb-1">Gateway DNS / Proxy Events</div>
-              <table class="tbl"><template x-for="n in drawer.network"><tr><td class="font-mono text-xs" x-text="(n.occurred_at||'').substring(11,19)"></td>
+              <table class="tbl"><template x-for="n in drawer.network"><tr><td class="font-mono text-xs" x-text="fmtTime(n.occurred_at)"></td>
                 <td><span class="badge" :class="n.action==='blocked' ? 'sev-high' : 'sev-info'" x-text="n.action"></span></td><td x-text="n.host + (n.path||'')"></td><td class="text-xs" x-text="n.layer + ' ' + (n.category||'')"></td></tr></template></table>
             </div>
           </div>
@@ -384,7 +384,7 @@
             <div class="flex justify-between text-[10px] text-slate-400"><span x-text="drawer.keyrate.labels[0]||''"></span><span x-text="drawer.keyrate.labels.at(-1)||''"></span></div>
           </div>
           <div x-show="tab==='pastes'"><table class="tbl"><tr><th>time</th><th>kind</th><th>chars</th><th>lines</th><th>code</th><th>from → to</th></tr>
-            <template x-for="p in drawer.pastes"><tr><td class="font-mono text-xs" x-text="(p.occurred_at||'').substring(11,19)"></td><td x-text="p.is_copy ? 'copy' : 'paste'"></td><td x-text="p.chars"></td><td x-text="p.lines"></td>
+            <template x-for="p in drawer.pastes"><tr><td class="font-mono text-xs" x-text="fmtTime(p.occurred_at)"></td><td x-text="p.is_copy ? 'copy' : 'paste'"></td><td x-text="p.chars"></td><td x-text="p.lines"></td>
               <td x-text="p.looks_like_code ? 'yes' : ''"></td><td class="text-xs" x-text="(p.source_app||'?') + ' → ' + (p.target_app||'?')"></td></tr></template></table>
             <p class="mt-2 text-xs text-slate-400">Clipboard contents are never stored; only size, line count and a code-likeness flag.</p></div>
         </div>

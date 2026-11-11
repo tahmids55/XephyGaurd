@@ -100,6 +100,19 @@ public:
         }
         return u;
     }
+    void set_exam_mode(bool active) override {
+        HKEY hk = nullptr;
+        if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+                            0, nullptr, 0, KEY_SET_VALUE, nullptr, &hk, nullptr) == ERROR_SUCCESS) {
+            if (active) {
+                DWORD one = 1;
+                RegSetValueExW(hk, L"DisableTaskMgr", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&one), sizeof(one));
+            } else {
+                RegDeleteValueW(hk, L"DisableTaskMgr");
+            }
+            RegCloseKey(hk);
+        }
+    }
 };
 
 // ------------------------------------------------------------------------------------------- GPU

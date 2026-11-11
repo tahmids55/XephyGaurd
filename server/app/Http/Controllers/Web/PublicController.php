@@ -51,7 +51,7 @@ class PublicController extends Controller
         $enrollKey = $lab->enrollKey() ?? 'XG-A77CFB-6554C8-489B53';
         $caFingerprint = CertificateAuthority::fromConfig()->fingerprint();
         $serverIp = $lab->ccc_ip ?: Setting::get('ccc_ip', request()->getHost());
-        $serverUrl = 'http://' . $serverIp . ':8000';
+        $serverUrl = $serverIp;
 
         $silentCmd = "XephyGuard-Setup-0.1.0.exe /S /KEY={$enrollKey} /CCC={$serverUrl} /CAFP={$caFingerprint}";
 

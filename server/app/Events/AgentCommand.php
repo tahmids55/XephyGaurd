@@ -13,16 +13,8 @@ class AgentCommand implements ShouldBroadcastNow
 
     public function broadcastOn(): array
     {
+        // Strictly one channel per PC: machines sharing a hostname must never receive each other's commands.
         $channels = [new PrivateChannel('pc.'.$this->command->pc_id)];
-        if ($this->command->pc) {
-            $otherPcIds = \App\Models\Pc::query()
-                ->where('hostname', $this->command->pc->hostname)
-                ->where('id', '!=', $this->command->pc_id)
-                ->pluck('id');
-            foreach ($otherPcIds as $oid) {
-                $channels[] = new PrivateChannel('pc.'.$oid);
-            }
-        }
 
         return $channels;
     }

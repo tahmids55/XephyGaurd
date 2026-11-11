@@ -62,7 +62,12 @@ class DashboardController extends Controller
             'pc' => $pc->tile() + ['hostname' => $pc->hostname, 'os_version' => $pc->os_version, 'ip' => $pc->ip,
                 'capabilities' => $pc->capabilities, 'usage' => $pc->usage, 'agent_version' => $pc->agent?->version],
             'alerts' => Alert::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)->latest('occurred_at')
-                ->limit(50)->get(['id', 'rule_id', 'severity', 'title', 'occurred_at', 'acknowledged_at']),
+                ->limit(50)->get(['id', 'rule_id', 'severity', 'title', 'occurred_at', 'acknowledged_at'])
+                ->map(fn ($a) => [
+                    'id' => $a->id, 'rule_id' => $a->rule_id, 'severity' => $a->severity, 'title' => $a->title,
+                    'occurred_at' => $a->occurred_at?->format('H:i:s'),
+                    'acknowledged_at' => $a->acknowledged_at?->format('H:i:s'),
+                ]),
             'timeline' => $events->map(fn ($e) => ['type' => $e->type, 'at' => $e->occurred_at->format('H:i:s'),
                 'summary' => self::summarize($e->type, $e->data), 'user' => $e->user]),
             'running_processes' => $latestSnap?->data['list'] ?? [],
@@ -130,9 +135,18 @@ class DashboardController extends Controller
                     'rule_id' => $e->data['rule_id'] ?? '',
                 ]),
             'network' => NetEvent::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)->latest('occurred_at')
-                ->limit(100)->get(['host', 'path', 'layer', 'action', 'category', 'occurred_at']),
+                ->limit(100)->get(['host', 'path', 'layer', 'action', 'category', 'occurred_at'])
+                ->map(fn ($n) => [
+                    'host' => $n->host, 'path' => $n->path, 'layer' => $n->layer, 'action' => $n->action,
+                    'category' => $n->category, 'occurred_at' => $n->occurred_at?->format('H:i:s'),
+                ]),
             'pastes' => PasteEvent::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)->latest('occurred_at')
-                ->limit(100)->get(['is_copy', 'chars', 'lines', 'looks_like_code', 'source_app', 'target_app', 'occurred_at']),
+                ->limit(100)->get(['is_copy', 'chars', 'lines', 'looks_like_code', 'source_app', 'target_app', 'occurred_at'])
+                ->map(fn ($p) => [
+                    'is_copy' => $p->is_copy, 'chars' => $p->chars, 'lines' => $p->lines,
+                    'looks_like_code' => $p->looks_like_code, 'source_app' => $p->source_app,
+                    'target_app' => $p->target_app, 'occurred_at' => $p->occurred_at?->format('H:i:s'),
+                ]),
             'keyrate' => ['labels' => $perMinute->keys()->values(), 'series' => $perMinute->values()],
         ]);
     }

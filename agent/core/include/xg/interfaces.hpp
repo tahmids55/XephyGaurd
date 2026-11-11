@@ -117,6 +117,8 @@ public:
     virtual std::string self_exe_path() = 0;
     struct SelfUsage { uint64_t rss_bytes = 0; uint64_t cpu_time_ms = 0; };
     virtual SelfUsage self_usage() = 0;
+    /// Enables/disables exam-mode lockdown policies (e.g. DisableTaskMgr on Windows) cleanly via official OS APIs.
+    virtual void set_exam_mode(bool /*active*/) {}
 };
 
 class IGpuMonitor {

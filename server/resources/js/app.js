@@ -24,6 +24,16 @@ Alpine.store('toasts', {
     },
 });
 
+window.fmtTime = function(val) {
+    if (!val) return '';
+    if (typeof val === 'string' && val.length === 8 && val[2] === ':' && val[5] === ':') return val;
+    try {
+        const d = new Date(val);
+        if (!isNaN(d.getTime())) return d.toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Dhaka' });
+    } catch (e) {}
+    return (val || '').length > 19 ? val.substring(11, 19) : val;
+};
+
 /* Live lab view: seat-map grid, real-time tiles, detail drawer, drag-and-drop layout editor. */
 Alpine.data('labView', (cfg) => ({
     labId: cfg.labId,
@@ -32,6 +42,7 @@ Alpine.data('labView', (cfg) => ({
     pcs: Object.fromEntries(cfg.pcs.map((p) => [p.id, p])),
     seats: cfg.seats,
     alerts: cfg.alerts,
+    fmtTime: window.fmtTime,
     placement: {},          // "x,y" -> pc id
     editing: false,
     dragging: null,

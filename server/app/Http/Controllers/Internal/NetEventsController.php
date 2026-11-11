@@ -40,7 +40,7 @@ class NetEventsController extends Controller
                 'pc_id' => $pc?->id, 'lab_session_id' => $sid, 'client_ip' => $e['client_ip'],
                 'host' => $e['host'] ?? '', 'path' => $e['path'] ?? null, 'layer' => $e['layer'], 'action' => $e['action'],
                 'category' => $e['category'] ?? null, 'matched' => $e['matched'] ?? null,
-                'occurred_at' => isset($e['ts']) ? CarbonImmutable::createFromTimestampMs($e['ts']) : now(),
+                'occurred_at' => isset($e['ts']) ? CarbonImmutable::createFromTimestampMs($e['ts'], config('app.timezone')) : now(),
             ];
             if ($pc && $e['action'] === 'blocked') {
                 $pc->last_event = mb_substr('Blocked: '.($e['host'] ?? ''), 0, 160);

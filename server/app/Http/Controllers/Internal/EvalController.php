@@ -17,7 +17,7 @@ class EvalController extends Controller
     {
         $d = $request->validate(['pc_ip' => 'required|ip', 'since_ms' => 'required|integer']);
         $pc = Pc::query()->active()->where('ip', $d['pc_ip'])->first();
-        $since = CarbonImmutable::createFromTimestampMs($d['since_ms']);
+        $since = CarbonImmutable::createFromTimestampMs($d['since_ms'], config('app.timezone'));
 
         return response()->json([
             'pc' => $pc?->only(['id', 'name', 'status', 'mode', 'last_seen_at', 'isolated']),

@@ -7,6 +7,17 @@
     <meta name="reverb-key" content="{{ config('reverb.apps.apps.0.key') }}">
     <title>@yield('title', 'Dashboard') · XephyGuard</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
+    <script>
+    window.fmtTime = function(val) {
+        if (!val) return '';
+        if (typeof val === 'string' && val.length === 8 && val[2] === ':' && val[5] === ':') return val;
+        try {
+            const d = new Date(val);
+            if (!isNaN(d.getTime())) return d.toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Dhaka' });
+        } catch (e) {}
+        return (val || '').length > 19 ? val.substring(11, 19) : val;
+    };
+    </script>
 </head>
 <body class="min-h-screen bg-slate-100 text-slate-800">
 @auth

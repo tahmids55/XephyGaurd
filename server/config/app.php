@@ -65,7 +65,7 @@ return [
     |
     */
 
-    'timezone' => env('APP_TIMEZONE', 'UTC'),   // lab local time: the timetable runs in this zone
+    'timezone' => env('APP_TIMEZONE', 'Asia/Dhaka'),   // lab local time: the timetable runs in this zone
 
     /*
     |--------------------------------------------------------------------------
