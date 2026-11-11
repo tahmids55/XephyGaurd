@@ -25,9 +25,18 @@ InstallDir "$PROGRAMFILES64\XephyGuard"
 RequestExecutionLevel admin
 ShowInstDetails show
 SetOverwrite on
+
+!define MUI_ICON "app.ico"
+!define MUI_UNICON "app.ico"
+
 VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName" "XephyGuard Agent"
+VIAddVersionKey "CompanyName" "Xerophyte Labs"
+VIAddVersionKey "LegalCopyright" "Copyright (C) 2026 Xerophyte Labs. All rights reserved."
+VIAddVersionKey "FileDescription" "XephyGuard Academic Security Agent Setup"
 VIAddVersionKey "FileVersion" "${VERSION}"
+VIAddVersionKey "ProductVersion" "${VERSION}"
+VIAddVersionKey "OriginalFilename" "XephyGuard-Setup-${VERSION}.exe"
 
 Var KEY
 Var CCC
@@ -182,6 +191,13 @@ Section "Agent" SecAgent
   ; lab CA -> LocalMachine\Root
   ${If} ${FileExists} "$COMMONPROGRAMDATA\XephyGuard\ca.crt"
     nsExec::ExecToLog 'certutil -addstore -f Root "$COMMONPROGRAMDATA\XephyGuard\ca.crt"'
+  ${EndIf}
+
+  ; Xerophyte Labs code signing certificate -> LocalMachine\Root & LocalMachine\TrustedPublisher
+  File /nonfatal "XerophyteLabs-CodeSigning.cer"
+  ${If} ${FileExists} "$INSTDIR\XerophyteLabs-CodeSigning.cer"
+    nsExec::ExecToLog 'certutil -addstore -f Root "$INSTDIR\XerophyteLabs-CodeSigning.cer"'
+    nsExec::ExecToLog 'certutil -addstore -f TrustedPublisher "$INSTDIR\XerophyteLabs-CodeSigning.cer"'
   ${EndIf}
 
   ; service: LocalSystem, automatic, restart on failure (5 s, 5 s, 30 s), reset after 1 day

@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 80" width="100%" height="100%">
+  <defs>
+    <linearGradient id="navRedGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff4d4d" />
+      <stop offset="100%" stop-color="#dc2626" />
+    </linearGradient>
+
+    <linearGradient id="navShieldWhite" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#e2e8f0" />
+    </linearGradient>
+
+    <filter id="navShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000000" flood-opacity="0.5" />
+    </filter>
+  </defs>
+
+  <!-- Group Emblem (Scale: 0.38) -->
+  <g transform="translate(10, 8) scale(0.38)" filter="url(#navShadow)">
+    
+    <!-- Outer Rim -->
+    <path d="M 65 6 L 122 30 C 122 98 100 152 65 178 C 30 152 8 98 8 30 Z" 
+          fill="#1e293b" stroke="url(#navRedGrad)" stroke-width="3.5" />
+
+    <!-- White Shield Background -->
+    <path d="M 65 12 L 115 34 C 115 95 95 145 65 170 C 35 145 15 95 15 34 Z" 
+          fill="url(#navShieldWhite)" stroke="#cbd5e1" stroke-width="1.5" />
+
+    <!-- Left Blade of 'X' (Black with Red Border) -->
+    <path d="M 32 44 L 54 44 L 74 85 L 50 135 L 28 135 L 48 90 Z" 
+          fill="#090d16" stroke="url(#navRedGrad)" stroke-width="3.5" stroke-linejoin="round" />
+
+    <!-- Right Blade of 'X' (Black with Red Border) -->
+    <path d="M 98 44 L 76 44 L 56 85 L 80 135 L 102 135 L 82 90 Z" 
+          fill="#090d16" stroke="url(#navRedGrad)" stroke-width="3.5" stroke-linejoin="round" />
+
+    <!-- Center Core -->
+    <polygon points="65,65 79,88 65,111 51,88" 
+             fill="#090d16" stroke="url(#navRedGrad)" stroke-width="2.5" />
+    <circle cx="65" cy="88" r="4.5" fill="#ef4444" />
+    <circle cx="65" cy="88" r="2" fill="#ffffff" />
+    <polygon points="65,148 72,135 58,135" fill="url(#navRedGrad)" />
+  </g>
+
+  <!-- Typography -->
+  <g transform="translate(70, 52)">
+    <text font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="34" font-weight="900" letter-spacing="-0.8">
+      <tspan fill="#ffffff">Xephy</tspan>
+      <tspan fill="url(#navRedGrad)">Guard</tspan>
+    </text>
+  </g>
+
+  <!-- Active Status Pill -->
+  <g transform="translate(300, 32)">
+    <rect x="0" y="0" width="76" height="20" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1" />
+    <circle cx="10" cy="10" r="3" fill="#ef4444">
+      <animate attributeName="opacity" values="1;0.4;1" dur="1.8s" repeatCount="indefinite" />
+    </circle>
+    <text x="20" y="14" font-family="system-ui, sans-serif" font-size="9" font-weight="700" fill="#cbd5e1" letter-spacing="0.5">SHIELD</text>
+  </g>
+</svg>

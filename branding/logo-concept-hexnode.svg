@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 240" width="100%" height="100%">
+  <defs>
+    <linearGradient id="hexBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090d16" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+
+    <linearGradient id="neonCyan" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#0ea5e9" />
+    </linearGradient>
+
+    <linearGradient id="neonViolet" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#c084fc" />
+      <stop offset="100%" stop-color="#7c3aed" />
+    </linearGradient>
+
+    <filter id="hexGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="8" stdDeviation="14" flood-color="#0ea5e9" flood-opacity="0.4" />
+    </filter>
+  </defs>
+
+  <rect width="800" height="240" rx="16" fill="url(#hexBg)" />
+
+  <!-- Hexagonal Guardian Emblem -->
+  <g transform="translate(60, 30)" filter="url(#hexGlow)">
+    <!-- Hexagon Outer Boundary -->
+    <polygon points="90,10 160,50 160,130 90,170 20,130 20,50" 
+             fill="#0b1329" stroke="url(#neonCyan)" stroke-width="3" stroke-linejoin="round" />
+
+    <!-- Inner Circuit Pathways -->
+    <path d="M 90 20 L 90 60" stroke="#38bdf8" stroke-width="2" stroke-dasharray="3 3" />
+    <path d="M 90 120 L 90 160" stroke="#38bdf8" stroke-width="2" stroke-dasharray="3 3" />
+    <path d="M 30 55 L 65 75" stroke="#7c3aed" stroke-width="2" />
+    <path d="M 150 55 L 115 75" stroke="#7c3aed" stroke-width="2" />
+    <path d="M 30 125 L 65 105" stroke="#38bdf8" stroke-width="2" />
+    <path d="M 150 125 L 115 105" stroke="#38bdf8" stroke-width="2" />
+
+    <!-- Sharp 'X' Overlapping Bars -->
+    <path d="M 50 45 L 130 135 L 110 135 L 50 65 Z" fill="url(#neonCyan)" />
+    <path d="M 130 45 L 50 135 L 70 135 L 130 65 Z" fill="url(#neonViolet)" opacity="0.9" />
+
+    <!-- Center Integrity Core Node -->
+    <circle cx="90" cy="90" r="16" fill="#030712" stroke="#38bdf8" stroke-width="3" />
+    <circle cx="90" cy="90" r="8" fill="#10b981" />
+    <circle cx="90" cy="90" r="3" fill="#ffffff" />
+  </g>
+
+  <!-- Typography -->
+  <g transform="translate(250, 115)">
+    <text font-family="system-ui, -apple-system, sans-serif" font-size="56" font-weight="900" letter-spacing="-1">
+      <tspan fill="#ffffff">XEPHY</tspan>
+      <tspan fill="url(#neonCyan)">GUARD</tspan>
+    </text>
+    <text y="42" font-family="system-ui, sans-serif" font-size="13" font-weight="700" letter-spacing="4" fill="#64748b">
+      NEXT-GEN LAB GATEWAY &amp; PROCTOR
+    </text>
+  </g>
+</svg>

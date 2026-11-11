@@ -13,7 +13,15 @@ __pycache__/
 /installers/windows/signatures.json
 /installers/windows/ca.crt
 /installers/windows/*.exe
+*.pfx
 # eval outputs
 /eval/results/
 live_ai_meter.obj
 test_dns.obj
+
+# html export
+/xephyguard-html-ui.zip
+/xephyguard-html-ui/
+
+# screen gateway binary
+/xephyguard-screen/gateway/gateway.exe
