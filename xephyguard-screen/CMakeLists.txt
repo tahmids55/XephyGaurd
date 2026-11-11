@@ -109,6 +109,7 @@ add_executable(xgtests
   tests/test_tiles.cpp
   tests/test_encoder.cpp
   tests/test_flow.cpp
+  tests/test_pipeline.cpp
 )
 target_include_directories(xgtests PRIVATE core capture third_party)
 target_link_libraries(xgtests PRIVATE xgcore)

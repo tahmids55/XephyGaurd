@@ -35,3 +35,30 @@
 - Build: GCC 14.2.0 (MinGW) / C++17 with `-Wall -Wextra -Wpedantic` clean (0 warnings in core).
 - All 18 test cases and 955 assertions passing (100% green).
 - `ctest` passes 100%.
+
+
+## WP1: In-process Pipeline (T5) - Milestone M1 - COMPLETE & VERIFIED
+
+### What exists now
+- `tests/test_pipeline.cpp`: Complete end-to-end in-process integration test connecting `FakeCapture` -> `TileTracker` -> `FrameEncoder` -> `encode` -> `decode` -> `ViewerState`.
+- `tests/fixtures/keyframe.bin`: Golden binary serialized keyframe fixture.
+- `tests/fixtures/delta.bin`: Golden binary serialized delta frame fixture.
+- `tests/fixtures/full.bin`: Golden binary serialized full frame fixture.
+
+### Tests & Verification
+1. `Pipeline: End-to-end capture to viewer with PSNR > 30 dB`:
+   - Runs 10 consecutive frames through capture, tracking, encoding, wire roundtrip, and viewer decode/blit.
+   - Evaluates PSNR against source frame after every frame; all frames exceed 30 dB.
+2. `Pipeline: Intermediate frame drop triggers base_seq mismatch and keyframe recovery`:
+   - Frame 1 delivered as KEY (seq 1, base 0).
+   - Frame 2 DELTA (seq 2, base 1) dropped.
+   - Frame 3 DELTA (seq 3, base 2) received: viewer detects mismatch (`base_seq 2 != last_applied 1`) and requests keyframe.
+   - Sender resets flow and forces all tiles pending.
+   - Frame 4 delivered as KEY (seq 4, base 0): viewer recovers cleanly, resetting state and achieving PSNR >= 30 dB.
+3. `Pipeline: Dump fixtures keyframe.bin, delta.bin, full.bin`:
+   - Dumps standard fixtures required by WP2 browser viewer tests into `tests/fixtures/`.
+
+### Status
+- Build: GCC 14.2.0 (MinGW) / C++17 clean (0 warnings).
+- Test suite: 21 test cases, 1026 assertions, 100% passing.
+- `ctest` runs 1/1 tests passed (100%).
