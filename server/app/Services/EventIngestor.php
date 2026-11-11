@@ -277,19 +277,38 @@ class EventIngestor
 
             case 'paste':
             case 'copy':
+                $src = $str('src');
+                $dst = $str('dst');
+                if (! $dst && $type === 'paste') {
+                    $dst = $pc->active_app;
+                }
+                if (! $src && $type === 'copy') {
+                    $src = $pc->active_app;
+                }
                 PasteEvent::create([
                     'pc_id' => $pc->id, 'lab_session_id' => $sid, 'user' => $str('user'), 'is_copy' => $type === 'copy',
                     'chars' => $int('chars'), 'lines' => $int('lines'), 'looks_like_code' => (bool) ($d['code'] ?? false),
-                    'code_score' => (float) ($d['score'] ?? 0), 'source_app' => $str('src'), 'target_app' => $str('dst'),
+                    'code_score' => (float) ($d['score'] ?? 0), 'source_app' => $src, 'target_app' => $dst,
                     'occurred_at' => $at,
                 ]);
+
+                $chars = $int('chars');
+                $lines = $int('lines');
+                $details = $lines > 1 ? "{$chars} ch, {$lines} ln" : "{$chars} ch";
+
+                if ($type === 'paste') {
+                    $pc->last_event = mb_substr("Paste: ".($src ?: '?')." → ".($dst ?: '?')." ({$details})", 0, 160);
+                } else {
+                    $pc->last_event = mb_substr("Copy: ".($src ?: '?')." ({$details})", 0, 160);
+                }
+
                 $threshold = (int) Setting::get('paste_alert_chars', 800);
-                if ($type === 'paste' && $sid && $session->mode === 'test' && $int('chars') >= $threshold) {
-                    $pc->last_event = "Large paste: {$int('chars')} chars";
+                if ($type === 'paste' && $sid && $session->mode === 'test' && $chars >= $threshold) {
+                    $pc->last_event = mb_substr("Large paste: ".($src ?: '?')." → ".($dst ?: '?')." ({$chars} chars)", 0, 160);
 
                     return $this->alert($pc, $sid, 'behavior.large_paste', 'medium', 'behavior',
-                        sprintf('Large paste: %d characters, %d lines%s', $int('chars'), $int('lines'),
-                            ($d['code'] ?? false) ? ' (looks like code)' : ''), $d, $at, $str('user'));
+                        sprintf('Large paste: %d characters, %d lines%s from %s to %s', $chars, $lines,
+                            ($d['code'] ?? false) ? ' (looks like code)' : '', $src ?: '?', $dst ?: '?'), $d, $at, $str('user'));
                 }
 
                 return null;

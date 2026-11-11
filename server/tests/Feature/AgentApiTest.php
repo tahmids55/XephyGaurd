@@ -137,4 +137,93 @@ class AgentApiTest extends TestCase
         $pc->update(['retired_at' => now()]);
         $this->withHeaders($this->agentHeaders($token, $cert))->getJson('/api/agent/v1/policy')->assertUnauthorized();
     }
+
+    public function test_copy_from_chrome_and_paste_in_vscode_updates_dashboard(): void
+    {
+        $lab = $this->bootLab();
+        [$pc, $token, $cert] = $this->enrolledPc();
+        $h = $this->agentHeaders($token, $cert);
+
+        // 1. Policy includes clipboard and keys collection
+        $pol = $this->withHeaders($h)->getJson('/api/agent/v1/policy')->assertOk()->json('policy');
+        $this->assertTrue($pol['collect']['clipboard']);
+        $this->assertTrue($pol['collect']['keys']);
+
+        // 2. Student copies in Chrome
+        $events = [
+            $this->ev(1, 'window_focus', ['app' => 'chrome', 'title' => 'Tutorial - Google Chrome', 'user' => 'student1']),
+            $this->ev(2, 'copy', ['chars' => 200, 'lines' => 8, 'code' => true, 'score' => 0.95, 'src' => 'chrome', 'dst' => '', 'user' => 'student1']),
+        ];
+        $this->withHeaders($h)->postJson('/api/agent/v1/events', $this->batch($pc->id, $events))->assertOk();
+
+        $pc->refresh();
+        $this->assertStringContainsString('Copy: chrome', $pc->last_event);
+
+        // 3. Student switches to VS Code and pastes
+        $events2 = [
+            $this->ev(3, 'window_focus', ['app' => 'code', 'title' => 'main.cpp - Visual Studio Code', 'user' => 'student1']),
+            $this->ev(4, 'paste', ['chars' => 200, 'lines' => 8, 'code' => true, 'score' => 0.95, 'src' => 'chrome', 'dst' => 'code', 'user' => 'student1']),
+        ];
+        $this->withHeaders($h)->postJson('/api/agent/v1/events', $this->batch($pc->id, $events2))->assertOk();
+
+        $pc->refresh();
+        // Tile reflects chrome -> code paste
+        $this->assertStringContainsString('Paste: chrome → code', $pc->last_event);
+
+        // Teacher dashboard PC drawer shows paste in timeline and pastes tab
+        $dash = $this->actingAs($this->user('instructor'))->getJson("/pcs/{$pc->id}")->assertOk()->json();
+        $this->assertSame('Paste: chrome → code (200 ch, 8 ln)', $dash['pc']['last_event']);
+
+        $timelineSummary = collect($dash['timeline'])->firstWhere('type', 'paste')['summary'];
+        $this->assertStringContainsString('chrome → code: paste 200 chars / 8 lines (code)', $timelineSummary);
+
+        $pastesTab = collect($dash['pastes'])->firstWhere('is_copy', false);
+        $this->assertSame('chrome', $pastesTab['source_app']);
+        $this->assertSame('code', $pastesTab['target_app']);
+        $this->assertSame(200, $pastesTab['chars']);
+
+        // 4. Student copies in a.cpp and pastes in b.cpp in the same VS Code
+        $events3 = [
+            $this->ev(5, 'window_focus', ['app' => 'code', 'title' => 'a.cpp - Project - Visual Studio Code', 'user' => 'student1']),
+            $this->ev(6, 'copy', ['chars' => 85, 'lines' => 4, 'code' => true, 'score' => 0.9, 'src' => 'code (a.cpp)', 'dst' => '', 'user' => 'student1']),
+            $this->ev(7, 'window_focus', ['app' => 'code', 'title' => 'b.cpp - Project - Visual Studio Code', 'user' => 'student1']),
+            $this->ev(8, 'paste', ['chars' => 85, 'lines' => 4, 'code' => true, 'score' => 0.9, 'src' => 'code (a.cpp)', 'dst' => 'code (b.cpp)', 'user' => 'student1']),
+        ];
+        $this->withHeaders($h)->postJson('/api/agent/v1/events', $this->batch($pc->id, $events3))->assertOk();
+
+        $pc->refresh();
+        $this->assertSame('Paste: code (a.cpp) → code (b.cpp) (85 ch, 4 ln)', $pc->last_event);
+
+        $dash2 = $this->actingAs($this->user('instructor'))->getJson("/pcs/{$pc->id}")->assertOk()->json();
+        $this->assertSame('Paste: code (a.cpp) → code (b.cpp) (85 ch, 4 ln)', $dash2['pc']['last_event']);
+
+        $timelineSummary2 = collect($dash2['timeline'])->firstWhere('summary', 'code (a.cpp) → code (b.cpp): paste 85 chars / 4 lines (code)');
+        $this->assertNotNull($timelineSummary2);
+
+        $pastesTab2 = collect($dash2['pastes'])->where('is_copy', false)->firstWhere('source_app', 'code (a.cpp)');
+        $this->assertSame('code (b.cpp)', $pastesTab2['target_app']);
+        $this->assertSame(85, $pastesTab2['chars']);
+    }
+
+    public function test_policy_includes_browser_ai_overview_suppression(): void
+    {
+        $lab = $this->bootLab();
+        [$pc, $token, $cert] = $this->enrolledPc();
+        $h = $this->agentHeaders($token, $cert);
+
+        // 1. Session with 'Test: AI blocked' (google_udm14 is true)
+        $profile = $this->profile('Test: AI blocked');
+        app(SessionManager::class)->start($lab, $profile, 'EXAM1');
+
+        $res = $this->withHeaders($h)->getJson('/api/agent/v1/policy')->assertOk()->json();
+        $this->assertTrue($res['policy']['suppress_ai_overview']);
+
+        // 2. Update profile to disable google_udm14
+        $net = $profile->network;
+        $net['google_udm14'] = false;
+        $profile->update(['network' => $net]);
+
+        $res2 = $this->withHeaders($h)->getJson('/api/agent/v1/policy')->assertOk()->json();
+        $this->assertFalse($res2['policy']['suppress_ai_overview']);
+    }
 }

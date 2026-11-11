@@ -94,7 +94,10 @@ void Agent::apply_policy(const Policy& p) {
         reevaluate_ = true;
     }
     next_run_.clear();
-    if (plat_.system) plat_.system->set_exam_mode(p.mode == Mode::test);
+    if (plat_.system) {
+        plat_.system->set_exam_mode(p.mode == Mode::test);
+        plat_.system->set_browser_ai_overview_suppressed(p.suppress_ai_overview);
+    }
     push_helper_config();
     if (stop_) restart_watchers();
 }
@@ -797,10 +800,19 @@ void Agent::on_helper_message(const IIpcServer::Peer& peer, const std::string& l
     } else if (t == "paste") {
         if (!pol.collect.clipboard) return;
         const bool is_copy = j.value("copy", false);
+        auto norm_target = [](const std::string& s) -> std::string {
+            auto pos = s.find(" (");
+            if (pos != std::string::npos && s.ends_with(')')) {
+                return normalize_exe(s.substr(0, pos)) + s.substr(pos);
+            }
+            return normalize_exe(s);
+        };
         sink_->emit(is_copy ? ev::copy : ev::paste,
                     {{"chars", j.value("chars", 0)}, {"lines", j.value("lines", 0)}, {"code", j.value("code", false)},
-                     {"score", j.value("score", 0.0)}, {"src", limit(normalize_exe(j.value("src", "")), 64)},
-                     {"dst", limit(normalize_exe(j.value("dst", "")), 64)}, {"user", user}});
+                     {"score", j.value("score", 0.0)}, {"src", limit(norm_target(j.value("src", "")), 64)},
+                     {"dst", limit(norm_target(j.value("dst", "")), 64)}, {"user", user}});
+        wake_uplink_.store(true);
+        flush_cv_.notify_all();
     } else if (t == "keys") {
         if (!pol.collect.keys) return;
         json k = j;
@@ -1518,7 +1530,10 @@ int Agent::run(std::atomic<bool>& stop) {
     threads_.clear();
     if (cfg_.enrolled()) flush_once();
     queue_->kv_set("clean_shutdown", "1");
-    if (plat_.system) plat_.system->set_exam_mode(false);
+    if (plat_.system) {
+        plat_.system->set_exam_mode(false);
+        plat_.system->set_browser_ai_overview_suppressed(false);
+    }
     if (plat_.processes) plat_.processes->stop();
     if (plat_.network) plat_.network->stop();
     if (plat_.devices) plat_.devices->stop();

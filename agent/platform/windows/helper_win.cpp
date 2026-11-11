@@ -17,9 +17,14 @@
 namespace xg::win {
 namespace {
 
+std::string g_last_win_app;
+std::string g_last_win_title;
+
 std::string window_app(HWND w) {
+    if (!w) return "";
     DWORD pid = 0;
     GetWindowThreadProcessId(w, &pid);
+    if (pid == 0) return "";
     return normalize_exe(process_image(pid));
 }
 
@@ -47,6 +52,10 @@ bool measure_clipboard(PasteInfo& out, HWND owner_hint) {
         }
     }
     if (HWND o = GetClipboardOwner()) out.source_app = window_app(o);
+    if (out.is_copy && out.source_app.empty()) {
+        if (HWND fg = GetForegroundWindow()) out.source_app = window_app(fg);
+        if (out.source_app.empty()) out.source_app = g_last_win_app;
+    }
     CloseClipboard();
     return ok;
 }
@@ -105,8 +114,6 @@ private:
 
 // ------------------------------------------------------------------------------ window monitor
 std::function<void(const WindowInfo&)> g_window_cb;
-std::string g_last_win_app;
-std::string g_last_win_title;
 
 void CALLBACK win_event(HWINEVENTHOOK, DWORD, HWND hwnd, LONG id_object, LONG id_child, DWORD, DWORD) {
     if (id_object != OBJID_WINDOW || id_child != CHILDID_SELF || !hwnd || !g_window_cb) return;
@@ -282,7 +289,8 @@ std::unique_ptr<IClipboardMonitor> make_clipboard_monitor() { return std::make_u
 std::unique_ptr<IInputTimingMonitor> make_input_monitor() { return std::make_unique<InputMonitor>(); }
 std::unique_ptr<IStudentUi> make_student_ui() { return std::make_unique<TrayUi>(); }
 bool probe_clipboard(PasteInfo& out) {
-    Sleep(30);  // let the target application finish its own clipboard read first
+    out.is_copy = false;
+    Sleep(20);  // let the target application finish its own clipboard read first
     return measure_clipboard(out, nullptr);
 }
 

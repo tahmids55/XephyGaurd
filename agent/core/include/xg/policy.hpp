@@ -47,6 +47,7 @@ struct Policy {
     std::set<std::string> kill_exempt;        // never kill these normalized exe names
     std::string signatures_version;
     std::string notice_text;                  // indicator / banner text
+    bool suppress_ai_overview = false;        // suppress Google Search AI overview locally via browser policies
 
     static Policy default_for(Mode m);
     static Policy from_json(const json& j, std::string* err = nullptr);

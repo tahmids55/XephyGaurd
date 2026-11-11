@@ -56,7 +56,7 @@ class PolicyBuilder
             'session_id' => $session?->id ?? 0,
             'profile' => $profile->name,
             'title_capture' => Setting::get("privacy.title_capture.$mode", 'full'),
-            'collect' => array_merge(['window' => true], $agent['collect'] ?? []),
+            'collect' => array_merge(['window' => true, 'clipboard' => true, 'keys' => true], $agent['collect'] ?? []),
             'intervals' => $agent['intervals'] ?? null,
             'actions' => array_filter(['default' => $agent['default_actions'] ?? null, 'rules' => $ruleActions ?: null]),
             'disabled_rules' => $disabled,
@@ -64,6 +64,7 @@ class PolicyBuilder
             'kill_exempt' => $agent['kill_exempt'] ?? [],
             'signatures_version' => SignatureVersion::active()?->version ?? '',
             'notice_text' => Setting::get('notice_text'),
+            'suppress_ai_overview' => (bool) ($profile->network['google_udm14'] ?? false),
         ], fn ($v) => $v !== null && $v !== []);
         $policy['session_id'] = $session?->id ?? 0;
         $policy['version'] = self::version($policy);

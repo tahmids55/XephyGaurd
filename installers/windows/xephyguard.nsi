@@ -53,7 +53,7 @@ Function .onInit
   ${EndIf}
   SetRegView 64
   StrCpy $KEY ""
-  StrCpy $CCC "192.168.0.51"
+  StrCpy $CCC "192.168.0.50"
   StrCpy $CAFP "2d0709ea9d88aa7bbac511a60eb7f75cf575123756304bf2f5ef165888ebdec2"
   ${GetParameters} $0
   ${GetOptions} $0 "/ENROLLKEY=" $1

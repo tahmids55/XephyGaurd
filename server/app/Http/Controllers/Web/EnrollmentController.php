@@ -22,10 +22,15 @@ class EnrollmentController extends Controller
         $ca = CertificateAuthority::fromConfig();
         $downloads = collect(glob(storage_path('app/public/downloads/*')) ?: [])->map(fn ($p) => basename($p));
 
+        $reqHost = request()->getHost();
+        $ccc = (filter_var($reqHost, FILTER_VALIDATE_IP) && $reqHost !== '127.0.0.1')
+            ? $reqHost
+            : Setting::get('ccc_ip', $reqHost);
+
         return view('enroll.index', [
             'lab' => $lab,
             'key' => $lab->enrollKey(),
-            'ccc' => Setting::get('ccc_ip'),
+            'ccc' => $ccc,
             'fingerprint' => $ca->exists() ? $ca->fingerprint() : null,
             'pending' => Enrollment::query()->where('status', 'pending')->latest()->get(),
             'recent' => Enrollment::query()->where('status', '!=', 'pending')->with('pc')->latest('decided_at')->limit(10)->get(),

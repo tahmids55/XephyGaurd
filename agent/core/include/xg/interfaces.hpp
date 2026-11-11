@@ -119,6 +119,8 @@ public:
     virtual SelfUsage self_usage() = 0;
     /// Enables/disables exam-mode lockdown policies (e.g. DisableTaskMgr on Windows) cleanly via official OS APIs.
     virtual void set_exam_mode(bool /*active*/) {}
+    /// Suppresses or restores browser AI Overview search features (Chrome, Edge, Brave, Firefox) via official enterprise policies.
+    virtual void set_browser_ai_overview_suppressed(bool /*suppressed*/) {}
 };
 
 class IGpuMonitor {

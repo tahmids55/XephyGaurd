@@ -27,8 +27,13 @@ class PublicController extends Controller
     /** `curl -fsSL http://<ccc>/install/linux.sh | sudo bash -s -- --key <KEY>` */
     public function linuxInstaller(): Response
     {
+        $reqHost = request()->getHost();
+        $ccc = (filter_var($reqHost, FILTER_VALIDATE_IP) && $reqHost !== '127.0.0.1')
+            ? $reqHost
+            : Setting::get('ccc_ip', $reqHost);
+
         $script = view('public.install-linux', [
-            'ccc' => Setting::get('ccc_ip'),
+            'ccc' => $ccc,
             'fingerprint' => CertificateAuthority::fromConfig()->fingerprint(),
         ])->render();
 
@@ -50,7 +55,10 @@ class PublicController extends Controller
         $lab = Lab::current();
         $enrollKey = $lab->enrollKey() ?? 'XG-A77CFB-6554C8-489B53';
         $caFingerprint = CertificateAuthority::fromConfig()->fingerprint();
-        $serverIp = $lab->ccc_ip ?: Setting::get('ccc_ip', request()->getHost());
+        $reqHost = request()->getHost();
+        $serverIp = (filter_var($reqHost, FILTER_VALIDATE_IP) && $reqHost !== '127.0.0.1')
+            ? $reqHost
+            : ($lab->ccc_ip ?: Setting::get('ccc_ip', $reqHost));
         $serverUrl = $serverIp;
 
         $silentCmd = "XephyGuard-Setup-0.1.0.exe /S /KEY={$enrollKey} /CCC={$serverUrl} /CAFP={$caFingerprint}";

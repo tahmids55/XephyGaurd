@@ -158,7 +158,11 @@ class DashboardController extends Controller
             'process_start' => 'started '.($d['exe'] ?? '?'),
             'process_stop' => 'stopped pid '.($d['pid'] ?? '?'),
             'window_focus' => 'focus '.($d['app'] ?? '').(($d['title'] ?? '') && ($d['title'] ?? '') !== ($d['app'] ?? '') ? ': '.$d['title'] : ''),
-            'paste', 'copy' => $type.' '.($d['chars'] ?? 0).' chars / '.($d['lines'] ?? 0).' lines'.(($d['code'] ?? false) ? ' (code)' : ''),
+            'paste' => (! empty($d['src']) || ! empty($d['dst']))
+                ? ($d['src'] ?: '?').' → '.($d['dst'] ?: '?').': paste '.($d['chars'] ?? 0).' chars / '.($d['lines'] ?? 0).' lines'.(($d['code'] ?? false) ? ' (code)' : '')
+                : 'paste '.($d['chars'] ?? 0).' chars / '.($d['lines'] ?? 0).' lines'.(($d['code'] ?? false) ? ' (code)' : ''),
+            'copy' => (! empty($d['src']) ? ($d['src'].': ') : '')
+                .'copy '.($d['chars'] ?? 0).' chars / '.($d['lines'] ?? 0).' lines'.(($d['code'] ?? false) ? ' (code)' : ''),
             'listening_port' => 'port '.($d['address'] ?? '127.0.0.1').':'.($d['port'] ?? '?').' ('.($d['process'] ?? '?').') ['.($d['rule_id'] ?? '').']',
             'net_adapter' => ($d['change'] ?? '').' adapter '.($d['name'] ?? '').(! empty($d['description']) ? ' ('.$d['description'].')' : (! empty($d['driver']) ? ' ('.$d['driver'].')' : '')).(! empty($d['kind']) ? ' ['.$d['kind'].']' : ''),
             'device' => ($d['action'] ?? '').' '.($d['class'] ?? 'usb').' '.(($d['model'] ?? '') ?: (($d['vendor'] ?? '') ? ($d['vendor'].':'.($d['product'] ?? '')) : '')).(! empty($d['rule_id']) ? ' ['.$d['rule_id'].']' : ''),

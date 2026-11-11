@@ -86,6 +86,7 @@ Policy Policy::default_for(Mode m) {
         case Mode::test:
             p.title_capture = TitleCapture::app_only;
             p.collect.window = p.collect.clipboard = p.collect.keys = p.collect.files = p.collect.gpu = true;
+            p.suppress_ai_overview = true;
             p.intervals.extension_scan_s = 15;
             p.intervals.artifact_scan_s = 900;
             p.default_actions[Severity::info] = {A::log};
@@ -153,6 +154,9 @@ Policy Policy::from_json(const json& j, std::string* err) {
         for (const auto& k : j.value("kill_exempt", json::array())) p.kill_exempt.insert(normalize_exe(k.get<std::string>()));
         p.signatures_version = j.value("signatures_version", std::string{});
         if (j.contains("notice_text") && j["notice_text"].is_string()) p.notice_text = j["notice_text"].get<std::string>();
+        if (j.contains("suppress_ai_overview") && j["suppress_ai_overview"].is_boolean()) {
+            p.suppress_ai_overview = j["suppress_ai_overview"].get<bool>();
+        }
     } catch (const std::exception& e) {
         if (err) *err = e.what();
     }
@@ -193,6 +197,7 @@ json Policy::to_json() const {
         {"kill_exempt", kill_exempt},
         {"signatures_version", signatures_version},
         {"notice_text", notice_text},
+        {"suppress_ai_overview", suppress_ai_overview},
     };
 }
 

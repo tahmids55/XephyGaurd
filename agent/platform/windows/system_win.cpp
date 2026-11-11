@@ -100,6 +100,11 @@ public:
         }
         return u;
     }
+    ~SystemInfo() override {
+        if (ai_overview_suppressed_) {
+            set_browser_ai_overview_suppressed(false);
+        }
+    }
     void set_exam_mode(bool active) override {
         HKEY hk = nullptr;
         if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
@@ -111,6 +116,93 @@ public:
                 RegDeleteValueW(hk, L"DisableTaskMgr");
             }
             RegCloseKey(hk);
+        }
+    }
+    void set_browser_ai_overview_suppressed(bool active) override {
+        ai_overview_suppressed_ = active;
+
+        // Chromium-based browsers: Google Chrome, Microsoft Edge, Brave Browser, Opera, Vivaldi
+        const wchar_t* chromium_keys[] = {
+            L"SOFTWARE\\Policies\\Google\\Chrome",
+            L"SOFTWARE\\Policies\\Microsoft\\Edge",
+            L"SOFTWARE\\Policies\\BraveSoftware\\Brave",
+            L"SOFTWARE\\Policies\\Opera Software\\Opera",
+            L"SOFTWARE\\Policies\\Vivaldi"
+        };
+        for (const auto* key_path : chromium_keys) {
+            set_chromium_search_policy(key_path, active);
+        }
+
+        // Mozilla Firefox
+        set_firefox_search_policy(active);
+
+        log::info("browser policy: ai overview suppression {}", active ? "enabled (&udm=14 enforced)" : "disabled");
+    }
+
+private:
+    bool ai_overview_suppressed_ = false;
+
+    static void set_chromium_search_policy(const wchar_t* subkey, bool active) {
+        if (active) {
+            HKEY hk = nullptr;
+            if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, subkey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &hk, nullptr) == ERROR_SUCCESS) {
+                DWORD one = 1;
+                const wchar_t* search_url = L"https://www.google.com/search?q={searchTerms}&udm=14";
+                const wchar_t* suggest_url = L"https://www.google.com/complete/search?output=chrome&q={searchTerms}";
+                const wchar_t* new_tab_url = L"https://www.google.com";
+                const wchar_t* name = L"Google";
+                const wchar_t* icon_url = L"https://www.google.com/favicon.ico";
+
+                RegSetValueExW(hk, L"DefaultSearchProviderEnabled", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&one), sizeof(one));
+                RegSetValueExW(hk, L"DefaultSearchProviderSearchURL", 0, REG_SZ, reinterpret_cast<const BYTE*>(search_url), DWORD((wcslen(search_url) + 1) * sizeof(wchar_t)));
+                RegSetValueExW(hk, L"DefaultSearchProviderSuggestURL", 0, REG_SZ, reinterpret_cast<const BYTE*>(suggest_url), DWORD((wcslen(suggest_url) + 1) * sizeof(wchar_t)));
+                RegSetValueExW(hk, L"DefaultSearchProviderNewTabURL", 0, REG_SZ, reinterpret_cast<const BYTE*>(new_tab_url), DWORD((wcslen(new_tab_url) + 1) * sizeof(wchar_t)));
+                RegSetValueExW(hk, L"DefaultSearchProviderName", 0, REG_SZ, reinterpret_cast<const BYTE*>(name), DWORD((wcslen(name) + 1) * sizeof(wchar_t)));
+                RegSetValueExW(hk, L"DefaultSearchProviderIconURL", 0, REG_SZ, reinterpret_cast<const BYTE*>(icon_url), DWORD((wcslen(icon_url) + 1) * sizeof(wchar_t)));
+                RegCloseKey(hk);
+            }
+        } else {
+            HKEY hk = nullptr;
+            if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, subkey, 0, KEY_SET_VALUE, &hk) == ERROR_SUCCESS) {
+                RegDeleteValueW(hk, L"DefaultSearchProviderEnabled");
+                RegDeleteValueW(hk, L"DefaultSearchProviderSearchURL");
+                RegDeleteValueW(hk, L"DefaultSearchProviderSuggestURL");
+                RegDeleteValueW(hk, L"DefaultSearchProviderNewTabURL");
+                RegDeleteValueW(hk, L"DefaultSearchProviderName");
+                RegDeleteValueW(hk, L"DefaultSearchProviderIconURL");
+                RegCloseKey(hk);
+            }
+        }
+    }
+
+    static void set_firefox_search_policy(bool active) {
+        const wchar_t* base_key = L"SOFTWARE\\Policies\\Mozilla\\Firefox\\SearchEngines";
+        if (active) {
+            HKEY hk = nullptr;
+            if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, base_key, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &hk, nullptr) == ERROR_SUCCESS) {
+                const wchar_t* default_engine = L"Google";
+                RegSetValueExW(hk, L"Default", 0, REG_SZ, reinterpret_cast<const BYTE*>(default_engine), DWORD((wcslen(default_engine) + 1) * sizeof(wchar_t)));
+                RegCloseKey(hk);
+            }
+            HKEY hk_add = nullptr;
+            if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Policies\\Mozilla\\Firefox\\SearchEngines\\Add\\1", 0, nullptr, 0, KEY_SET_VALUE, nullptr, &hk_add, nullptr) == ERROR_SUCCESS) {
+                const wchar_t* name = L"Google";
+                const wchar_t* url = L"https://www.google.com/search?q={searchTerms}&udm=14";
+                const wchar_t* method = L"GET";
+                const wchar_t* icon = L"https://www.google.com/favicon.ico";
+                const wchar_t* alias = L"google";
+                const wchar_t* desc = L"Google (Web Only)";
+
+                RegSetValueExW(hk_add, L"Name", 0, REG_SZ, reinterpret_cast<const BYTE*>(name), DWORD((wcslen(name) + 1) * sizeof(wchar_t)));
+                RegSetValueExW(hk_add, L"URLTemplate", 0, REG_SZ, reinterpret_cast<const BYTE*>(url), DWORD((wcslen(url) + 1) * sizeof(wchar_t)));
+                RegSetValueExW(hk_add, L"Method", 0, REG_SZ, reinterpret_cast<const BYTE*>(method), DWORD((wcslen(method) + 1) * sizeof(wchar_t)));
+                RegSetValueExW(hk_add, L"IconURL", 0, REG_SZ, reinterpret_cast<const BYTE*>(icon), DWORD((wcslen(icon) + 1) * sizeof(wchar_t)));
+                RegSetValueExW(hk_add, L"Alias", 0, REG_SZ, reinterpret_cast<const BYTE*>(alias), DWORD((wcslen(alias) + 1) * sizeof(wchar_t)));
+                RegSetValueExW(hk_add, L"Description", 0, REG_SZ, reinterpret_cast<const BYTE*>(desc), DWORD((wcslen(desc) + 1) * sizeof(wchar_t)));
+                RegCloseKey(hk_add);
+            }
+        } else {
+            RegDeleteTreeW(HKEY_LOCAL_MACHINE, base_key);
         }
     }
 };

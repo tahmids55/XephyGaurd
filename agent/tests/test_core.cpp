@@ -85,19 +85,24 @@ TEST_CASE("policy defaults and JSON round trip") {
     auto test = Policy::default_for(Mode::test);
     auto acts = test.actions_for("proc.ollama", Severity::high);
     CHECK(acts == std::vector<Action>{Action::log, Action::warn, Action::alert, Action::kill});  // AI apps are closed in tests
+    CHECK(test.suppress_ai_overview);
     auto always = Policy::default_for(Mode::always_on);
     CHECK(always.actions_for("x", Severity::critical) == std::vector<Action>{Action::log, Action::alert});  // never closes
+    CHECK_FALSE(always.suppress_ai_overview);
     auto practice = Policy::default_for(Mode::practice);
     CHECK(practice.actions_for("x", Severity::high) == std::vector<Action>{Action::log, Action::alert});  // never closes
+    CHECK_FALSE(practice.suppress_ai_overview);
     CHECK_FALSE(always.collect.keys);
 
     json j = {{"version", 7}, {"mode", "test"}, {"session_id", 3}, {"title_capture", "full"},
               {"collect", {{"keys", false}}}, {"intervals", {{"heartbeat_s", 1}}},
               {"actions", {{"rules", {{"proc.ollama", {"log", "kill", "alert"}}}}}},
-              {"disabled_rules", {"vm.container"}}};
+              {"disabled_rules", {"vm.container"}},
+              {"suppress_ai_overview", true}};
     auto p = Policy::from_json(j);
     CHECK(p.version == 7);
     CHECK(p.mode == Mode::test);
+    CHECK(p.suppress_ai_overview);
     CHECK_FALSE(p.collect.keys);
     CHECK(p.collect.clipboard);                // inherited from the Test default
     CHECK(p.intervals.heartbeat_s == 2);       // clamped
