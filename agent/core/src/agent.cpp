@@ -833,6 +833,8 @@ void Agent::push_helper_config() {
     plat_.ipc->broadcast(ipc::line({{"t", "config"},
                                     {"mode", to_string(p.mode)},
                                     {"title_capture", to_string(p.title_capture)},
+                                    {"ccc_host", cfg_.ccc_host},
+                                    {"pc_id", cfg_.pc_id},
                                     {"collect", {{"window", p.collect.window}, {"clipboard", p.collect.clipboard},
                                                  {"keys", p.collect.keys}}}}));
     plat_.ipc->broadcast(ipc::line({{"t", "indicator"},

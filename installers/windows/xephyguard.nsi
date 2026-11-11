@@ -53,7 +53,7 @@ Function .onInit
   ${EndIf}
   SetRegView 64
   StrCpy $KEY ""
-  StrCpy $CCC "192.168.0.50"
+  StrCpy $CCC "192.168.0.51"
   StrCpy $CAFP "2d0709ea9d88aa7bbac511a60eb7f75cf575123756304bf2f5ef165888ebdec2"
   ${GetParameters} $0
   ${GetOptions} $0 "/ENROLLKEY=" $1
@@ -173,7 +173,7 @@ Section "Agent" SecAgent
   ${If} ${FileExists} "$EXEDIR\ca.crt"
     CopyFiles /SILENT "$EXEDIR\ca.crt" "$COMMONPROGRAMDATA\XephyGuard\ca.crt"
   ${EndIf}
-  nsExec::ExecToLog 'icacls "$COMMONPROGRAMDATA\XephyGuard" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F"'
+  nsExec::ExecToLog 'icacls "$COMMONPROGRAMDATA\XephyGuard" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX"'
   nsExec::ExecToLog 'icacls "$INSTDIR" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX"'
 
   ; tamper manifest (expected hashes of our binaries)
