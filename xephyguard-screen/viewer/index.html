@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>XephyGuard Screen View - Standalone Test</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      max-width: 1280px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      background: #1e293b;
+      border-radius: 8px;
+    }
+    .status {
+      font-family: monospace;
+      font-size: 14px;
+      color: #38bdf8;
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+    }
+    button {
+      padding: 8px 16px;
+      font-weight: 600;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      background: #3b82f6;
+      color: white;
+    }
+    button:hover {
+      background: #2563eb;
+    }
+    button.stop {
+      background: #ef4444;
+    }
+    button.stop:hover {
+      background: #dc2626;
+    }
+    .canvas-wrap {
+      position: relative;
+      background: #020617;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 480px;
+    }
+    canvas {
+      max-width: 100%;
+      height: auto;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h2 style="margin: 0 0 4px 0;">XephyGuard Screen View Monitor</h2>
+        <div id="status" class="status">Status: Disconnected</div>
+      </div>
+      <div class="controls">
+        <button id="btnConnect">Connect (Live)</button>
+        <button id="btnDisconnect" class="stop" disabled>Disconnect</button>
+      </div>
+    </div>
+
+    <div class="canvas-wrap">
+      <canvas id="screenCanvas"></canvas>
+    </div>
+  </div>
+
+  <script type="module">
+    import { ScreenViewer } from './viewer.js';
+
+    const canvas = document.getElementById('screenCanvas');
+    const statusEl = document.getElementById('status');
+    const btnConnect = document.getElementById('btnConnect');
+    const btnDisconnect = document.getElementById('btnDisconnect');
+
+    let viewer = null;
+
+    btnConnect.addEventListener('click', () => {
+      const wsUrl = 'ws://127.0.0.1:8082/view?token=dev';
+      statusEl.textContent = 'Connecting to ' + wsUrl + '...';
+
+      viewer = new ScreenViewer(wsUrl, canvas);
+      viewer.connect();
+
+      viewer.ws.addEventListener('open', () => {
+        statusEl.textContent = 'Connected. Waiting for agent frames...';
+        btnConnect.disabled = true;
+        btnDisconnect.disabled = false;
+      });
+
+      viewer.ws.addEventListener('close', () => {
+        statusEl.textContent = 'Disconnected.';
+        btnConnect.disabled = false;
+        btnDisconnect.disabled = true;
+      });
+
+      viewer.ws.addEventListener('error', (err) => {
+        statusEl.textContent = 'Connection error (make sure Go gateway is running on :8082).';
+      });
+    });
+
+    btnDisconnect.addEventListener('click', () => {
+      if (viewer) {
+        viewer.disconnect();
+        viewer = null;
+      }
+      statusEl.textContent = 'Disconnected by user.';
+      btnConnect.disabled = false;
+      btnDisconnect.disabled = true;
+    });
+  </script>
+</body>
+</html>
