@@ -37,6 +37,7 @@ type Stream struct {
 	mu           sync.Mutex
 	viewers      map[uint64]*Viewer
 	nextViewerID uint64
+	lastKeyframe []byte
 	ctx          context.Context
 	cancel       context.CancelFunc
 }
@@ -72,6 +73,31 @@ func (s *RelayServer) getOrCreateStream(streamID uint32) *Stream {
 	if !exists {
 		st = newStream(streamID)
 		s.streams[streamID] = st
+	}
+	return st
+}
+
+func (s *RelayServer) findStreamForViewer(preferredID uint32) *Stream {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 1. If preferred stream has an active agent connection, use it
+	if st, exists := s.streams[preferredID]; exists && st.agentConn != nil {
+		return st
+	}
+
+	// 2. If preferred stream has no agent, check if another active stream has an agent
+	for _, st := range s.streams {
+		if st.agentConn != nil {
+			return st
+		}
+	}
+
+	// 3. Fallback: get or create preferred stream
+	st, exists := s.streams[preferredID]
+	if !exists {
+		st = newStream(preferredID)
+		s.streams[preferredID] = st
 	}
 	return st
 }
@@ -177,6 +203,7 @@ func (s *RelayServer) HandleAgent(w http.ResponseWriter, r *http.Request) {
 			}
 
 			frameStreamID := binary.LittleEndian.Uint32(data[8:12])
+			flags := binary.LittleEndian.Uint16(data[4:6])
 			monitorID := binary.LittleEndian.Uint16(data[6:8])
 
 			if stream == nil || stream.streamID != frameStreamID {
@@ -186,6 +213,12 @@ func (s *RelayServer) HandleAgent(w http.ResponseWriter, r *http.Request) {
 			stream.mu.Lock()
 			stream.agentConn = c
 			stream.agentID = agentID
+
+			// Cache keyframe for instant display on new viewer connections
+			if (flags & 1) != 0 {
+				stream.lastKeyframe = make([]byte, len(data))
+				copy(stream.lastKeyframe, data)
+			}
 
 			// Fan out to viewers
 			for _, v := range stream.viewers {
@@ -229,7 +262,7 @@ func (s *RelayServer) HandleView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stream := s.getOrCreateStream(streamID)
+	stream := s.findStreamForViewer(streamID)
 
 	stream.mu.Lock()
 	if len(stream.viewers) >= kMaxViewers {
@@ -245,6 +278,20 @@ func (s *RelayServer) HandleView(w http.ResponseWriter, r *http.Request) {
 		ch: make(chan []byte, kViewerQueueSize),
 	}
 	stream.viewers[viewerID] = v
+
+	// If we have a cached keyframe, immediately push it to the new viewer
+	if len(stream.lastKeyframe) > 0 {
+		select {
+		case v.ch <- stream.lastKeyframe:
+		default:
+		}
+	}
+
+	// Always trigger an immediate keyframe request to the agent
+	select {
+	case stream.agentOut <- buildKeyframeReq(stream.streamID, 0):
+	default:
+	}
 	stream.mu.Unlock()
 
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{

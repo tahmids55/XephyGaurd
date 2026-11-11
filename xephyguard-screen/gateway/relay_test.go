@@ -137,6 +137,13 @@ func TestPairingAndForwardingBothDirections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agent read ACK failed: %v", err)
 	}
+	// Initial keyframe request might precede ACK
+	if len(agentRcvd) >= 4 && agentRcvd[3] == 4 {
+		_, agentRcvd, err = agentConn.Read(ctx)
+		if err != nil {
+			t.Fatalf("agent read ACK after keyframe req failed: %v", err)
+		}
+	}
 	if len(agentRcvd) < 28 || agentRcvd[3] != 3 {
 		t.Fatalf("agent did not receive ACK message: %v", agentRcvd)
 	}

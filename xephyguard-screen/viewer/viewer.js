@@ -225,6 +225,7 @@ export class ScreenViewer {
     this.ws.binaryType = 'arraybuffer';
 
     this.ws.onopen = () => {
+      this.requestKeyframe(0, 0);
       if (this.options.onOpen) this.options.onOpen();
     };
 
@@ -285,12 +286,17 @@ export class ScreenViewer {
       this.lastAppliedSeq = msg.seq;
     } else if (isDelta) {
       if (this.waitingForKeyframe) {
+        if (Date.now() - (this.keyframeReqTime || 0) > 1500) {
+          this.requestKeyframe(msg.streamId, msg.monitorId);
+          this.keyframeReqTime = Date.now();
+        }
         return; // Drop deltas until requested keyframe arrives
       }
       if (msg.baseSeq !== this.lastAppliedSeq) {
         // Gap or mismatch detected: send keyframe request
         this.requestKeyframe(msg.streamId, msg.monitorId);
         this.waitingForKeyframe = true;
+        this.keyframeReqTime = Date.now();
         return;
       }
       this.lastAppliedSeq = msg.seq;
