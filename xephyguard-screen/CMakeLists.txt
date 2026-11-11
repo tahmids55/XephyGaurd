@@ -141,7 +141,11 @@ add_test(NAME xgtests COMMAND xgtests)
 # ------------------------------------------------------------------ xgagent
 add_executable(xgagent agent/agent_main.cpp)
 target_include_directories(xgagent PRIVATE core capture agent third_party)
-target_link_libraries(xgagent PRIVATE xgcore)
+if(WIN32)
+  target_link_libraries(xgagent PRIVATE xgcore winhttp)
+else()
+  target_link_libraries(xgagent PRIVATE xgcore)
+endif()
 
 # ------------------------------------------------------------------ xgbench
 add_executable(xgbench bench/load_agents.cpp)
