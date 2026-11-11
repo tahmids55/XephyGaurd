@@ -193,23 +193,35 @@ export function encodeKeyframeReq(streamId, monitorId) {
 
 export class ScreenViewer {
   /**
-   * @param {HTMLCanvasElement} canvas
-   * @param {object} options
+   * @param {HTMLCanvasElement|string} canvasOrUrl
+   * @param {object|HTMLCanvasElement} [optionsOrCanvas]
    */
-  constructor(canvas, options = {}) {
-    this.canvas = canvas;
-    this.tileCanvas = new TileCanvas(canvas);
-    this.options = options;
+  constructor(canvasOrUrl, optionsOrCanvas = {}) {
+    if (typeof canvasOrUrl === 'string') {
+      this.defaultUrl = canvasOrUrl;
+      this.canvas = optionsOrCanvas;
+      this.options = arguments[2] || {};
+    } else {
+      this.canvas = canvasOrUrl;
+      this.options = optionsOrCanvas || {};
+    }
+    this.tileCanvas = this.canvas && typeof this.canvas.getContext === 'function'
+      ? new TileCanvas(this.canvas)
+      : null;
     this.ws = null;
     this.lastAppliedSeq = 0;
     this.waitingForKeyframe = false;
   }
 
   connect(url) {
+    const targetUrl = url || this.defaultUrl;
+    if (!targetUrl) {
+      throw new Error('No WebSocket URL provided to ScreenViewer.connect()');
+    }
     if (this.ws) {
       this.disconnect();
     }
-    this.ws = new WebSocket(url);
+    this.ws = new WebSocket(targetUrl);
     this.ws.binaryType = 'arraybuffer';
 
     this.ws.onopen = () => {

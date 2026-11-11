@@ -171,8 +171,8 @@ Alpine.data('labView', (cfg) => ({
                 } catch (e) {}
 
                 const wsUrl = `${gwUrl}/view?token=${data.token}`;
-                this.screenViewer = new ScreenViewer(wsUrl, canvas);
-                this.screenViewer.connect();
+                this.screenViewer = new ScreenViewer(canvas);
+                this.screenViewer.connect(wsUrl);
                 this.screenHasFrame = true;
                 this.screenStatus = `Streaming (${mode}) #${data.stream_id}`;
 
