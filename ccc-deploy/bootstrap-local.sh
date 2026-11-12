@@ -52,11 +52,16 @@ dc run --rm -T --no-deps --user 0:0 --entrypoint sh \
     -v "$REPO_ROOT/server/storage/app/private/ca:/src/ca:ro" \
     proxy -eu -c '
         mkdir -p /home/mitmproxy/.mitmproxy
-        cp /src/ca/mitmproxy-ca.pem /home/mitmproxy/.mitmproxy/mitmproxy-ca.pem
-        if [ -f /src/ca/interception-ca.crt ]; then
-            cp /src/ca/interception-ca.crt /home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem
-        else
+        if [ -f /src/ca/ca.key ] && [ -f /src/ca/ca.crt ]; then
+            cat /src/ca/ca.key /src/ca/ca.crt > /home/mitmproxy/.mitmproxy/mitmproxy-ca.pem
             cp /src/ca/ca.crt /home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem
+        elif [ -f /src/ca/mitmproxy-ca.pem ]; then
+            cp /src/ca/mitmproxy-ca.pem /home/mitmproxy/.mitmproxy/mitmproxy-ca.pem
+            if [ -f /src/ca/interception-ca.crt ]; then
+                cp /src/ca/interception-ca.crt /home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem
+            else
+                cp /src/ca/mitmproxy-ca.pem /home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem
+            fi
         fi
         chown -R 1500:1500 /home/mitmproxy/.mitmproxy
         chmod 0700 /home/mitmproxy/.mitmproxy

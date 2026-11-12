@@ -14,12 +14,23 @@ else
   MODE_ARGS="--mode transparent@0.0.0.0:8080 --mode regular@0.0.0.0:8085"
 fi
 
+CONFDIR="/home/mitmproxy/.mitmproxy"
+
 # shellcheck disable=SC2086
-exec mitmdump \
+set -- mitmdump \
   $MODE_ARGS \
   --showhost \
+  --set "confdir=${CONFDIR}" \
   --set block_global=false \
   --set connection_strategy=lazy \
   --set termlog_verbosity=warn \
   -s /opt/xephyguard/proxy/addons/xephyguard_addon.py \
   --set xg_policy=/var/lib/xephyguard/net/proxy.json
+
+if [ "$(id -u)" -eq 0 ] && command -v gosu >/dev/null 2>&1; then
+  chown -R mitmproxy:mitmproxy /var/log/xephyguard 2>/dev/null || true
+  exec env HOME=/home/mitmproxy gosu mitmproxy "$@"
+fi
+
+export HOME=/home/mitmproxy
+exec "$@"

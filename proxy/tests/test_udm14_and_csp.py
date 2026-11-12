@@ -77,13 +77,14 @@ def test_csp_nonce_and_style_relaxation():
 
 
 def test_addon_blocks_folwr_and_relaxes_csp(tmp_path, state_dict):
-    pytest.importorskip("mitmproxy")
+    mitm_http = pytest.importorskip("mitmproxy.http")
     from mitmproxy.test import tflow
     import pathlib
     import sys
 
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "addons"))
     import xephyguard_addon as mod
+    from xg_netpolicy.proxy_logic import EventShipper
 
     state_dict["groups"] = {"test": [], "block_ai": [], "isolated": [], "exempt": []}
     state_dict["google"]["force_udm14"] = True
@@ -93,14 +94,40 @@ def test_addon_blocks_folwr_and_relaxes_csp(tmp_path, state_dict):
 
     addon = mod.XephyGuard()
     addon.cache = PolicyCache(p)
+    addon.events = EventShipper(addon.cache, fallback=str(tmp_path / "ev.jsonl"))
+    try:
+        # /async/folwr should be blocked with 204
+        flow = tflow.tflow()
+        flow.client_conn.peername = ("192.168.10.21", 50000)
+        flow.request.host = "www.google.com"
+        flow.request.port = 443
+        flow.request.scheme = "https"
+        flow.request.path = "/async/folwr?q=test"
+        addon.request(flow)
+        assert flow.response is not None
+        assert flow.response.status_code == 204
 
-    # /async/folwr should be blocked with 204
-    flow = tflow.tflow()
-    flow.client_conn.peername = ("192.168.10.21", 50000)
-    flow.request.host = "www.google.com"
-    flow.request.port = 443
-    flow.request.scheme = "https"
-    flow.request.path = "/async/folwr?q=test"
-    addon.request(flow)
-    assert flow.response is not None
-    assert flow.response.status_code == 204
+        # Search request gets udm=14, injected CSS, relaxed CSP, and Cache-Control no-store
+        f2 = tflow.tflow()
+        f2.client_conn.peername = ("192.168.10.21", 50001)
+        f2.request.host = "www.google.com"
+        f2.request.port = 443
+        f2.request.scheme = "https"
+        f2.request.path = "/search?q=test"
+        addon.request(f2)
+        assert "udm=14" in f2.request.path
+
+        f2.response = mitm_http.Response.make(
+            200,
+            b"<html><head></head><body><div id='xg-ai-overview'></div></body></html>",
+            {
+                "Content-Type": "text/html; charset=utf-8",
+                "Content-Security-Policy": "style-src 'self' 'nonce-xyz'",
+            },
+        )
+        addon.response(f2)
+        csp = f2.response.headers.get("Content-Security-Policy", "")
+        assert "'unsafe-inline'" in csp and "'nonce-xyz'" not in csp
+        assert b'id="xephyguard"' in f2.response.content
+    finally:
+        addon.events.stop()
