@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\BlocklistEntry;
 use App\Models\Rule;
 use App\Models\SignatureVersion;
 use Symfony\Component\Yaml\Yaml;
@@ -63,7 +64,7 @@ class SignatureCompiler
     public function buildBundle(): array
     {
         $bundle = ['processes' => [], 'extensions' => [], 'ports' => ['rules' => []], 'artifacts' => ['rules' => []],
-            'adapters' => [], 'devices' => []];
+            'adapters' => [], 'devices' => [], 'domains' => ['ai' => [], 'ide' => []]];
         foreach (Rule::query()->where('enabled', true)->orderBy('rule_id')->get() as $rule) {
             $def = array_merge($rule->definition, ['id' => $rule->rule_id, 'severity' => $rule->severity]);
             if ($rule->description) {
@@ -78,6 +79,14 @@ class SignatureCompiler
                 'device' => $bundle['devices'][] = $def,
                 default => null,
             };
+        }
+        foreach (BlocklistEntry::query()
+            ->where('enabled', true)
+            ->whereIn('category', ['ai', 'ide'])
+            ->where('kind', 'domain')
+            ->orderBy('value')
+            ->get(['category', 'value']) as $entry) {
+            $bundle['domains'][$entry->category][] = strtolower($entry->value);
         }
         $bundle['ports']['probe'] = \App\Models\Setting::get('signatures.port.probe', ['enabled' => true,
             'paths' => ['/v1/models', '/api/tags'], 'severity' => 'high', 'min_rss_mb' => 300]);

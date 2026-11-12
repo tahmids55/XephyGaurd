@@ -36,10 +36,14 @@ return [
     ],
 
     'screen_gateway' => [
-        'secret' => env('SCREEN_GATEWAY_SECRET', 'dev-secret-change-in-production-12345'),
+        'secret' => env('SCREEN_GATEWAY_SECRET') ?: (env('APP_KEY') ? hash_hmac('sha256', 'screen-gateway', (string) env('APP_KEY')) : ''),
+        'agent_secret' => env('SCREEN_GATEWAY_AGENT_SECRET') ?: (env('APP_KEY') ? hash_hmac('sha256', 'screen-gateway-agent', (string) env('APP_KEY')) : ''),
         'issuer' => env('SCREEN_GATEWAY_ISSUER', 'xephyguard-ccc'),
         'audience' => env('SCREEN_GATEWAY_AUDIENCE', 'xephyguard-gateway'),
-        'url' => env('SCREEN_GATEWAY_URL', 'ws://127.0.0.1:8082'),
+        'url' => env('SCREEN_GATEWAY_URL', ''),
+        'path' => env('SCREEN_GATEWAY_PATH', '/screen-gw'),
+        'port' => (int) env('SCREEN_GATEWAY_PORT', 8082),
+        'ttl' => (int) env('SCREEN_GATEWAY_TTL', 30),
     ],
 
 ];

@@ -1,4 +1,12 @@
 ---
+- name: Verify required CCC variables are provided
+  ansible.builtin.assert:
+    that:
+      - (xephyguard_ccc | trim | length) > 0
+      - (xephyguard_enroll_key | trim | length) > 0
+      - (xephyguard_ca_fingerprint | trim | length) > 0
+    fail_msg: "Set xephyguard_ccc, xephyguard_enroll_key, and xephyguard_ca_fingerprint in your Ansible inventory or extra vars."
+
 - name: Fetch lab CA
   ansible.builtin.get_url:
     url: "http://{{ xephyguard_ccc }}/ca.crt"

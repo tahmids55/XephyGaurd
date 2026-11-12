@@ -27,10 +27,7 @@ class PublicController extends Controller
     /** `curl -fsSL http://<ccc>/install/linux.sh | sudo bash -s -- --key <KEY>` */
     public function linuxInstaller(): Response
     {
-        $reqHost = request()->getHost();
-        $ccc = (filter_var($reqHost, FILTER_VALIDATE_IP) && $reqHost !== '127.0.0.1')
-            ? $reqHost
-            : Setting::get('ccc_ip', $reqHost);
+        $ccc = $this->resolveCccHost();
 
         $script = view('public.install-linux', [
             'ccc' => $ccc,
@@ -40,16 +37,29 @@ class PublicController extends Controller
         return response($script, 200, ['Content-Type' => 'text/x-shellscript']);
     }
 
+    public static function resolveWindowsInstallerName(): ?string
+    {
+        $dir = storage_path('app/public/downloads');
+        if (! is_dir($dir)) {
+            return null;
+        }
+        $matches = glob($dir.'/XephyGuard-Setup*.exe') ?: [];
+        if ($matches === []) {
+            return null;
+        }
+        usort($matches, fn (string $a, string $b): int => version_compare(basename($b), basename($a)));
+
+        return basename($matches[0]);
+    }
+
     public function downloadsIndex(): Response
     {
         $dir = storage_path('app/public/downloads');
         $files = is_dir($dir) ? array_values(array_diff(scandir($dir), ['.', '..'])) : [];
+        if (! in_array('start-screen-stream.bat', $files, true)) {
+            $files[] = 'start-screen-stream.bat';
+        }
         $meta = [
-            'XephyGuard-Setup-0.1.0.exe' => [
-                'label' => 'Full Agent Installer (All-In-One)',
-                'desc' => 'Complete Windows agent with built-in real-time screen streaming, AI detection, process tracking, USB events, and network policies. 100% automated background operation.',
-                'badge' => 'All-In-One Setup',
-            ],
             'xgagent.exe' => [
                 'label' => 'Screen View Agent (Live Stream)',
                 'desc' => 'Portable DXGI/GDI screen capture executable for instructor live screen monitoring and snapshots.',
@@ -57,7 +67,7 @@ class PublicController extends Controller
             ],
             'start-screen-stream.bat' => [
                 'label' => '1-Click Screen Stream Launcher (Windows Batch)',
-                'desc' => 'Double-click script to run xgagent.exe connected to this server with auto-prompted or default settings.',
+                'desc' => 'Double-click script to run xgagent.exe connected to this server.',
                 'badge' => 'Helper Script',
             ],
         ];
@@ -65,8 +75,15 @@ class PublicController extends Controller
         $items = '';
         foreach ($files as $f) {
             if (preg_match('/^[A-Za-z0-9._-]+\.(deb|rpm|msi|exe|bat|sha256)$/', $f)) {
-                $size = round(filesize($dir.'/'.$f) / 1048576, 2);
-                $info = $meta[$f] ?? ['label' => $f, 'desc' => '', 'badge' => 'Installer'];
+                $path = $dir.'/'.$f;
+                $size = is_file($path) ? round(filesize($path) / 1048576, 2).' MB' : 'generated';
+                $info = $meta[$f] ?? (str_starts_with($f, 'XephyGuard-Setup') && str_ends_with($f, '.exe')
+                    ? [
+                        'label' => 'Full Agent Installer (All-In-One)',
+                        'desc' => 'Complete Windows agent with built-in real-time screen streaming, AI detection, process tracking, USB events, and network policies. 100% automated background operation.',
+                        'badge' => 'All-In-One Setup',
+                    ]
+                    : ['label' => $f, 'desc' => '', 'badge' => 'Installer']);
                 $label = htmlspecialchars($info['label']);
                 $desc = htmlspecialchars($info['desc']);
                 $badge = htmlspecialchars($info['badge']);
@@ -74,21 +91,20 @@ class PublicController extends Controller
                 $items .= "<li style='margin:18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;'>";
                 $items .= "<div style='display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;'>";
                 $items .= "<div><strong style='font-size:16px;color:#0f172a;'>{$label}</strong> <span style='display:inline-block;margin-left:8px;padding:2px 8px;background:#e0e7ff;color:#4338ca;border-radius:4px;font-size:11px;font-weight:600;'>{$badge}</span><div style='font-size:13px;color:#64748b;margin-top:4px;'>{$desc}</div></div>";
-                $items .= "<div><a href='/downloads/{$f}' style='display:inline-block;padding:10px 18px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;box-shadow:0 2px 4px rgba(37,99,235,0.2);'>⬇ Download {$f}</a> <span style='color:#64748b;margin-left:8px;font-size:13px;'>({$size} MB)</span></div>";
+                $items .= "<div><a href='/downloads/{$f}' style='display:inline-block;padding:10px 18px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;box-shadow:0 2px 4px rgba(37,99,235,0.2);'>⬇ Download {$f}</a> <span style='color:#64748b;margin-left:8px;font-size:13px;'>({$size})</span></div>";
                 $items .= "</div></li>";
             }
         }
 
         $lab = Lab::current();
-        $enrollKey = $lab->enrollKey() ?? 'XG-A77CFB-6554C8-489B53';
+        $enrollKey = $lab->enrollKey();
+        $keyForCmd = $enrollKey ?: '<ENROLL_KEY>';
         $caFingerprint = CertificateAuthority::fromConfig()->fingerprint();
-        $reqHost = request()->getHost();
-        $serverIp = (filter_var($reqHost, FILTER_VALIDATE_IP) && $reqHost !== '127.0.0.1')
-            ? $reqHost
-            : ($lab->ccc_ip ?: Setting::get('ccc_ip', $reqHost));
+        $serverIp = $this->resolveCccHost($lab->ccc_ip);
         $serverUrl = $serverIp;
 
-        $silentCmd = "XephyGuard-Setup-0.1.0.exe /S /KEY={$enrollKey} /CCC={$serverUrl} /CAFP={$caFingerprint}";
+        $setupFile = self::resolveWindowsInstallerName() ?? 'XephyGuard-Setup.exe';
+        $silentCmd = "{$setupFile} /S /KEY={$keyForCmd} /CCC={$serverUrl} /CAFP={$caFingerprint}";
 
         $html = <<<HTML
 <!doctype html>
@@ -196,11 +212,57 @@ HTML;
 
     public function download(string $file)
     {
-        abort_unless(preg_match('/^[A-Za-z0-9._-]+\.(deb|rpm|msi|exe|sha256)$/', $file), 404);
+        abort_unless(preg_match('/^[A-Za-z0-9._-]+\.(deb|rpm|msi|exe|bat|sha256)$/', $file), 404);
         $path = storage_path('app/public/downloads/'.$file);
+        if (! is_file($path) && $file === 'start-screen-stream.bat') {
+            return $this->dynamicScreenStreamBat();
+        }
         abort_unless(is_file($path), 404, 'Installer not uploaded yet. Copy release artifacts to storage/app/public/downloads.');
 
         return response()->download($path);
+    }
+
+    private function resolveCccHost(?string $fallback = null): string
+    {
+        $reqHost = request()->getHost();
+        if (! in_array($reqHost, ['127.0.0.1', '::1', 'localhost', ''], true)) {
+            return $reqHost;
+        }
+
+        return (string) ($fallback ?: Setting::get('ccc_ip', $reqHost) ?: $reqHost);
+    }
+
+    private function dynamicScreenStreamBat(): Response
+    {
+        $ccc = $this->resolveCccHost();
+        $gwUrl = (string) config('services.screen_gateway.url', '');
+        $port = (int) config('services.screen_gateway.port', 8082);
+        $path = rtrim((string) config('services.screen_gateway.path', '/screen-gw'), '/').'/agent';
+        if ($gwUrl !== '' && ($parsed = parse_url($gwUrl))) {
+            if (! empty($parsed['host']) && ! in_array($parsed['host'], ['127.0.0.1', 'localhost'], true)) {
+                $ccc = $parsed['host'];
+            }
+            if (! empty($parsed['port'])) {
+                $port = (int) $parsed['port'];
+            }
+        }
+        $scheme = request()->isSecure() ? 'wss' : 'ws';
+        $script = "@echo off\r\n"
+            ."set \"XG_CCC_HOST={$ccc}\"\r\n"
+            ."set \"XG_SCREEN_PORT={$port}\"\r\n"
+            ."set \"XG_SCREEN_PATH={$path}\"\r\n"
+            ."set /p STREAM_ID=\"Enter Stream / PC ID (blank to auto-read agent.toml or 1): \"\r\n"
+            ."if \"%STREAM_ID%\"==\"\" (\r\n"
+            ."  \"%~dp0xgagent.exe\" --host \"%XG_CCC_HOST%\" --port \"%XG_SCREEN_PORT%\"\r\n"
+            .") else (\r\n"
+            ."  \"%~dp0xgagent.exe\" --host \"%XG_CCC_HOST%\" --port \"%XG_SCREEN_PORT%\" --stream-id \"%STREAM_ID%\"\r\n"
+            .")\r\n"
+            ."rem Server endpoint base: {$scheme}://{$ccc}:{$port}\r\n";
+
+        return response($script, 200, [
+            'Content-Type' => 'application/octet-stream',
+            'Content-Disposition' => 'attachment; filename="start-screen-stream.bat"',
+        ]);
     }
 
     public function shareIndex(): Response

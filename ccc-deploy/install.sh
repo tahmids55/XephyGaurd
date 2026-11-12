@@ -47,7 +47,8 @@ else
   LAN_IF=${LAN_IF:-$WAN_IF}
 fi
 cur_ip=$(ip -4 -o addr show dev "$LAN_IF" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1 || true)
-CCC_IP=${CCC_IP:-$(ask "CCC address on the lab network" "${cur_ip:-192.168.10.2}")}
+[ -n "$cur_ip" ] || cur_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1 || true)
+CCC_IP=${CCC_IP:-$(ask "CCC address on the lab network" "${cur_ip:-}")}
 SUBNET=${SUBNET:-$(ask "Lab subnet" "$(echo "$CCC_IP" | cut -d. -f1-3).0/24")}
 LAB_NAME=$(ask "Lab name" "$LAB_NAME")
 TZ_NAME=$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)
@@ -136,6 +137,14 @@ XG_INTERNAL_TOKEN=$(rand 24)
 XG_INTERNAL_URL=http://127.0.0.1:8000
 XG_ANALYSIS_URL=http://127.0.0.1:8090
 XG_REQUIRE_MTLS=true
+SCREEN_GATEWAY_ADDR=:8082
+SCREEN_GATEWAY_PORT=8082
+SCREEN_GATEWAY_PATH=/screen-gw
+SCREEN_GATEWAY_SECRET=$(rand 32)
+SCREEN_GATEWAY_AGENT_SECRET=$(rand 32)
+SCREEN_GATEWAY_ISSUER=xephyguard-ccc
+SCREEN_GATEWAY_AUDIENCE=xephyguard-gateway
+SCREEN_GATEWAY_URL=
 ENVF
   chmod 0600 "$ENV"
 else

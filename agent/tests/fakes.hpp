@@ -105,7 +105,11 @@ inline json sample_signatures() {
       "devices": [
         {"id":"dev.usb_storage","severity":"low","classes":["usb_storage"]},
         {"id":"dev.phone","severity":"medium","vendors":["18d1","05ac"]}
-      ]
+      ],
+      "domains": {
+        "ai": ["chatgpt.com", "claude.ai", "gemini.google.com", "perplexity.ai", "deepseek.com"],
+        "ide": ["api.individual.githubcopilot.com", "githubcopilot.com", "copilot-proxy.githubusercontent.com", "api2.cursor.sh"]
+      }
     })");
 }
 

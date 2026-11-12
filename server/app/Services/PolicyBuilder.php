@@ -65,6 +65,7 @@ class PolicyBuilder
             'signatures_version' => SignatureVersion::active()?->version ?? '',
             'notice_text' => Setting::get('notice_text'),
             'suppress_ai_overview' => (bool) ($profile->network['google_udm14'] ?? false),
+            'google_search_url' => Setting::get('google_search_url'),
         ], fn ($v) => $v !== null && $v !== []);
         $policy['session_id'] = $session?->id ?? 0;
         $policy['version'] = self::version($policy);
@@ -94,6 +95,11 @@ class PolicyBuilder
                 'port' => config('xephyguard.agent_port'),
                 'channel' => 'private-pc.'.$pc->id,
                 'auth_path' => '/api/agent/v1/broadcasting/auth',
+            ],
+            'screen' => [
+                'port' => (int) config('services.screen_gateway.port', 8082),
+                'path' => rtrim((string) config('services.screen_gateway.path', '/screen-gw'), '/').'/agent',
+                'agent_token' => (string) config('services.screen_gateway.agent_secret', ''),
             ],
         ];
     }

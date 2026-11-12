@@ -39,6 +39,8 @@ public:
     std::optional<RuleHit> classify_adapter(const AdapterInfo& a) const;
     std::optional<RuleHit> second_route_rule() const;
     std::optional<RuleHit> match_device(const DeviceInfo& d) const;
+    std::optional<RuleHit> match_ai_domain(const std::string& domain) const;
+    std::vector<std::string> ai_domains() const;
 
     PortProbe probe() const;
     ArtifactScanSpec artifact_scan() const;

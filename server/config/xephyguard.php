@@ -4,7 +4,7 @@
 // be changed later from Settings (stored in the `settings` table, which overrides these defaults).
 return [
     'lab_name' => env('XG_LAB_NAME', 'Computer Lab'),
-    'ccc_ip' => env('XG_CCC_IP', '192.168.10.2'),
+    'ccc_ip' => env('XG_CCC_IP', '127.0.0.1'),
     'lab_subnet' => env('XG_LAB_SUBNET', '192.168.10.0/24'),
     'lan_if' => env('XG_LAN_IF', 'lan0'),
     'wan_if' => env('XG_WAN_IF', 'wan0'),

@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 cd /var/www/html
-mkdir -p storage/app/private storage/app/public/downloads storage/framework/cache storage/framework/sessions storage/framework/views storage/logs
-chown -R www-data:www-data storage
+mkdir -p storage/app/private storage/app/public/downloads storage/framework/cache storage/framework/sessions storage/framework/views storage/logs /var/lib/xephyguard/net
+chown -R www-data:www-data storage /var/lib/xephyguard/net
 case "$1" in
   web)
     php artisan config:cache && php artisan route:cache && php artisan view:cache

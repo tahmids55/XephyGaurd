@@ -10,6 +10,11 @@ struct Config {
     // CCC location. Empty ccc_host => use auto-discovery.
     std::string ccc_host;
     uint16_t api_port = 8443;          // mTLS agent endpoint (HTTPS + WSS)
+    uint16_t http_port = 80;           // plain HTTP endpoint for /ca.crt download
+    uint16_t screen_port = 8082;       // screen gateway port (or 443 over TLS reverse proxy)
+    std::string screen_path = "/agent";
+    bool screen_tls = false;
+    std::string screen_token;
     uint16_t discovery_port = 47474;   // UDP broadcast discovery
     std::string ca_fingerprint;        // optional SHA-256 pin of the CCC CA (hex, no colons)
 

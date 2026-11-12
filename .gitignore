@@ -10,6 +10,7 @@ __pycache__/
 .pytest_cache/
 # CCC secrets and local state
 /ccc-deploy/.env
+/ccc-deploy/.env.local
 /installers/windows/signatures.json
 /installers/windows/ca.crt
 /installers/windows/*.exe

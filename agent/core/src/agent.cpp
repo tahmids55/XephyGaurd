@@ -52,6 +52,7 @@ Agent::Agent(Config cfg, std::string config_path, ServicePlatform& plat)
             auto j = json::parse(txt, nullptr, false);
             if (!j.is_discarded()) {
                 rules_.load(SignatureSet::from_json(j));
+                if (plat_.network) plat_.network->set_ai_domains(rules_.ai_domains());
                 log::info("signatures: loaded seed bundle {} ({} rules)", rules_.version(), SignatureSet::from_json(j).rule_count());
             }
         }
@@ -96,7 +97,7 @@ void Agent::apply_policy(const Policy& p) {
     next_run_.clear();
     if (plat_.system) {
         plat_.system->set_exam_mode(p.mode == Mode::test);
-        plat_.system->set_browser_ai_overview_suppressed(p.suppress_ai_overview);
+        plat_.system->set_browser_ai_overview_suppressed(p.suppress_ai_overview, p.google_search_url);
     }
     push_helper_config();
     if (stop_) restart_watchers();
@@ -125,6 +126,7 @@ bool Agent::apply_signatures(const json& env, bool require_signature) {
     }
     log::info("signatures: loaded {} ({} rules)", set.version, set.rule_count());
     rules_.load(std::move(set));
+    if (plat_.network) plat_.network->set_ai_domains(rules_.ai_domains());
     if (queue_) queue_->kv_set("signatures", env.dump());
     {
         std::lock_guard lk(hit_mu_);
@@ -416,91 +418,31 @@ void Agent::scan_ai_traffic() {
     if (flows.empty()) return;
     rescan_extensions_ = true;
 
-    auto classify_domain = [](const std::string& dom) -> std::tuple<std::string, std::string, std::string> {
-        if (dom.find("githubcopilot.com") != std::string::npos)
-            return {"ext.copilot", "ai_extension", "GitHub Copilot outbound AI stream (" + dom + ")"};
-        if (dom.find("jetbrains.ai") != std::string::npos || dom.find("grazie.ai") != std::string::npos)
-            return {"ext.jb.ai_assistant", "ai_extension", "JetBrains AI outbound stream (" + dom + ")"};
-        if (dom.find("codeium.com") != std::string::npos || dom.find("windsurf.com") != std::string::npos)
-            return {"ext.codeium", "ai_extension", "Codeium / Windsurf outbound AI stream (" + dom + ")"};
-        if (dom.find("tabnine.com") != std::string::npos)
-            return {"ext.tabnine", "ai_extension", "Tabnine outbound AI stream (" + dom + ")"};
-        if (dom.find("sourcegraph.com") != std::string::npos)
-            return {"ext.cody", "ai_extension", "Sourcegraph Cody outbound AI stream (" + dom + ")"};
-        if (dom.find("supermaven.com") != std::string::npos)
-            return {"ext.supermaven", "ai_extension", "Supermaven outbound AI stream (" + dom + ")"};
-        if (dom.find("augmentcode.com") != std::string::npos)
-            return {"ext.augment", "ai_extension", "Augment Code outbound AI stream (" + dom + ")"};
-        if (dom.find("cursor.sh") != std::string::npos || dom.find("cursor.com") != std::string::npos ||
-            dom.find("anysphere.inc") != std::string::npos)
-            return {"proc.editor.cursor", "ai_editor", "Cursor AI outbound stream (" + dom + ")"};
-        if (dom.find("api.anthropic.com") != std::string::npos)
-            return {"ext.claude_code", "ai_extension", "Anthropic Claude API stream (" + dom + ")"};
-        if (dom.find("claude.ai") != std::string::npos)
-            return {"web.claude", "browser_ai", "Claude AI web stream (" + dom + ")"};
-        if (dom.find("chatgpt.com") != std::string::npos || dom.find("openai.com") != std::string::npos ||
-            dom.find("oaiusercontent.com") != std::string::npos)
-            return {"web.chatgpt", "browser_ai", "ChatGPT / OpenAI stream (" + dom + ")"};
-        if (dom.find("gemini.google.com") != std::string::npos || dom.find("aistudio.google.com") != std::string::npos ||
-            dom.find("generativelanguage.googleapis.com") != std::string::npos ||
-            dom.find("cloudaicompanion.googleapis.com") != std::string::npos)
-            return {"web.gemini", "browser_ai", "Google Gemini AI stream (" + dom + ")"};
-        if (dom.find("deepseek.com") != std::string::npos)
-            return {"web.deepseek", "browser_ai", "DeepSeek AI stream (" + dom + ")"};
-        if (dom.find("perplexity.ai") != std::string::npos)
-            return {"web.perplexity", "browser_ai", "Perplexity AI stream (" + dom + ")"};
-        if (dom.find("grok.com") != std::string::npos || dom.find("x.ai") != std::string::npos)
-            return {"web.grok", "browser_ai", "Grok (xAI) stream (" + dom + ")"};
-        if (dom.find("mistral.ai") != std::string::npos)
-            return {"web.mistral", "browser_ai", "Mistral AI stream (" + dom + ")"};
-        if (dom.find("groq.com") != std::string::npos)
-            return {"web.groq", "browser_ai", "Groq AI stream (" + dom + ")"};
-        if (dom.find("together.xyz") != std::string::npos)
-            return {"web.together", "browser_ai", "Together AI stream (" + dom + ")"};
-        if (dom.find("openrouter.ai") != std::string::npos)
-            return {"web.openrouter", "browser_ai", "OpenRouter AI stream (" + dom + ")"};
-        if (dom.find("fireworks.ai") != std::string::npos)
-            return {"web.fireworks", "browser_ai", "Fireworks AI stream (" + dom + ")"};
-        if (dom.find("cohere.ai") != std::string::npos || dom.find("cohere.com") != std::string::npos)
-            return {"web.cohere", "browser_ai", "Cohere AI stream (" + dom + ")"};
-        if (dom.find("phind.com") != std::string::npos)
-            return {"web.phind", "browser_ai", "Phind AI stream (" + dom + ")"};
-        if (dom.find("blackbox.ai") != std::string::npos)
-            return {"web.blackbox", "browser_ai", "Blackbox AI stream (" + dom + ")"};
-        if (dom.find("poe.com") != std::string::npos)
-            return {"web.poe", "browser_ai", "Poe AI stream (" + dom + ")"};
-        if (dom.find("v0.dev") != std::string::npos)
-            return {"web.v0", "browser_ai", "Vercel v0 AI stream (" + dom + ")"};
-        if (dom.find("bolt.new") != std::string::npos)
-            return {"web.bolt", "browser_ai", "Bolt.new AI stream (" + dom + ")"};
-        if (dom.find("lovable.dev") != std::string::npos)
-            return {"web.lovable", "browser_ai", "Lovable AI stream (" + dom + ")"};
-        if (dom.find("copilot.microsoft.com") != std::string::npos || dom.find("copilot.cloud.microsoft") != std::string::npos ||
-            dom.find("m365.cloud.microsoft") != std::string::npos || dom.find("copilot.bing.com") != std::string::npos ||
-            dom.find("sydney.bing.com") != std::string::npos)
-            return {"proc.desktop.copilot", "browser_ai", "Microsoft Copilot stream (" + dom + ")"};
-        if (dom.find("kimi.") != std::string::npos || dom.find("moonshot.") != std::string::npos)
-            return {"web.kimi", "browser_ai", "Kimi (Moonshot) AI stream (" + dom + ")"};
-        if (dom.find("qwen") != std::string::npos || dom.find("tongyi") != std::string::npos ||
-            dom.find("dashscope") != std::string::npos)
-            return {"web.qwen", "browser_ai", "Qwen (Alibaba) AI stream (" + dom + ")"};
-        if (dom.find("cloudcode-pa.googleapis.com") != std::string::npos || dom.find("antigravity.google") != std::string::npos)
-            return {"net.ai_traffic", "browser_ai", "Google Antigravity / Gemini Code Assist stream (" + dom + ")"};
-        return {"net.ai_traffic", "browser_ai", "Outbound AI network stream (" + dom + ")"};
-    };
-
-    auto is_browser_proc = [](const std::string& p) {
-        return p == "chrome" || p == "msedge" || p == "brave" || p == "firefox" || p == "opera" || p == "vivaldi" || p == "arc";
-    };
     // IDE extension hosts: their AI traffic is attributed to the installed extension in scan_extensions().
     auto is_extension_host = [](const std::string& p) {
         return p == "code" || p == "code - insiders" || p == "vscodium" || p == "codium" || p == "copilot-runtime" ||
                p == "copilot-language-server" || p == "copilot" || p == "cursor" || p == "windsurf";
     };
 
+    auto classify_domain = [this, &is_extension_host](const std::string& dom, const std::string& proc)
+        -> std::tuple<std::string, std::string, std::string> {
+        if (auto hit = rules_.match_ai_domain(dom)) {
+            const std::string cat = (hit->category == "ide_ai_backend") ? "ai_extension" : "browser_ai";
+            return {hit->rule_id, cat, hit->description};
+        }
+        if (is_extension_host(proc)) {
+            return {"net.ide_ai", "ai_extension", "IDE AI backend stream (" + dom + ")"};
+        }
+        return {"net.ai_traffic", "browser_ai", "Outbound AI network stream (" + dom + ")"};
+    };
+
+    auto is_browser_proc = [](const std::string& p) {
+        return p == "chrome" || p == "msedge" || p == "brave" || p == "firefox" || p == "opera" || p == "vivaldi" || p == "arc";
+    };
+
     for (const auto& f : flows) {
         const auto dom = to_lower(f.domain);
-        auto [rule_id, category, desc] = classify_domain(dom);
+        auto [rule_id, category, desc] = classify_domain(dom, f.process);
         const double sent_kb = std::round((double(f.bytes_sent) / 1024.0) * 10.0) / 10.0;
         const double recv_kb = std::round((double(f.bytes_recv) / 1024.0) * 10.0) / 10.0;
         // Browsers and standalone AI apps / CLIs emit immediately; IDE extension streams are attributed to the
@@ -835,6 +777,10 @@ void Agent::push_helper_config() {
                                     {"title_capture", to_string(p.title_capture)},
                                     {"ccc_host", cfg_.ccc_host},
                                     {"pc_id", cfg_.pc_id},
+                                    {"screen", {{"port", cfg_.screen_port},
+                                                {"path", cfg_.screen_path},
+                                                {"tls", cfg_.screen_tls},
+                                                {"agent_token", cfg_.screen_token}}},
                                     {"collect", {{"window", p.collect.window}, {"clipboard", p.collect.clipboard},
                                                  {"keys", p.collect.keys}}}}));
     plat_.ipc->broadcast(ipc::line({{"t", "indicator"},
@@ -1179,6 +1125,23 @@ bool Agent::fetch_policy() {
     if (!err.empty()) {
         log::error("policy: invalid policy from CCC: {}", err);
         return false;
+    }
+    if (j.contains("screen") && j["screen"].is_object()) {
+        const auto& sc = j["screen"];
+        if (sc.contains("port") && sc["port"].is_number_unsigned()) {
+            const uint16_t pnum = sc["port"].get<uint16_t>();
+            if (pnum > 0) cfg_.screen_port = pnum;
+        }
+        if (sc.contains("path") && sc["path"].is_string()) {
+            const std::string sp = sc["path"].get<std::string>();
+            if (!sp.empty()) cfg_.screen_path = sp;
+        }
+        if (sc.contains("tls") && sc["tls"].is_boolean()) {
+            cfg_.screen_tls = sc["tls"].get<bool>();
+        }
+        if (sc.contains("agent_token") && sc["agent_token"].is_string()) {
+            cfg_.screen_token = sc["agent_token"].get<std::string>();
+        }
     }
     apply_policy(p);
     queue_->kv_set("policy", j["policy"].dump());

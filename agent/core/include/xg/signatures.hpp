@@ -76,6 +76,8 @@ struct SignatureSet {
     ArtifactScanSpec artifact_scan;
     std::vector<AdapterRule> adapters;
     std::vector<DeviceRule> devices;
+    std::vector<std::string> ai_domains;
+    std::vector<std::string> ide_domains;
 
     static SignatureSet from_json(const json& j, std::string* err = nullptr);
     size_t rule_count() const;

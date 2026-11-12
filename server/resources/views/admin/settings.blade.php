@@ -7,6 +7,8 @@
     <div><label class="label">Network mode</label><select name="network_mode" class="input"><option value="gateway" @selected($v['network_mode'] === 'gateway')>gateway (recommended)</option><option value="proxy_only" @selected($v['network_mode'] === 'proxy_only')>proxy only</option></select></div>
     <div class="grid grid-cols-2 gap-3"><div><label class="label">CCC IP</label><input name="ccc_ip" class="input" value="{{ $v['ccc_ip'] }}"></div>
       <div><label class="label">Lab subnet</label><input name="lab_subnet" class="input" value="{{ $v['lab_subnet'] }}"></div></div>
+    <div class="grid grid-cols-2 gap-3"><div><label class="label">Timezone (IANA)</label><input name="timezone" class="input font-mono text-xs" placeholder="UTC" value="{{ $v['timezone'] }}"></div>
+      <div><label class="label">Search engine override URL (udm=14)</label><input name="google_search_url" class="input font-mono text-xs" placeholder="https://www.google.com/search?q={searchTerms}&udm=14" value="{{ $v['google_search_url'] }}"></div></div>
     <div><label class="label">Hosts inspected (TLS interception only for these, only for restricted PCs)</label><textarea name="inspect_hosts" rows="5" class="input font-mono text-xs">{{ $v['inspect_hosts'] }}</textarea></div>
     <div><label class="label">Fallback CSS selectors hiding search AI blocks</label><textarea name="google_hide_selectors" rows="3" class="input font-mono text-xs">{{ $v['google_hide_selectors'] }}</textarea></div>
     <div><label class="label">Alert on pastes larger than (characters, Test mode)</label><input type="number" name="paste_alert_chars" class="input w-32" value="{{ $v['paste_alert_chars'] }}"></div>

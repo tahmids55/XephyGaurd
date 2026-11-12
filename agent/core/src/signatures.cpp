@@ -104,6 +104,21 @@ SignatureSet SignatureSet::from_json(const json& j, std::string* err) {
             DeviceRule d{str(r, "id"), str(r, "description"), sev(r), strs(r, "classes"), strs(r, "vendors")};
             if (!d.id.empty()) s.devices.push_back(std::move(d));
         }
+        if (j.contains("domains") && j["domains"].is_object()) {
+            const auto& dm = j["domains"];
+            for (const auto& v : dm.value("ai", json::array())) {
+                if (v.is_string()) {
+                    std::string host = to_lower(v.get<std::string>());
+                    if (!host.empty()) s.ai_domains.push_back(std::move(host));
+                }
+            }
+            for (const auto& v : dm.value("ide", json::array())) {
+                if (v.is_string()) {
+                    std::string host = to_lower(v.get<std::string>());
+                    if (!host.empty()) s.ide_domains.push_back(std::move(host));
+                }
+            }
+        }
     } catch (const std::exception& e) {
         if (err) *err = e.what();
     }

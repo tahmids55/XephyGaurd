@@ -62,7 +62,8 @@ int enroll(Config& cfg, const std::string& config_path, const EnrollOptions& o, 
     bool have_ca = false;
     std::string ca = read_file(cfg.ca_file, &have_ca);
     if (!have_ca) {
-        auto r = net::http_get_plain(cfg.ccc_host, 80, "/ca.crt");
+        const uint16_t http_port = cfg.http_port > 0 ? cfg.http_port : 80;
+        auto r = net::http_get_plain(cfg.ccc_host, http_port, "/ca.crt");
         if (!r.ok() || r.body.find("BEGIN CERTIFICATE") == std::string::npos) {
             std::cerr << "enroll: cannot download the CA certificate from http://" << cfg.ccc_host << "/ca.crt ("
                       << r.status << " " << r.error << ")\n";

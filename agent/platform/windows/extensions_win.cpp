@@ -1,5 +1,6 @@
 // Installed IDE/editor/browser extensions for every profile under C:\Users.
 // Live usage detection is driven by kernel per-socket AI traffic (OS DNS + TLS SNI + EStats).
+#include <cstdlib>
 #include <filesystem>
 #include <set>
 
@@ -40,7 +41,9 @@ public:
                 out.push_back({ide, id, ver, user, (dir / d).string(), false, ""});
             }
         };
-        vsc("C:\\ProgramData\\XephyGuard\\vscode-extensions", "vscode", "(shared)");
+        const char* pd = std::getenv("ProgramData");
+        const std::string shared_vsc = std::string(pd && *pd ? pd : "C:\\ProgramData") + "\\XephyGuard\\vscode-extensions";
+        vsc(shared_vsc, "vscode", "(shared)");
         for (const auto& user : ls(users)) {
             if (user == "Public" || user == "Default" || user == "Default User" || user == "All Users") continue;
             const fs::path home = users / user;

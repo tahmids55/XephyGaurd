@@ -6,6 +6,7 @@ agent/build*
 dist
 eval/results
 ccc-deploy/.env
+ccc-deploy/.env.local
 server/.env
 server/vendor
 server/node_modules

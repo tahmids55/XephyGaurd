@@ -40,7 +40,7 @@ using namespace xg;
 
 namespace {
 
-static std::string extract_active_file(std::string_view app, std::string_view title) {
+static std::string extract_active_file(std::string_view /*app*/, std::string_view title) {
     if (title.empty()) return "";
     std::string t(title);
 
@@ -274,7 +274,8 @@ int helper_main() {
             uint32_t pc_id = 0;
             try { pc_id = static_cast<uint32_t>(std::stoul(cfg.pc_id)); } catch (...) {}
             if (pc_id > 0) {
-                screen_streamer.start(cfg.ccc_host, pc_id, 8082);
+                screen_streamer.start(cfg.ccc_host, pc_id, cfg.screen_port, cfg.screen_path,
+                                      cfg.screen_tls || cfg.screen_port == 443, cfg.screen_token);
             }
         }
     };
@@ -310,7 +311,18 @@ int helper_main() {
                     uint32_t pc_id = 0;
                     try { pc_id = static_cast<uint32_t>(std::stoul(pc_id_str)); } catch (...) {}
                     if (pc_id > 0) {
-                        screen_streamer.start(host, pc_id, 8082);
+                        uint16_t s_port = 8082;
+                        std::string s_path = "/agent";
+                        bool s_tls = false;
+                        std::string s_tok;
+                        if (j.contains("screen") && j["screen"].is_object()) {
+                            const auto& sc = j["screen"];
+                            s_port = sc.value("port", uint16_t(8082));
+                            s_path = sc.value("path", std::string("/agent"));
+                            s_tls = sc.value("tls", false);
+                            s_tok = sc.value("agent_token", std::string());
+                        }
+                        screen_streamer.start(host, pc_id, s_port, s_path, s_tls || s_port == 443, s_tok);
                     }
                 }
                 {

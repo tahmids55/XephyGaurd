@@ -28,11 +28,17 @@ public:
     HelperWsClient() = default;
     ~HelperWsClient() { close(); }
 
-    bool connect(const std::wstring& host, INTERNET_PORT port, const std::wstring& path) {
+    bool connect(const std::wstring& host,
+                 INTERNET_PORT port,
+                 const std::wstring& path,
+                 bool use_tls = false,
+                 const std::wstring& agent_token = {}) {
         close();
         host_ = host;
         port_ = port;
         path_ = path;
+        use_tls_ = use_tls;
+        agent_token_ = agent_token;
 
         session_ = WinHttpOpen(L"XephyGuardHelper/1.0",
                                WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
@@ -43,16 +49,23 @@ public:
         conn_ = WinHttpConnect(session_, host.c_str(), port, 0);
         if (!conn_) { close(); return false; }
 
+        DWORD flags = use_tls ? WINHTTP_FLAG_SECURE : 0;
         request_ = WinHttpOpenRequest(conn_, L"GET", path.c_str(), NULL,
                                      WINHTTP_NO_REFERER,
-                                     WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+                                     WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
         if (!request_) { close(); return false; }
 
         if (!WinHttpSetOption(request_, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, NULL, 0)) {
             close(); return false;
         }
 
-        if (!WinHttpSendRequest(request_, WINHTTP_NO_ADDITIONAL_HEADERS, 0, NULL, 0, 0, 0)) {
+        std::wstring headers;
+        if (!agent_token.empty()) {
+            headers = L"X-Agent-Token: " + agent_token + L"\r\n";
+        }
+        LPCWSTR hdr_ptr = headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str();
+        DWORD hdr_len = headers.empty() ? 0 : static_cast<DWORD>(headers.size());
+        if (!WinHttpSendRequest(request_, hdr_ptr, hdr_len, NULL, 0, 0, 0)) {
             close(); return false;
         }
 
@@ -69,7 +82,7 @@ public:
 
     bool reconnect() {
         if (host_.empty()) return false;
-        return connect(host_, port_, path_);
+        return connect(host_, port_, path_, use_tls_, agent_token_);
     }
 
     bool send_binary(const uint8_t* data, size_t len) {
@@ -130,6 +143,8 @@ private:
     std::wstring host_;
     INTERNET_PORT port_ = 0;
     std::wstring path_;
+    bool use_tls_ = false;
+    std::wstring agent_token_;
 };
 #endif
 
@@ -137,6 +152,9 @@ struct ScreenStreamer::Impl {
     std::string host;
     uint32_t stream_id = 0;
     uint16_t port = 8082;
+    std::string path = "/agent";
+    bool use_tls = false;
+    std::string agent_token;
     std::atomic<bool> running{false};
 
     std::thread worker_thread;
@@ -166,11 +184,18 @@ struct ScreenStreamer::Impl {
 #if defined(_WIN32)
         ws_client = std::make_shared<HelperWsClient>();
         std::wstring w_host(host.begin(), host.end());
-        std::wstring w_path = L"/agent?stream_id=" + std::to_wstring(stream_id);
-        ws_client->connect(w_host, port, w_path);
+        std::string base_path = path.empty() ? "/agent" : path;
+        if (base_path.front() != '/') base_path.insert(base_path.begin(), '/');
+        std::string full_path = base_path + (base_path.find('?') == std::string::npos ? '?' : '&') +
+                                "stream_id=" + std::to_string(stream_id);
+        std::wstring w_path(full_path.begin(), full_path.end());
+        std::wstring w_tok(agent_token.begin(), agent_token.end());
+        ws_client->connect(w_host, port, w_path, use_tls, w_tok);
 #endif
 
+#if defined(_WIN32)
         auto last_reconnect = std::chrono::steady_clock::now();
+#endif
 
         xg::AgentStateMachine state_machine(
             capture, cfg,
@@ -246,11 +271,18 @@ ScreenStreamer::~ScreenStreamer() {
     stop();
 }
 
-bool ScreenStreamer::start(const std::string& ccc_host, uint32_t stream_id, uint16_t gateway_port) {
+bool ScreenStreamer::start(const std::string& ccc_host,
+                           uint32_t stream_id,
+                           uint16_t gateway_port,
+                           const std::string& gateway_path,
+                           bool use_tls,
+                           const std::string& agent_token) {
     if (ccc_host.empty() || stream_id == 0) return false;
+    const std::string norm_path = gateway_path.empty() ? std::string("/agent") : gateway_path;
 
     if (impl_->running.load()) {
-        if (impl_->host == ccc_host && impl_->stream_id == stream_id && impl_->port == gateway_port) {
+        if (impl_->host == ccc_host && impl_->stream_id == stream_id && impl_->port == gateway_port &&
+            impl_->path == norm_path && impl_->use_tls == use_tls && impl_->agent_token == agent_token) {
             return true; // Already streaming with identical parameters
         }
         stop();
@@ -259,6 +291,9 @@ bool ScreenStreamer::start(const std::string& ccc_host, uint32_t stream_id, uint
     impl_->host = ccc_host;
     impl_->stream_id = stream_id;
     impl_->port = gateway_port;
+    impl_->path = norm_path;
+    impl_->use_tls = use_tls;
+    impl_->agent_token = agent_token;
     impl_->running.store(true);
 
     impl_->worker_thread = std::thread([this]() {

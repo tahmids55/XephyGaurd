@@ -1,6 +1,5 @@
 [Unit]
 Description=XephyGuard lab monitoring agent
-Documentation=http://ccc/notice
 After=network-online.target
 Wants=network-online.target
 

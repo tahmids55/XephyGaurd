@@ -15,6 +15,7 @@
 #endif
 
 #include <csignal>
+#include <cstdlib>
 #include <atomic>
 #include <chrono>
 #include <iostream>
@@ -141,11 +142,19 @@ private:
 #endif
 
 static bool try_read_agent_toml(std::string& host_out, uint32_t& stream_out) {
-  std::vector<std::string> search_paths = {
-    "C:\\ProgramData\\XephyGuard\\agent.toml",
-    "agent.toml",
-    "../agent.toml"
-  };
+  std::vector<std::string> search_paths;
+#if defined(_WIN32)
+  if (const char* pd = std::getenv("PROGRAMDATA"); pd && *pd) {
+    search_paths.push_back(std::string(pd) + "\\XephyGuard\\agent.toml");
+  }
+#else
+  if (const char* cfg_dir = std::getenv("XG_CONFIG_DIR"); cfg_dir && *cfg_dir) {
+    search_paths.push_back(std::string(cfg_dir) + "/agent.toml");
+  }
+  search_paths.push_back("/etc/xephyguard/agent.toml");
+#endif
+  search_paths.push_back("agent.toml");
+  search_paths.push_back("../agent.toml");
   for (const auto& path : search_paths) {
     std::ifstream file(path);
     if (!file.is_open()) continue;
@@ -191,10 +200,23 @@ int main(int argc, char* argv[]) {
   bool use_fake = false;
   bool standalone = false;
   uint32_t stream_id = 1;
+  if (const char* env_sid = std::getenv("XG_STREAM_ID"); env_sid && *env_sid) {
+    try { stream_id = static_cast<uint32_t>(std::stoul(env_sid)); } catch (...) {}
+  }
   std::string mode = "live";
-  std::string gateway_host = "127.0.0.1";
+  std::string gateway_host;
+  if (const char* env_host = std::getenv("XG_CCC_HOST"); env_host && *env_host) {
+    gateway_host = env_host;
+  }
   uint16_t gateway_port = 8082;
-  bool cli_gw_set = false;
+  if (const char* env_port = std::getenv("XG_SCREEN_PORT"); env_port && *env_port) {
+    try { gateway_port = static_cast<uint16_t>(std::stoul(env_port)); } catch (...) {}
+  }
+  std::string agent_token;
+  if (const char* env_tok = std::getenv("XG_SCREEN_TOKEN"); env_tok && *env_tok) {
+    agent_token = env_tok;
+  }
+  bool cli_gw_set = !gateway_host.empty();
   bool cli_stream_set = false;
 
   for (int i = 1; i < argc; ++i) {
@@ -207,9 +229,16 @@ int main(int argc, char* argv[]) {
       mode = "snapshot";
     } else if (arg == "--wall") {
       mode = "wall";
-    } else if (arg == "--stream" && i + 1 < argc) {
+    } else if ((arg == "--stream" || arg == "--stream-id") && i + 1 < argc) {
       stream_id = static_cast<uint32_t>(std::stoul(argv[++i]));
       cli_stream_set = true;
+    } else if (arg == "--host" && i + 1 < argc) {
+      gateway_host = argv[++i];
+      cli_gw_set = true;
+    } else if (arg == "--port" && i + 1 < argc) {
+      gateway_port = static_cast<uint16_t>(std::stoi(argv[++i]));
+    } else if (arg == "--agent-token" && i + 1 < argc) {
+      agent_token = argv[++i];
     } else if (arg == "--gateway" && i + 1 < argc) {
       std::string gw = argv[++i];
       size_t colon = gw.find(':');
@@ -256,11 +285,11 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  // If still on localhost and interactive, prompt user
-  if (!standalone && !cli_gw_set && (gateway_host == "127.0.0.1" || gateway_host == "localhost")) {
+  // If still unresolved, prompt interactively (no hardcoded IP fallback)
+  if (!standalone && (gateway_host.empty() || (!cli_gw_set && (gateway_host == "127.0.0.1" || gateway_host == "localhost")))) {
 #if defined(_WIN32)
     if (_isatty(_fileno(stdin))) {
-      std::cout << "Enter CCC Server IP [default: 192.168.0.51]: ";
+      std::cout << "Enter CCC Server Host/IP (e.g. 192.168.1.10): ";
       std::string input;
       if (std::getline(std::cin, input)) {
         while (!input.empty() && isspace(static_cast<unsigned char>(input.front()))) input.erase(input.begin());
@@ -274,7 +303,12 @@ int main(int argc, char* argv[]) {
             gateway_host = input;
           }
         } else {
-          gateway_host = "192.168.0.51";
+          if (const char* env_host = std::getenv("XG_CCC_HOST"); env_host && *env_host) {
+            gateway_host = env_host;
+          } else {
+            std::cerr << "Error: CCC Server host is required (pass --host or configure agent.toml).\n";
+            return 1;
+          }
         }
       }
       if (!cli_stream_set) {
@@ -331,8 +365,15 @@ int main(int argc, char* argv[]) {
 #if defined(_WIN32)
   auto ws_client = std::make_shared<WinHttpWsClient>();
   if (!standalone) {
+    if (gateway_host.empty()) {
+      std::cerr << "[Agent] Error: Gateway host is required (--host, XG_CCC_HOST, or agent.toml).\n";
+      return 1;
+    }
     std::wstring w_host(gateway_host.begin(), gateway_host.end());
     std::wstring w_path = L"/agent?stream_id=" + std::to_wstring(stream_id);
+    if (!agent_token.empty()) {
+      w_path += L"&agent_token=" + std::wstring(agent_token.begin(), agent_token.end());
+    }
 
     std::cout << "[Agent] Connecting to Gateway ws://" << gateway_host << ":" << gateway_port << "..." << std::endl;
     if (ws_client->connect(w_host, gateway_port, w_path)) {

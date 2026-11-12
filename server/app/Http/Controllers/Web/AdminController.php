@@ -32,9 +32,11 @@ class AdminController extends Controller
     public function settings()
     {
         $keys = ['lab_name', 'network_mode', 'ccc_ip', 'lab_subnet', 'retention_days_raw', 'retention_days_reports',
-            'notice_text', 'paste_alert_chars'];
+            'notice_text', 'paste_alert_chars', 'timezone', 'google_search_url'];
         $values = collect($keys)->mapWithKeys(fn ($k) => [$k => Setting::get($k)])->all();
         $values['paste_alert_chars'] ??= 800;
+        $values['timezone'] ??= config('app.timezone', 'UTC');
+        $values['google_search_url'] ??= 'https://www.google.com/search?q={searchTerms}&udm=14';
         foreach (['always_on', 'practice', 'test'] as $m) {
             $values["title_capture_$m"] = Setting::get("privacy.title_capture.$m", $m === 'always_on' ? 'off' : 'app_only');
         }
@@ -52,6 +54,7 @@ class AdminController extends Controller
             'ccc_ip' => 'required|ipv4', 'lab_subnet' => ['required', 'regex:#^\d{1,3}(\.\d{1,3}){3}/\d{1,2}$#'],
             'retention_days_raw' => 'required|integer|min:7|max:1095', 'retention_days_reports' => 'required|integer|min:30|max:3650',
             'notice_text' => 'required|string|max:2000', 'paste_alert_chars' => 'required|integer|min:50|max:100000',
+            'timezone' => 'nullable|timezone|max:64', 'google_search_url' => 'nullable|url|max:500',
             'title_capture_always_on' => 'required|in:off,app_only,full', 'title_capture_practice' => 'required|in:off,app_only,full',
             'title_capture_test' => 'required|in:off,app_only,full', 'log_urls' => 'nullable|boolean', 'log_queries' => 'nullable|boolean',
             'inspect_hosts' => 'nullable|string|max:5000', 'google_hide_selectors' => 'nullable|string|max:5000',
@@ -59,6 +62,8 @@ class AdminController extends Controller
         foreach (['lab_name', 'network_mode', 'ccc_ip', 'lab_subnet', 'retention_days_raw', 'retention_days_reports', 'notice_text', 'paste_alert_chars'] as $k) {
             Setting::put($k, $d[$k]);
         }
+        Setting::put('timezone', ($d['timezone'] ?? '') ?: config('app.timezone', 'UTC'));
+        Setting::put('google_search_url', $d['google_search_url'] ?? '');
         foreach (['always_on', 'practice', 'test'] as $m) {
             Setting::put("privacy.title_capture.$m", $d["title_capture_$m"]);
         }

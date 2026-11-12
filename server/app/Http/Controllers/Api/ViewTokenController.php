@@ -70,7 +70,8 @@ class ViewTokenController extends Controller
 
         $cfg = config('services.screen_gateway');
         $now = time();
-        $exp = $now + 30; // 30 second lease
+        $ttl = max(5, (int) ($cfg['ttl'] ?? 30));
+        $exp = $now + $ttl; // 30 second lease
         $jti = bin2hex(random_bytes(16));
 
         $payload = [
@@ -87,7 +88,7 @@ class ViewTokenController extends Controller
             'jti' => $jti,
         ];
 
-        $token = JWT::encode($payload, $cfg['secret'], 'HS256');
+        $token = $this->encodeJwt($payload, $cfg);
 
         $audit = ScreenViewAudit::create([
             'instructor_id' => $user->id,
@@ -103,7 +104,7 @@ class ViewTokenController extends Controller
             'stream_id' => $streamId,
             'audit_id' => $audit->id,
             'expires_at' => $exp,
-            'gateway_url' => $cfg['url'],
+            'gateway_url' => $this->resolveGatewayUrl($request, $cfg),
             'mode' => $mode,
         ]);
     }
@@ -147,7 +148,8 @@ class ViewTokenController extends Controller
 
         $cfg = config('services.screen_gateway');
         $now = time();
-        $exp = $now + 30; // 30 second lease
+        $ttl = max(5, (int) ($cfg['ttl'] ?? 30));
+        $exp = $now + $ttl; // 30 second lease
         $jti = bin2hex(random_bytes(16));
 
         $payload = [
@@ -165,7 +167,7 @@ class ViewTokenController extends Controller
             'jti' => $jti,
         ];
 
-        $token = JWT::encode($payload, $cfg['secret'], 'HS256');
+        $token = $this->encodeJwt($payload, $cfg);
 
         $audit = ScreenViewAudit::create([
             'instructor_id' => $user->id,
@@ -182,7 +184,7 @@ class ViewTokenController extends Controller
             'stream_id' => $streamId,
             'audit_id' => $audit->id,
             'expires_at' => $exp,
-            'gateway_url' => $cfg['url'],
+            'gateway_url' => $this->resolveGatewayUrl($request, $cfg),
             'mode' => $mode,
         ]);
     }
@@ -217,7 +219,8 @@ class ViewTokenController extends Controller
 
         $cfg = config('services.screen_gateway');
         $now = time();
-        $exp = $now + 30;
+        $ttl = max(5, (int) ($cfg['ttl'] ?? 30));
+        $exp = $now + $ttl;
         $jti = bin2hex(random_bytes(16));
 
         $payload = [
@@ -234,7 +237,7 @@ class ViewTokenController extends Controller
             'jti' => $jti,
         ];
 
-        $token = JWT::encode($payload, $cfg['secret'], 'HS256');
+        $token = $this->encodeJwt($payload, $cfg);
 
         return response()->json([
             'token' => $token,
@@ -265,5 +268,29 @@ class ViewTokenController extends Controller
             'audit_id' => $audit->id,
             'duration_s' => $audit->ended_at->diffInSeconds($audit->started_at),
         ]);
+    }
+
+    private function encodeJwt(array $payload, array $cfg): string
+    {
+        $secret = (string) ($cfg['secret'] ?? '');
+        abort_if($secret === '', Response::HTTP_INTERNAL_SERVER_ERROR, 'Screen gateway secret is not configured');
+
+        return JWT::encode($payload, $secret, 'HS256');
+    }
+
+    private function resolveGatewayUrl(Request $request, array $cfg): string
+    {
+        $configured = trim((string) ($cfg['url'] ?? ''));
+        if ($configured !== '') {
+            return rtrim($configured, '/');
+        }
+        $scheme = $request->isSecure() ? 'wss' : 'ws';
+        $host = $request->getHost();
+        $port = $request->getPort();
+        $defaultPort = $request->isSecure() ? 443 : 80;
+        $authority = $port && $port !== $defaultPort ? "{$host}:{$port}" : $host;
+        $path = '/'.trim((string) ($cfg['path'] ?? '/screen-gw'), '/');
+
+        return "{$scheme}://{$authority}".($path === '/' ? '' : $path);
     }
 }

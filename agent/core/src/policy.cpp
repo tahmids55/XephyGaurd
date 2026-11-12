@@ -157,6 +157,9 @@ Policy Policy::from_json(const json& j, std::string* err) {
         if (j.contains("suppress_ai_overview") && j["suppress_ai_overview"].is_boolean()) {
             p.suppress_ai_overview = j["suppress_ai_overview"].get<bool>();
         }
+        if (j.contains("google_search_url") && j["google_search_url"].is_string()) {
+            p.google_search_url = j["google_search_url"].get<std::string>();
+        }
     } catch (const std::exception& e) {
         if (err) *err = e.what();
     }
@@ -198,6 +201,7 @@ json Policy::to_json() const {
         {"signatures_version", signatures_version},
         {"notice_text", notice_text},
         {"suppress_ai_overview", suppress_ai_overview},
+        {"google_search_url", google_search_url},
     };
 }
 

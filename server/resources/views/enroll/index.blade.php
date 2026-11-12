@@ -15,7 +15,7 @@
     </div>
     <div>
       <div class="label">Windows — silent install (GPO, Intune, PDQ, imaging)</div>
-      <pre class="overflow-x-auto rounded bg-slate-900 p-3 text-xs text-slate-100">XephyGuard-Setup.exe /S /KEY={{ $key }} /CCC={{ $ccc }} /CAFP={{ $fingerprint }}</pre>
+      <pre class="overflow-x-auto rounded bg-slate-900 p-3 text-xs text-slate-100">{{ $setupFile ?? 'XephyGuard-Setup.exe' }} /S /KEY={{ $key }} /CCC={{ $ccc }} /CAFP={{ $fingerprint }}</pre>
     </div>
     <div><div class="label">Downloads</div>
       @forelse ($downloads as $d)<a class="mr-3 text-indigo-600 underline" href="{{ route('downloads', $d) }}">{{ $d }}</a>@empty

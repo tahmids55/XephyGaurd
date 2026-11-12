@@ -45,9 +45,31 @@ def validate(bundle: dict) -> list[str]:
     return errors
 
 
+def load_domain_list(path: pathlib.Path) -> list[str]:
+    if not path.exists():
+        return []
+    domains: list[str] = []
+    seen: set[str] = set()
+    for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        token = line.split()[0].lower().lstrip("*.")
+        if token in ("0.0.0.0", "127.0.0.1", "::"):
+            parts = line.split()
+            token = parts[1].lower().lstrip("*.") if len(parts) > 1 else ""
+        if not token or "/" in token or "." not in token:
+            continue
+        if token not in seen:
+            seen.add(token)
+            domains.append(token)
+    return sorted(domains)
+
+
 def compile_bundle(src: pathlib.Path, version: str | None = None) -> dict:
     ports = load(src, "ports")
     arts = load(src, "artifacts")
+    blocklists = src.parent / "blocklists"
     bundle = {
         "processes": load(src, "processes").get("rules", []),
         "extensions": load(src, "extensions").get("rules", []),
@@ -55,6 +77,10 @@ def compile_bundle(src: pathlib.Path, version: str | None = None) -> dict:
         "artifacts": {"rules": arts.get("rules", []), "scan": arts.get("scan", {})},
         "adapters": load(src, "adapters").get("rules", []),
         "devices": load(src, "devices").get("rules", []),
+        "domains": {
+            "ai": load_domain_list(blocklists / "ai_domains.txt"),
+            "ide": load_domain_list(blocklists / "ide_ai_backends.txt"),
+        },
     }
     digest = hashlib.sha256(json.dumps(bundle, sort_keys=True).encode()).hexdigest()[:8]
     bundle["version"] = version or f"{datetime.date.today():%Y.%m.%d}-{digest}"

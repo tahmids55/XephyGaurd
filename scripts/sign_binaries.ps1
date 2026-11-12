@@ -1,5 +1,15 @@
+param(
+    [string]$Version = "",
+    [string]$PfxPassword = $env:XG_PFX_PASSWORD
+)
+
 Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue
 Import-Module Microsoft.PowerShell.Utility -ErrorAction SilentlyContinue
+
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$brandingDir = Join-Path $repoRoot "branding"
+$installersDir = Join-Path $repoRoot "installers\windows"
+$releaseDir = Join-Path $repoRoot "agent\build-windows\Release"
 
 [Console]::WriteLine("==> Finding or creating Xerophyte Labs Code Signing Certificate...")
 
@@ -20,26 +30,35 @@ if (-not $cert) {
 [Console]::WriteLine("Certificate: " + $cert.Subject)
 [Console]::WriteLine("Thumbprint:  " + $cert.Thumbprint)
 
-$brandingDir = "d:\Project\Running\XephyGuard\branding"
-$installersDir = "d:\Project\Running\XephyGuard\installers\windows"
-
 # Export public CER & private PFX
 Export-Certificate -Cert $cert -FilePath "$brandingDir\XerophyteLabs-CodeSigning.cer" -Force | Out-Null
 Copy-Item "$brandingDir\XerophyteLabs-CodeSigning.cer" "$installersDir\XerophyteLabs-CodeSigning.cer" -Force
 
-$pwd = ConvertTo-SecureString -String "XerophyteLabs2026!" -Force -AsPlainText
+if (-not $PfxPassword) {
+    if ([Environment]::UserInteractive) {
+        $pwd = Read-Host -Prompt "Enter code-signing PFX export password" -AsSecureString
+    } else {
+        throw "XG_PFX_PASSWORD environment variable or -PfxPassword parameter is required in non-interactive mode."
+    }
+} else {
+    $pwd = ConvertTo-SecureString -String $PfxPassword -Force -AsPlainText
+}
 Export-PfxCertificate -Cert $cert -FilePath "$brandingDir\XerophyteLabs-CodeSigning.pfx" -Password $pwd -Force | Out-Null
 
 # Import into TrustedPublisher using certutil (silent, non-interactive)
 [Console]::WriteLine("==> Registering in TrustedPublisher store...")
 & certutil.exe -addstore -user -f "TrustedPublisher" "$brandingDir\XerophyteLabs-CodeSigning.cer" | Out-Null
 
-# List of files to sign
+# List of files to sign (dynamically resolved relative to repo root)
 $targets = @(
-    "d:\Project\Running\XephyGuard\agent\build-windows\Release\xephyguard-agent.exe",
-    "d:\Project\Running\XephyGuard\agent\build-windows\Release\xephyguard-helper.exe",
-    "d:\Project\Running\XephyGuard\installers\windows\XephyGuard-Setup-0.1.0.exe"
+    (Join-Path $releaseDir "xephyguard-agent.exe"),
+    (Join-Path $releaseDir "xephyguard-helper.exe")
 )
+$setupPattern = if ($Version) { "XephyGuard-Setup-$Version.exe" } else { "XephyGuard-Setup*.exe" }
+$setupTargets = Get-ChildItem -Path $installersDir -Filter $setupPattern -File -ErrorAction SilentlyContinue
+foreach ($s in $setupTargets) {
+    $targets += $s.FullName
+}
 
 [Console]::WriteLine("==> Signing binaries with Authenticode (Publisher: Xerophyte Labs)...")
 foreach ($target in $targets) {

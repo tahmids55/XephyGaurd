@@ -118,8 +118,19 @@ public:
             RegCloseKey(hk);
         }
     }
-    void set_browser_ai_overview_suppressed(bool active) override {
+    void set_browser_ai_overview_suppressed(bool active, const std::string& search_url = {}) override {
         ai_overview_suppressed_ = active;
+        std::wstring custom_url;
+        if (!search_url.empty()) {
+            int n = MultiByteToWideChar(CP_UTF8, 0, search_url.c_str(), -1, nullptr, 0);
+            if (n > 1) {
+                custom_url.resize(size_t(n - 1));
+                MultiByteToWideChar(CP_UTF8, 0, search_url.c_str(), -1, custom_url.data(), n);
+            }
+        }
+        const wchar_t* effective_url = custom_url.empty()
+            ? L"https://www.google.com/search?q={searchTerms}&udm=14"
+            : custom_url.c_str();
 
         // Chromium-based browsers: Google Chrome, Microsoft Edge, Brave Browser, Opera, Vivaldi
         const wchar_t* chromium_keys[] = {
@@ -130,11 +141,11 @@ public:
             L"SOFTWARE\\Policies\\Vivaldi"
         };
         for (const auto* key_path : chromium_keys) {
-            set_chromium_search_policy(key_path, active);
+            set_chromium_search_policy(key_path, active, effective_url);
         }
 
         // Mozilla Firefox
-        set_firefox_search_policy(active);
+        set_firefox_search_policy(active, effective_url);
 
         log::info("browser policy: ai overview suppression {}", active ? "enabled (&udm=14 enforced)" : "disabled");
     }
@@ -142,12 +153,11 @@ public:
 private:
     bool ai_overview_suppressed_ = false;
 
-    static void set_chromium_search_policy(const wchar_t* subkey, bool active) {
+    static void set_chromium_search_policy(const wchar_t* subkey, bool active, const wchar_t* search_url) {
         if (active) {
             HKEY hk = nullptr;
             if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, subkey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &hk, nullptr) == ERROR_SUCCESS) {
                 DWORD one = 1;
-                const wchar_t* search_url = L"https://www.google.com/search?q={searchTerms}&udm=14";
                 const wchar_t* suggest_url = L"https://www.google.com/complete/search?output=chrome&q={searchTerms}";
                 const wchar_t* new_tab_url = L"https://www.google.com";
                 const wchar_t* name = L"Google";
@@ -175,7 +185,7 @@ private:
         }
     }
 
-    static void set_firefox_search_policy(bool active) {
+    static void set_firefox_search_policy(bool active, const wchar_t* url) {
         const wchar_t* base_key = L"SOFTWARE\\Policies\\Mozilla\\Firefox\\SearchEngines";
         if (active) {
             HKEY hk = nullptr;
@@ -187,7 +197,6 @@ private:
             HKEY hk_add = nullptr;
             if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Policies\\Mozilla\\Firefox\\SearchEngines\\Add\\1", 0, nullptr, 0, KEY_SET_VALUE, nullptr, &hk_add, nullptr) == ERROR_SUCCESS) {
                 const wchar_t* name = L"Google";
-                const wchar_t* url = L"https://www.google.com/search?q={searchTerms}&udm=14";
                 const wchar_t* method = L"GET";
                 const wchar_t* icon = L"https://www.google.com/favicon.ico";
                 const wchar_t* alias = L"google";
@@ -215,7 +224,14 @@ class GpuMonitor final : public IGpuMonitor {
 public:
     GpuMonitor() {
         lib_ = LoadLibraryExW(L"nvml.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-        if (!lib_) lib_ = LoadLibraryW(L"C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvml.dll");
+        if (!lib_) {
+            const wchar_t* pf = _wgetenv(L"ProgramW6432");
+            if (!pf || !*pf) pf = _wgetenv(L"ProgramFiles");
+            if (pf && *pf) {
+                std::wstring nvsmi = std::wstring(pf) + L"\\NVIDIA Corporation\\NVSMI\\nvml.dll";
+                lib_ = LoadLibraryW(nvsmi.c_str());
+            }
+        }
         if (!lib_) return;
         auto init = reinterpret_cast<int (*)()>(reinterpret_cast<void*>(GetProcAddress(lib_, "nvmlInit_v2")));
         auto handle = reinterpret_cast<int (*)(unsigned, void**)>(

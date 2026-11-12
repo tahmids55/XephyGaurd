@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta name="reverb-key" content="{{ config('reverb.apps.apps.0.key') }}">
+    <meta name="xg-tz" content="{{ \App\Models\Setting::get('timezone') ?: (config('app.timezone') !== 'UTC' ? config('app.timezone') : '') }}">
     <title>@yield('title', 'Dashboard') · XephyGuard</title>
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <link rel="icon" type="image/svg+xml" href="/images/logo-icon-only.svg">
@@ -15,7 +16,7 @@
         if (typeof val === 'string' && val.length === 8 && val[2] === ':' && val[5] === ':') return val;
         try {
             const d = new Date(val);
-            if (!isNaN(d.getTime())) return d.toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Dhaka' });
+            if (!isNaN(d.getTime())) { const tz = document.querySelector('meta[name="xg-tz"]')?.content; return d.toLocaleTimeString('en-GB', tz ? { hour12: false, timeZone: tz } : { hour12: false }); }
         } catch (e) {}
         return (val || '').length > 19 ? val.substring(11, 19) : val;
     };

@@ -118,6 +118,17 @@ else()
   target_sources(xgcore PRIVATE
     capture/x11_capture.cpp
   )
+  find_package(X11 COMPONENTS Xext Xdamage Xrandr QUIET)
+  if(TARGET X11::X11)
+    target_link_libraries(xgcore PUBLIC X11::X11)
+    foreach(_xlib X11::Xext X11::Xdamage X11::Xrandr)
+      if(TARGET ${_xlib})
+        target_link_libraries(xgcore PUBLIC ${_xlib})
+      endif()
+    endforeach()
+  else()
+    target_link_libraries(xgcore PUBLIC X11 Xext Xdamage Xrandr)
+  endif()
 endif()
 
 # ------------------------------------------------------------------ standalone targets

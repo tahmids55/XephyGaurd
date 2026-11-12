@@ -256,7 +256,7 @@
                       <td class="font-semibold text-xs" x-text="tr.process || '—'"></td>
                       <td>
                         <div class="font-mono text-xs font-semibold text-indigo-700" x-text="tr.domain"></div>
-                        <div class="font-mono text-[10px] text-slate-400" x-show="tr.remote_ip" x-text="tr.remote_ip + ':443'"></div>
+                        <div class="font-mono text-[10px] text-slate-400" x-show="tr.remote_ip" x-text="tr.remote_port ? (tr.remote_ip + ':' + tr.remote_port) : tr.remote_ip"></div>
                       </td>
                       <td class="font-mono text-xs text-slate-700">
                         <span class="text-amber-700" x-text="'↑ ' + Number(tr.sent_kb||0).toFixed(1) + ' KB'"></span>

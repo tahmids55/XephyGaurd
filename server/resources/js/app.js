@@ -12,7 +12,7 @@ async function api(url, opts = {}) {
         ...opts,
         headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf(), ...(opts.headers || {}) },
     });
-    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || res.statusText);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || res.statusText || `HTTP ${res.status}`);
     return res.json();
 }
 window.xgApi = api;
@@ -32,7 +32,7 @@ window.fmtTime = function(val) {
     if (typeof val === 'string' && val.length === 8 && val[2] === ':' && val[5] === ':') return val;
     try {
         const d = new Date(val);
-        if (!isNaN(d.getTime())) return d.toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Dhaka' });
+        if (!isNaN(d.getTime())) { const tz = document.querySelector('meta[name="xg-tz"]')?.content; return d.toLocaleTimeString('en-GB', tz ? { hour12: false, timeZone: tz } : { hour12: false }); }
     } catch (e) {}
     return (val || '').length > 19 ? val.substring(11, 19) : val;
 };
@@ -226,14 +226,32 @@ Alpine.data('labView', (cfg) => ({
                     ctx.clearRect(0, 0, canvas.width, canvas.height);
                 }
 
-                let gwUrl = data.gateway_url;
-                try {
-                    const parsed = new URL(gwUrl);
-                    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
-                        parsed.hostname = window.location.hostname;
+                let gwUrl = String(data.gateway_url || '').trim();
+                const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                if (!gwUrl) {
+                    gwUrl = `${wsProto}//${window.location.host}/screen-gw`;
+                } else if (gwUrl.startsWith('/')) {
+                    gwUrl = `${wsProto}//${window.location.host}${gwUrl.replace(/\/$/, '')}`;
+                } else {
+                    try {
+                        const parsed = new URL(gwUrl);
+                        const isLocal = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+                        if (window.location.protocol === 'https:' && parsed.protocol === 'ws:') {
+                            parsed.protocol = 'wss:';
+                            if (isLocal) {
+                                parsed.hostname = window.location.hostname;
+                                parsed.port = window.location.port;
+                                parsed.pathname = '/screen-gw';
+                            }
+                        } else if (isLocal) {
+                            parsed.hostname = window.location.hostname;
+                        }
+                        if (!parsed.port && window.location.port && parsed.pathname.startsWith('/screen-gw')) {
+                            parsed.port = window.location.port;
+                        }
                         gwUrl = parsed.toString().replace(/\/$/, '');
-                    }
-                } catch (e) {}
+                    } catch (e) {}
+                }
 
                 const wsUrl = `${gwUrl}/view?token=${data.token}`;
                 this.screenViewer = new ScreenViewer(canvas, {

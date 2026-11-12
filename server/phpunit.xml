@@ -30,6 +30,8 @@
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="XG_INTERNAL_TOKEN" value="test-internal-token"/>
         <env name="XG_ANALYSIS_URL" value="http://analysis.test"/>
+        <env name="SCREEN_GATEWAY_SECRET" value="phpunit-ephemeral-gateway-secret-32b"/>
+        <env name="SCREEN_GATEWAY_AGENT_SECRET" value="phpunit-ephemeral-agent-secret-32b"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>

@@ -23,7 +23,7 @@ class EnrollmentController extends Controller
         $downloads = collect(glob(storage_path('app/public/downloads/*')) ?: [])->map(fn ($p) => basename($p));
 
         $reqHost = request()->getHost();
-        $ccc = (filter_var($reqHost, FILTER_VALIDATE_IP) && $reqHost !== '127.0.0.1')
+        $ccc = (! in_array($reqHost, ['127.0.0.1', '::1', 'localhost', ''], true))
             ? $reqHost
             : Setting::get('ccc_ip', $reqHost);
 
@@ -31,6 +31,7 @@ class EnrollmentController extends Controller
             'lab' => $lab,
             'key' => $lab->enrollKey(),
             'ccc' => $ccc,
+            'setupFile' => PublicController::resolveWindowsInstallerName(),
             'fingerprint' => $ca->exists() ? $ca->fingerprint() : null,
             'pending' => Enrollment::query()->where('status', 'pending')->latest()->get(),
             'recent' => Enrollment::query()->where('status', '!=', 'pending')->with('pc')->latest('decided_at')->limit(10)->get(),

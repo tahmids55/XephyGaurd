@@ -32,6 +32,8 @@ public:
     virtual std::vector<AdapterInfo> adapters() = 0;
     virtual std::vector<ListeningSocket> listening_sockets() = 0;
     virtual std::vector<OutboundAiFlow> active_ai_flows() { return {}; }
+    /// Updates the set of monitored AI / IDE host suffixes from synced signatures/blocklists.
+    virtual void set_ai_domains(std::vector<std::string> /*domains*/) {}
     /// Calls `on_change` (debounced by the caller) when links, addresses or routes change.
     virtual bool watch(std::function<void()> on_change) = 0;
     virtual void stop() = 0;
@@ -120,7 +122,7 @@ public:
     /// Enables/disables exam-mode lockdown policies (e.g. DisableTaskMgr on Windows) cleanly via official OS APIs.
     virtual void set_exam_mode(bool /*active*/) {}
     /// Suppresses or restores browser AI Overview search features (Chrome, Edge, Brave, Firefox) via official enterprise policies.
-    virtual void set_browser_ai_overview_suppressed(bool /*suppressed*/) {}
+    virtual void set_browser_ai_overview_suppressed(bool /*suppressed*/, const std::string& /*search_url*/ = {}) {}
 };
 
 class IGpuMonitor {

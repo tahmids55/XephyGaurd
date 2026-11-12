@@ -13,7 +13,8 @@
 map $http_upgrade $connection_upgrade { default upgrade; '' close; }
 
 upstream xg_laravel { server 127.0.0.1:8000; }
-upstream xg_reverb  { server 127.0.0.1:8081; }
+upstream xg_reverb  { server 127.0.0.1:8080; }
+upstream xg_gateway { server 127.0.0.1:8082; }
 
 server {
     listen 80;
@@ -33,6 +34,14 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     root @PUBLIC@;
 
+    location ^~ /api/screen/ {
+        proxy_pass http://xg_laravel;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-SSL-Client-Verify "";
+        proxy_set_header X-SSL-Client-Cert "";
+    }
     location ^~ /api/   { return 404; }
     location ^~ /build/ { try_files $uri =404; }
     location ^~ /app/ {                       # Reverb for dashboard browsers (live updates)
@@ -42,6 +51,14 @@ server {
         proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_read_timeout 120s;
+    }
+    location ^~ /screen-gw/ {                 # Screen viewer & agent WebSocket relay
+        proxy_pass http://xg_gateway/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_read_timeout 3600s;
     }
     location / {
         proxy_pass http://xg_laravel;

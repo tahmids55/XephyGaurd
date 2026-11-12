@@ -88,129 +88,12 @@ void ensure_browser_os_dns() {
 }
 
 // Returns the matched AI domain if `d` is an active AI prompt/completion/web domain (excluding telemetry).
-bool is_ai_prompt_domain(const std::string& d) {
-    if (d.empty()) return false;
-    // Exclude background telemetry / experiment endpoints that fire when the IDE is idle
-    if (d.find("telemetry") != std::string::npos || d.find("exp.individual.") != std::string::npos ||
-        d.find("exp-tas.com") != std::string::npos || d.find("events.data.microsoft.com") != std::string::npos ||
-        d.find("applicationinsights") != std::string::npos) {
-        return false;
-    }
-    static const char* kAiDomains[] = {
-        "api.githubcopilot.com",
-        "api.individual.githubcopilot.com",
-        "api.business.githubcopilot.com",
-        "api.enterprise.githubcopilot.com",
-        "copilot-proxy.githubusercontent.com",
-        "api.jetbrains.ai",
-        "grazie.ai",
-        "grazie.aws.intellij.net",
-        "api.anthropic.com",
-        "claude.ai",
-        "chatgpt.com",
-        "chat.openai.com",
-        "api.openai.com",
-        "gemini.google.com",
-        "aistudio.google.com",
-        "generativelanguage.googleapis.com",
-        "cloudaicompanion.googleapis.com",
-        "notebooklm.google.com",
-        "chat.deepseek.com",
-        "api.deepseek.com",
-        "deepseek.com",
-        "perplexity.ai",
-        "grok.com",
-        "api.x.ai",
-        "codeium.com",
-        "windsurf.com",
-        "cursor.sh",
-        "tabnine.com",
-        "poe.com",
-        "phind.com",
-        "v0.dev",
-        "bolt.new",
-        "lovable.dev",
-        "blackbox.ai",
-        "openrouter.ai",
-        "groq.com",
-        // Microsoft Copilot (app + web)
-        "copilot.microsoft.com",
-        "copilot.cloud.microsoft",
-        "m365.cloud.microsoft",
-        "copilot.bing.com",
-        "sydney.bing.com",
-        // Google Antigravity / Gemini Code Assist / Gemini web
-        "cloudcode-pa.googleapis.com",
-        "daily-cloudcode-pa.googleapis.com",
-        "autopush-cloudcode-pa.googleapis.com",
-        "antigravity.google",
-        "ai.google.dev",
-        "gemini.google",
-        // Kimi / Moonshot
-        "kimi.com",
-        "kimi.ai",
-        "moonshot.cn",
-        "moonshot.ai",
-        // Qwen / Alibaba
-        "qwen.com",
-        "qwen.ai",
-        "qwenlm.ai",
-        "tongyi.aliyun.com",
-        "dashscope.aliyuncs.com",
-        // ByteDance / Tencent / Zhipu / MiniMax / Baidu / others
-        "doubao.com",
-        "coze.com",
-        "coze.cn",
-        "trae.ai",
-        "traeapi.us",
-        "yuanbao.tencent.com",
-        "hunyuan.tencent.com",
-        "z.ai",
-        "chatglm.cn",
-        "bigmodel.cn",
-        "minimax.io",
-        "minimaxi.com",
-        "hailuoai.com",
-        "yiyan.baidu.com",
-        "ernie.baidu.com",
-        "baichuan-ai.com",
-        "stepfun.com",
-        "sensenova.cn",
-        "skywork.ai",
-        // Western assistants / coding agents / inference APIs
-        "mistral.ai",
-        "cohere.com",
-        "cohere.ai",
-        "x.ai",
-        "meta.ai",
-        "manus.im",
-        "genspark.ai",
-        "monica.im",
-        "sider.ai",
-        "felo.ai",
-        "lmarena.ai",
-        "venice.ai",
-        "fireworks.ai",
-        "together.ai",
-        "together.xyz",
-        "deepinfra.com",
-        "cerebras.ai",
-        "sambanova.ai",
-        "replicate.com",
-        "kiro.dev",
-        "augmentcode.com",
-        "supermaven.com",
-        "cline.bot",
-        "qodo.ai",
-        "ampcode.com",
-        "character.ai",
-        "pplx.ai",
-        "claude.com"
-    };
-    for (const char* pat : kAiDomains) {
-        if (d == pat || iends_with(d, std::string(".") + pat)) return true;
-    }
-    return false;
+// Telemetry / experiment domain exclusion filter helper for dynamic signature domains
+bool is_ignored_ai_telemetry_domain(const std::string& d) {
+    if (d.empty()) return true;
+    return d.find("telemetry") != std::string::npos || d.find("exp.individual.") != std::string::npos ||
+           d.find("exp-tas.com") != std::string::npos || d.find("events.data.microsoft.com") != std::string::npos ||
+           d.find("applicationinsights") != std::string::npos;
 }
 
 // Parse TLS ClientHello SNI extension (0x0000) from a TCP payload.
@@ -263,6 +146,24 @@ public:
     ~NetworkMonitor() override {
         stop();
         if (dns_lib_) FreeLibrary(dns_lib_);
+    }
+
+    void set_ai_domains(std::vector<std::string> domains) override {
+        std::lock_guard lk(domains_mu_);
+        ai_domains_.clear();
+        for (auto& d : domains) {
+            d = to_lower(d);
+            if (!d.empty()) ai_domains_.push_back(std::move(d));
+        }
+    }
+
+    bool is_ai_prompt_domain(const std::string& d) const {
+        if (is_ignored_ai_telemetry_domain(d)) return false;
+        std::lock_guard lk(domains_mu_);
+        for (const auto& pat : ai_domains_) {
+            if (d == pat || iends_with(d, "." + pat)) return true;
+        }
+        return false;
     }
 
     std::vector<AdapterInfo> adapters() override {
@@ -711,6 +612,8 @@ private:
     HANDLE route_handle_ = nullptr;
     HMODULE dns_lib_ = nullptr;
     DnsGetCacheDataTableFn dns_cache_fn_ = nullptr;
+    mutable std::mutex domains_mu_;
+    std::vector<std::string> ai_domains_;
     std::mutex dns_mu_;
     std::map<std::string, std::set<std::string>> ip_to_domains_;
     std::map<std::string, int64_t> last_dns_query_;

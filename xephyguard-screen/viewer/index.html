@@ -103,7 +103,19 @@
     let viewer = null;
 
     btnConnect.addEventListener('click', () => {
-      const wsUrl = 'ws://127.0.0.1:8082/view?token=dev';
+      const params = new URLSearchParams(window.location.search);
+    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const explicitGw = (params.get('gateway') || '').replace(/\/$/, '');
+    const defaultHost = window.location.host || 'localhost';
+    const baseGw = explicitGw || (window.location.port ? `${wsProto}//${defaultHost}/screen-gw` : `${wsProto}//${defaultHost}:8082`);
+    const token = params.get('token') || '';
+    const streamId = params.get('stream_id') || '';
+    const qs = token ? `token=${encodeURIComponent(token)}` : (streamId ? `stream_id=${encodeURIComponent(streamId)}` : '');
+    if (!qs) {
+      statusEl.textContent = 'Error: pass ?token=<JWT> or ?stream_id=<ID>&gateway=ws://host:port in URL';
+      return;
+    }
+    const wsUrl = `${baseGw}/view?${qs}`;
       statusEl.textContent = 'Connecting to ' + wsUrl + '...';
 
       viewer = new ScreenViewer(wsUrl, canvas);

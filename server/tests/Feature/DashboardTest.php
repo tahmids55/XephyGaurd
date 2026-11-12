@@ -95,4 +95,18 @@ class DashboardTest extends TestCase
         $this->post("/signatures/{$first->id}/activate")->assertRedirect();
         $this->assertSame($first->id, \App\Models\SignatureVersion::active()->id);
     }
+
+    public function test_download_allows_bat_scripts(): void
+    {
+        $dir = storage_path('app/public/downloads');
+        @mkdir($dir, 0755, true);
+        $path = $dir.'/test-helper.bat';
+        file_put_contents($path, "@echo off\r\n");
+        try {
+            $this->get('/downloads/test-helper.bat')->assertOk();
+            $this->get('/downloads/invalid.txt')->assertNotFound();
+        } finally {
+            @unlink($path);
+        }
+    }
 }
