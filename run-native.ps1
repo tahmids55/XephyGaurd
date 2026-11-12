@@ -373,8 +373,10 @@ try {
     $ruleName = "XephyGuard Native Server"
     $fw = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
     if (-not $fw) {
-        New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort 80,443,8443 -Action Allow -ErrorAction Stop | Out-Null
-        Write-Host "[+] Windows Firewall rule created for ports 80, 443, 8443." -ForegroundColor Gray
+        New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort 80,443,8082,8443 -Action Allow -ErrorAction Stop | Out-Null
+        Write-Host "[+] Windows Firewall rule created for ports 80, 443, 8082, 8443." -ForegroundColor Gray
+    } else {
+        Set-NetFirewallRule -DisplayName $ruleName -LocalPort 80,443,8082,8443 -ErrorAction SilentlyContinue
     }
 } catch {
     Write-Host "[!] Skipping Windows Firewall rule (run as Administrator if other PCs need access)." -ForegroundColor Gray
@@ -384,6 +386,7 @@ try {
 $portsToCheck = @(
     @{ Port = 80;   Name = "HTTP / Web";      Expected = "nginx" },
     @{ Port = 443;  Name = "HTTPS Dashboard"; Expected = "nginx" },
+    @{ Port = 8082; Name = "Screen Gateway";  Expected = "gateway" },
     @{ Port = 8443; Name = "Agent mTLS API";  Expected = "nginx" }
 )
 foreach ($pt in $portsToCheck) {
@@ -440,12 +443,33 @@ if (-not $p8080) {
     Write-Host "[OK] Reverb WebSockets already running on port 8080." -ForegroundColor Green
 }
 
+# 4. Check & Start Screen Gateway (Port 8082)
+$p8082 = Get-NetTCPConnection -LocalPort 8082 -State Listen -ErrorAction SilentlyContinue
+if (-not $p8082) {
+    Write-Host "[*] Starting Screen Gateway on :8082..." -ForegroundColor Cyan
+    $gwDir = Join-Path $RepoRoot "xephyguard-screen\gateway"
+    $gwExe = Join-Path $gwDir "gateway.exe"
+    if (Test-Path $gwExe) {
+        Start-Process -FilePath $gwExe -ArgumentList "-addr :8082" -WorkingDirectory $gwDir -WindowStyle Hidden
+    } else {
+        $goCmd = Get-Command go -ErrorAction SilentlyContinue
+        if ($goCmd) {
+            Start-Process -FilePath "go" -ArgumentList "run main.go relay.go auth_iface.go auth.go -addr :8082" -WorkingDirectory $gwDir -WindowStyle Hidden
+        } else {
+            Write-Warning "Neither gateway.exe nor Go found in $gwDir. Screen streaming gateway could not be started."
+        }
+    }
+} else {
+    Write-Host "[OK] Screen Gateway already running on port 8082." -ForegroundColor Green
+}
+
 Start-Sleep -Seconds 3
 
 # Verify that the services are really listening
 $checks = @(
     @{ Port = 443;  Name = "Nginx HTTPS (dashboard)" },
     @{ Port = 80;   Name = "Nginx HTTP (CA download)" },
+    @{ Port = 8082; Name = "Screen Gateway (real-time stream)" },
     @{ Port = 8443; Name = "Nginx mTLS (agent API)" },
     @{ Port = 8000; Name = "Laravel backend" },
     @{ Port = 8080; Name = "Reverb WebSockets" }
@@ -478,6 +502,7 @@ Write-Host "       XephyGuard Native Server is RUNNING!               " -Foregro
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Dashboard URL:      https://$ServerIp/ (or https://localhost/)" -ForegroundColor Yellow
+Write-Host "  Screen Gateway:     Port 8082 (WebSocket streaming)" -ForegroundColor Gray
 Write-Host "  Agent API Port:     8443 (mTLS secured)" -ForegroundColor Gray
 Write-Host "  Downloads & CA:     http://$ServerIp/ca.crt" -ForegroundColor Gray
 Write-Host ""
