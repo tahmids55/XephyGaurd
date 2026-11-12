@@ -66,6 +66,10 @@ class PolicyBuilder
             'notice_text' => Setting::get('notice_text'),
             'suppress_ai_overview' => (bool) ($profile->network['google_udm14'] ?? false),
             'google_search_url' => Setting::get('google_search_url'),
+            'proxy_mode' => Setting::get('network_mode', config('xephyguard.network_mode', 'gateway')),
+            'proxy_pac_url' => (Setting::get('network_mode', config('xephyguard.network_mode', 'gateway')) === 'proxy_only' && Setting::get('ccc_ip'))
+                ? 'http://'.Setting::get('ccc_ip').'/proxy.pac'
+                : null,
         ], fn ($v) => $v !== null && $v !== []);
         $policy['session_id'] = $session?->id ?? 0;
         $policy['version'] = self::version($policy);
@@ -96,11 +100,34 @@ class PolicyBuilder
                 'channel' => 'private-pc.'.$pc->id,
                 'auth_path' => '/api/agent/v1/broadcasting/auth',
             ],
-            'screen' => [
-                'port' => (int) config('services.screen_gateway.port', 8082),
-                'path' => rtrim((string) config('services.screen_gateway.path', '/screen-gw'), '/').'/agent',
-                'agent_token' => (string) config('services.screen_gateway.agent_secret', ''),
-            ],
+            'screen' => $this->screenGatewayConfig(),
+        ];
+    }
+
+    private function screenGatewayConfig(): array
+    {
+        $gwUrl = (string) config('services.screen_gateway.url', '');
+        $port = (int) config('services.screen_gateway.port', 8082);
+        $prefix = rtrim((string) config('services.screen_gateway.path', '/screen-gw'), '/');
+        $parsed = $gwUrl !== '' ? (parse_url($gwUrl) ?: []) : [];
+        $scheme = strtolower((string) ($parsed['scheme'] ?? ''));
+
+        if (! empty($parsed['port'])) {
+            $port = (int) $parsed['port'];
+        } elseif ($scheme === 'https' || $scheme === 'wss') {
+            $port = 443;
+        }
+
+        $tls = $port === 443 || $port === 8443 || in_array($scheme, ['https', 'wss'], true);
+        $agentPath = $tls
+            ? (($prefix !== '' ? $prefix : '/screen-gw').'/agent')
+            : '/agent';
+
+        return [
+            'port' => $port,
+            'path' => $agentPath,
+            'tls' => $tls,
+            'agent_token' => (string) config('services.screen_gateway.agent_secret', ''),
         ];
     }
 }

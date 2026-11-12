@@ -18,7 +18,8 @@ from .state import State
 
 log = logging.getLogger("xg-proxy")
 
-GOOGLE_HOST = re.compile(r"^(www\.)?google\.[a-z]{2,3}(\.[a-z]{2})?$")
+GOOGLE_HOST = re.compile(r"^(?:www\.|encrypted\.)?google\.[a-z]{2,6}(?:\.[a-z]{2})?$")
+STYLE_NONCE_RE = re.compile(r"<(?:style|script)[^>]*\bnonce=[\"']([^\"']+)[\"']", re.IGNORECASE)
 
 
 @dataclass
@@ -81,7 +82,10 @@ class PolicyCache:
         hit = self.blocked(group).matches(sni)
         if hit:
             return TlsDecision("block", self.state.category_of(hit), hit, "domain blocklist")
-        if group in ("test", "block_ai") and self._inspect.matches(sni):
+        if (
+            group in ("test", "block_ai")
+            or (self.wants_google_rewrite(client_ip) and bool(GOOGLE_HOST.match(sni.lower())))
+        ) and self._inspect.matches(sni):
             return TlsDecision("inspect", reason="selective inspection host")
         return TlsDecision("pass")
 
@@ -100,7 +104,17 @@ class PolicyCache:
         return TlsDecision("pass")
 
     def wants_google_rewrite(self, client_ip: str | None) -> bool:
-        return self.state.group_of(client_ip) in ("test", "block_ai") and bool(self.state.google.get("force_udm14", True))
+        if not client_ip:
+            return False
+        ip = client_ip.removeprefix("::ffff:")
+        group = self.state.group_of(ip)
+        if group in ("exempt", "isolated"):
+            return False
+        if "udm14_clients" in self.state.google and isinstance(self.state.google.get("udm14_clients"), list):
+            if ip in self.state.google["udm14_clients"]:
+                return True
+            return group in ("test", "block_ai") and bool(self.state.google.get("force_udm14", False))
+        return group in ("test", "block_ai") and bool(self.state.google.get("force_udm14", True))
 
 
 def google_search_rewrite(host: str, path: str, query: list[tuple[str, str]]) -> list[tuple[str, str]] | None:
@@ -116,28 +130,56 @@ def google_search_rewrite(host: str, path: str, query: list[tuple[str, str]]) ->
     if "tbm" in keys:
         return None
     udm = [v for k, v in query if k == "udm"]
-    if udm and udm[0] not in ("50",):
+    if udm and udm[0] not in ("50", "14"):
         return None
-    if udm and udm[0] == "14":
+    has_aep = "aep" in keys
+    if udm and udm[0] == "14" and not has_aep:
         return None
-    new = [(k, v) for k, v in query if k != "udm"]
+    new = [(k, v) for k, v in query if k not in ("udm", "aep")]
     new.append(("udm", "14"))
     return new
 
 
-def hide_css(selectors: list[str]) -> str:
+def extract_nonce(html: str) -> str:
+    m = STYLE_NONCE_RE.search(html or "")
+    return m.group(1) if m else ""
+
+
+def hide_css(selectors: list[str], nonce: str = "") -> str:
     sel = ",".join(s for s in selectors if s and "<" not in s and "{" not in s)
-    return f"<style id=\"xephyguard\">{sel}{{display:none!important}}</style>" if sel else ""
+    if not sel:
+        return ""
+    safe_nonce = re.sub(r"[^A-Za-z0-9+/=_-]", "", nonce or "")
+    nonce_attr = f' nonce="{safe_nonce}"' if safe_nonce else ""
+    return f'<style id="xephyguard"{nonce_attr}>{sel}{{display:none!important}}</style>'
 
 
-def inject_css(html: str, selectors: list[str]) -> str | None:
-    css = hide_css(selectors)
+def inject_css(html: str, selectors: list[str], nonce: str = "") -> str | None:
+    eff_nonce = nonce or extract_nonce(html)
+    css = hide_css(selectors, nonce=eff_nonce)
     if not css:
         return None
     idx = html.lower().find("</head>")
     if idx < 0:
         return None
     return html[:idx] + css + html[idx:]
+
+
+def relax_style_csp(csp_value: str) -> str:
+    """Allows injected inline fallback <style> under strict style-src CSP headers."""
+    parts = [p.strip() for p in csp_value.split(";") if p.strip()]
+    out = []
+    for p in parts:
+        tokens = p.split()
+        directive = tokens[0].lower() if tokens else ""
+        if directive in ("style-src", "style-src-elem"):
+            # CSP ignores 'unsafe-inline' whenever any 'nonce-*' or 'sha*-*' token remains.
+            kept = [t for t in tokens if not re.match(r"^'(?:nonce|sha256|sha384|sha512)-[^']+'$", t, re.I)]
+            if "'unsafe-inline'" not in [t.lower() for t in kept]:
+                kept.append("'unsafe-inline'")
+            p = " ".join(kept)
+        out.append(p)
+    return "; ".join(out)
 
 
 BLOCK_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Blocked by XephyGuard</title>

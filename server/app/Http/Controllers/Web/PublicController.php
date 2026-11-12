@@ -232,20 +232,60 @@ HTML;
         return (string) ($fallback ?: Setting::get('ccc_ip', $reqHost) ?: $reqHost);
     }
 
+    /** Dynamic Proxy Auto-Config (PAC) script for proxy_only lab PCs. */
+    public function proxyPac(\Illuminate\Http\Request $request): Response
+    {
+        $mode = (string) \App\Models\Setting::get('network_mode', config('xephyguard.network_mode', 'gateway'));
+        $host = (string) (\App\Models\Setting::get('ccc_ip') ?: $request->getHost());
+        $port = (int) config('xephyguard.proxy_port', 8080);
+
+        if ($mode !== 'proxy_only' || $host === '' || $host === 'localhost') {
+            $js = "function FindProxyForURL(url, host) {\n  return \"DIRECT\";\n}\n";
+        } else {
+            $safeHost = addcslashes($host, "\\\"");
+            $js = <<<JS
+function FindProxyForURL(url, host) {
+  if (isPlainHostName(host) ||
+      shExpMatch(host, "*.local") ||
+      isInNet(dnsResolve(host), "10.0.0.0", "255.0.0.0") ||
+      isInNet(dnsResolve(host), "172.16.0.0", "255.240.0.0") ||
+      isInNet(dnsResolve(host), "192.168.0.0", "255.255.0.0") ||
+      isInNet(dnsResolve(host), "127.0.0.0", "255.0.0.0") ||
+      host === "{$safeHost}") {
+    return "DIRECT";
+  }
+  return "PROXY {$safeHost}:{$port}; DIRECT";
+}
+
+JS;
+        }
+
+        return response($js, 200, [
+            'Content-Type' => 'application/x-ns-proxy-autoconfig; charset=utf-8',
+            'Cache-Control' => 'no-store, max-age=0',
+        ]);
+    }
+
     private function dynamicScreenStreamBat(): Response
     {
         $ccc = $this->resolveCccHost();
         $gwUrl = (string) config('services.screen_gateway.url', '');
         $port = (int) config('services.screen_gateway.port', 8082);
-        $path = rtrim((string) config('services.screen_gateway.path', '/screen-gw'), '/').'/agent';
-        if ($gwUrl !== '' && ($parsed = parse_url($gwUrl))) {
+        $prefix = rtrim((string) config('services.screen_gateway.path', '/screen-gw'), '/');
+        $parsed = $gwUrl !== '' ? (parse_url($gwUrl) ?: []) : [];
+        $scheme = strtolower((string) ($parsed['scheme'] ?? ''));
+        if ($parsed !== []) {
             if (! empty($parsed['host']) && ! in_array($parsed['host'], ['127.0.0.1', 'localhost'], true)) {
                 $ccc = $parsed['host'];
             }
             if (! empty($parsed['port'])) {
                 $port = (int) $parsed['port'];
+            } elseif ($scheme === 'https' || $scheme === 'wss') {
+                $port = 443;
             }
         }
+        $tls = $port === 443 || $port === 8443 || in_array($scheme, ['https', 'wss'], true);
+        $path = $tls ? (($prefix !== '' ? $prefix : '/screen-gw').'/agent') : '/agent';
         $scheme = request()->isSecure() ? 'wss' : 'ws';
         $script = "@echo off\r\n"
             ."set \"XG_CCC_HOST={$ccc}\"\r\n"

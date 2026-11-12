@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Route;
 Route::get('/notice', [PublicController::class, 'notice'])->name('notice');
 Route::get('/ca.crt', [PublicController::class, 'caCert'])->name('ca.cert');
 Route::get('/install/linux.sh', [PublicController::class, 'linuxInstaller'])->name('install.linux');
+Route::get('/proxy.pac', [PublicController::class, 'proxyPac'])->name('proxy.pac');
 Route::get('/downloads', [PublicController::class, 'downloadsIndex'])->name('downloads.index');
 Route::get('/downloads/{file}', [PublicController::class, 'download'])->name('downloads');
 Route::get('/share', [PublicController::class, 'shareIndex'])->name('share.index');

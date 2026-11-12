@@ -68,11 +68,13 @@ services:
     restart: unless-stopped
     volumes: [ "/var/lib/xephyguard/net:/var/lib/xephyguard/net" ]
 
-  proxy:      # transparent mitmproxy with the XephyGuard addon (SNI filter + selective inspection)
+  proxy:      # mitmproxy with the XephyGuard addon (SNI filter + selective inspection; transparent or regular by mode)
     image: xephyguard/ccc-proxy:${XG_VERSION:-latest}
     build: { context: .., dockerfile: ccc-deploy/docker/proxy.Dockerfile }
     network_mode: host
     restart: unless-stopped
+    environment:
+      XG_NETWORK_MODE: ${XG_NETWORK_MODE:-gateway}
     volumes:
       - /var/lib/xephyguard/net:/var/lib/xephyguard/net:ro
       - /var/lib/xephyguard/mitmproxy:/home/mitmproxy/.mitmproxy      # owned by uid 1500 (install.sh)

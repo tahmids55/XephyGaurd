@@ -123,6 +123,8 @@ public:
     virtual void set_exam_mode(bool /*active*/) {}
     /// Suppresses or restores browser AI Overview search features (Chrome, Edge, Brave, Firefox) via official enterprise policies.
     virtual void set_browser_ai_overview_suppressed(bool /*suppressed*/, const std::string& /*search_url*/ = {}) {}
+    /// Configures or clears browser PAC proxy policies (Chrome, Edge, Brave, Opera, Vivaldi, Firefox) for proxy_only mode.
+    virtual void set_browser_proxy_pac(const std::string& /*pac_url*/) {}
 };
 
 class IGpuMonitor {

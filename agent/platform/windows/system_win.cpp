@@ -105,6 +105,9 @@ public:
         if (ai_overview_suppressed_) {
             set_browser_ai_overview_suppressed(false);
         }
+        if (proxy_pac_active_) {
+            set_browser_proxy_pac({});
+        }
     }
     void set_exam_mode(bool active) override {
         HKEY hk = nullptr;
@@ -121,28 +124,13 @@ public:
     }
     void set_browser_ai_overview_suppressed(bool active, const std::string& search_url = {}) override {
         ai_overview_suppressed_ = active;
-        std::wstring custom_url;
-        if (!search_url.empty()) {
-            int n = MultiByteToWideChar(CP_UTF8, 0, search_url.c_str(), -1, nullptr, 0);
-            if (n > 1) {
-                custom_url.resize(size_t(n - 1));
-                MultiByteToWideChar(CP_UTF8, 0, search_url.c_str(), -1, custom_url.data(), n);
-            }
-        }
+        std::wstring custom_url = utf8_to_wide(search_url);
         const wchar_t* effective_url = custom_url.empty()
             ? L"https://www.google.com/search?q={searchTerms}&udm=14"
             : custom_url.c_str();
 
-        // Chromium-based browsers: Google Chrome, Microsoft Edge, Brave Browser, Opera, Vivaldi
-        const wchar_t* chromium_keys[] = {
-            L"SOFTWARE\\Policies\\Google\\Chrome",
-            L"SOFTWARE\\Policies\\Microsoft\\Edge",
-            L"SOFTWARE\\Policies\\BraveSoftware\\Brave",
-            L"SOFTWARE\\Policies\\Opera Software\\Opera",
-            L"SOFTWARE\\Policies\\Vivaldi"
-        };
-        for (const auto* key_path : chromium_keys) {
-            set_chromium_search_policy(key_path, active, effective_url);
+        for (const auto* key_path : kChromiumPolicyKeys) {
+            set_chromium_search_policy(key_path, active, effective_url, proxy_pac_active_);
         }
 
         // Mozilla Firefox
@@ -151,25 +139,67 @@ public:
         log::info("browser policy: ai overview suppression {}", active ? "enabled (&udm=14 enforced)" : "disabled");
     }
 
+    void set_browser_proxy_pac(const std::string& pac_url) override {
+        const bool active = !pac_url.empty();
+        if (!active && !proxy_pac_active_) return;
+        proxy_pac_active_ = active;
+        const std::wstring wide_pac = utf8_to_wide(pac_url);
+
+        for (const auto* key_path : kChromiumPolicyKeys) {
+            set_chromium_proxy_policy(key_path, active, wide_pac.c_str(), ai_overview_suppressed_);
+        }
+        set_firefox_proxy_policy(active, wide_pac.c_str());
+
+        if (active) log::info("browser policy: proxy PAC enabled ({})", pac_url);
+        else log::info("browser policy: proxy PAC disabled");
+    }
+
 private:
     bool ai_overview_suppressed_ = false;
+    bool proxy_pac_active_ = false;
 
-    static void set_chromium_search_policy(const wchar_t* subkey, bool active, const wchar_t* search_url) {
+    static constexpr const wchar_t* kChromiumPolicyKeys[] = {
+        L"SOFTWARE\\Policies\\Google\\Chrome",
+        L"SOFTWARE\\Policies\\Microsoft\\Edge",
+        L"SOFTWARE\\Policies\\BraveSoftware\\Brave",
+        L"SOFTWARE\\Policies\\Opera Software\\Opera",
+        L"SOFTWARE\\Policies\\Vivaldi",
+    };
+
+    static std::wstring utf8_to_wide(const std::string& s) {
+        if (s.empty()) return {};
+        int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+        if (n <= 1) return {};
+        std::wstring out(size_t(n - 1), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, out.data(), n);
+        return out;
+    }
+
+    static void set_reg_dword(HKEY hk, const wchar_t* name, DWORD value) {
+        RegSetValueExW(hk, name, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value));
+    }
+
+    static void set_reg_sz(HKEY hk, const wchar_t* name, const wchar_t* value) {
+        RegSetValueExW(hk, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(value), DWORD((wcslen(value) + 1) * sizeof(wchar_t)));
+    }
+
+    static void set_chromium_search_policy(const wchar_t* subkey, bool active, const wchar_t* search_url,
+                                           bool keep_transport_hardening) {
         if (active) {
             HKEY hk = nullptr;
             if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, subkey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &hk, nullptr) == ERROR_SUCCESS) {
-                DWORD one = 1;
-                const wchar_t* suggest_url = L"https://www.google.com/complete/search?output=chrome&q={searchTerms}";
-                const wchar_t* new_tab_url = L"https://www.google.com";
-                const wchar_t* name = L"Google";
-                const wchar_t* icon_url = L"https://www.google.com/favicon.ico";
-
-                RegSetValueExW(hk, L"DefaultSearchProviderEnabled", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&one), sizeof(one));
-                RegSetValueExW(hk, L"DefaultSearchProviderSearchURL", 0, REG_SZ, reinterpret_cast<const BYTE*>(search_url), DWORD((wcslen(search_url) + 1) * sizeof(wchar_t)));
-                RegSetValueExW(hk, L"DefaultSearchProviderSuggestURL", 0, REG_SZ, reinterpret_cast<const BYTE*>(suggest_url), DWORD((wcslen(suggest_url) + 1) * sizeof(wchar_t)));
-                RegSetValueExW(hk, L"DefaultSearchProviderNewTabURL", 0, REG_SZ, reinterpret_cast<const BYTE*>(new_tab_url), DWORD((wcslen(new_tab_url) + 1) * sizeof(wchar_t)));
-                RegSetValueExW(hk, L"DefaultSearchProviderName", 0, REG_SZ, reinterpret_cast<const BYTE*>(name), DWORD((wcslen(name) + 1) * sizeof(wchar_t)));
-                RegSetValueExW(hk, L"DefaultSearchProviderIconURL", 0, REG_SZ, reinterpret_cast<const BYTE*>(icon_url), DWORD((wcslen(icon_url) + 1) * sizeof(wchar_t)));
+                set_reg_dword(hk, L"DefaultSearchProviderEnabled", 1);
+                set_reg_sz(hk, L"DefaultSearchProviderSearchURL", search_url);
+                set_reg_sz(hk, L"DefaultSearchProviderSuggestURL", L"https://www.google.com/complete/search?output=chrome&q={searchTerms}");
+                set_reg_sz(hk, L"DefaultSearchProviderNewTabURL", L"https://www.google.com");
+                set_reg_sz(hk, L"DefaultSearchProviderName", L"Google");
+                set_reg_sz(hk, L"DefaultSearchProviderIconURL", L"https://www.google.com/favicon.ico");
+                set_reg_dword(hk, L"AIModeSettings", 1);
+                set_reg_dword(hk, L"GenAiDefaultSettings", 2);
+                set_reg_dword(hk, L"GeminiSettings", 1);
+                set_reg_dword(hk, L"HelpMeWriteSettings", 2);
+                set_reg_dword(hk, L"QuicAllowed", 0);
+                set_reg_sz(hk, L"DnsOverHttpsMode", L"off");
                 RegCloseKey(hk);
             }
         } else {
@@ -181,6 +211,71 @@ private:
                 RegDeleteValueW(hk, L"DefaultSearchProviderNewTabURL");
                 RegDeleteValueW(hk, L"DefaultSearchProviderName");
                 RegDeleteValueW(hk, L"DefaultSearchProviderIconURL");
+                RegDeleteValueW(hk, L"AIModeSettings");
+                RegDeleteValueW(hk, L"GenAiDefaultSettings");
+                RegDeleteValueW(hk, L"GeminiSettings");
+                RegDeleteValueW(hk, L"HelpMeWriteSettings");
+                if (!keep_transport_hardening) {
+                    RegDeleteValueW(hk, L"QuicAllowed");
+                    RegDeleteValueW(hk, L"DnsOverHttpsMode");
+                }
+                RegCloseKey(hk);
+            }
+        }
+    }
+
+    static void set_chromium_proxy_policy(const wchar_t* subkey, bool active, const wchar_t* pac_url,
+                                          bool keep_transport_hardening) {
+        if (active) {
+            HKEY hk = nullptr;
+            if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, subkey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &hk, nullptr) == ERROR_SUCCESS) {
+                set_reg_sz(hk, L"ProxyMode", L"pac_script");
+                set_reg_sz(hk, L"ProxyPacUrl", pac_url);
+                set_reg_dword(hk, L"QuicAllowed", 0);
+                set_reg_sz(hk, L"DnsOverHttpsMode", L"off");
+                RegCloseKey(hk);
+            }
+        } else {
+            HKEY hk = nullptr;
+            if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, subkey, 0, KEY_SET_VALUE, &hk) == ERROR_SUCCESS) {
+                RegDeleteValueW(hk, L"ProxyMode");
+                RegDeleteValueW(hk, L"ProxyPacUrl");
+                if (!keep_transport_hardening) {
+                    RegDeleteValueW(hk, L"QuicAllowed");
+                    RegDeleteValueW(hk, L"DnsOverHttpsMode");
+                }
+                RegCloseKey(hk);
+            }
+        }
+    }
+
+    static void set_firefox_proxy_policy(bool active, const wchar_t* pac_url) {
+        const wchar_t* proxy_key = L"SOFTWARE\\Policies\\Mozilla\\Firefox\\Proxy";
+        const wchar_t* doh_key = L"SOFTWARE\\Policies\\Mozilla\\Firefox\\DNSOverHTTPS";
+        if (active) {
+            HKEY hk = nullptr;
+            if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, proxy_key, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &hk, nullptr) == ERROR_SUCCESS) {
+                set_reg_sz(hk, L"Mode", L"autoConfig");
+                set_reg_sz(hk, L"AutoConfigURL", pac_url);
+                set_reg_dword(hk, L"Locked", 1);
+                RegCloseKey(hk);
+            }
+            if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, doh_key, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &hk, nullptr) == ERROR_SUCCESS) {
+                set_reg_dword(hk, L"Enabled", 0);
+                set_reg_dword(hk, L"Locked", 1);
+                RegCloseKey(hk);
+            }
+        } else {
+            HKEY hk = nullptr;
+            if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, proxy_key, 0, KEY_SET_VALUE, &hk) == ERROR_SUCCESS) {
+                RegDeleteValueW(hk, L"Mode");
+                RegDeleteValueW(hk, L"AutoConfigURL");
+                RegDeleteValueW(hk, L"Locked");
+                RegCloseKey(hk);
+            }
+            if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, doh_key, 0, KEY_SET_VALUE, &hk) == ERROR_SUCCESS) {
+                RegDeleteValueW(hk, L"Enabled");
+                RegDeleteValueW(hk, L"Locked");
                 RegCloseKey(hk);
             }
         }

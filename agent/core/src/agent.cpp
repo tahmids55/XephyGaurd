@@ -98,6 +98,7 @@ void Agent::apply_policy(const Policy& p) {
     if (plat_.system) {
         plat_.system->set_exam_mode(p.mode == Mode::test);
         plat_.system->set_browser_ai_overview_suppressed(p.suppress_ai_overview, p.google_search_url);
+        plat_.system->set_browser_proxy_pac(p.proxy_mode == "proxy_only" ? p.proxy_pac_url : std::string{});
     }
     push_helper_config();
     if (stop_) restart_watchers();
@@ -1499,6 +1500,7 @@ int Agent::run(std::atomic<bool>& stop) {
     if (plat_.system) {
         plat_.system->set_exam_mode(false);
         plat_.system->set_browser_ai_overview_suppressed(false);
+        plat_.system->set_browser_proxy_pac({});
     }
     if (plat_.processes) plat_.processes->stop();
     if (plat_.network) plat_.network->stop();

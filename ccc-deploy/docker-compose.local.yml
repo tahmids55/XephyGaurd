@@ -74,6 +74,7 @@ services:
     build: { context: .., dockerfile: ccc-deploy/docker/proxy.Dockerfile, network: host }
     network_mode: host
     restart: unless-stopped
+    env_file: .env.local
     volumes:
       - xg_local_net:/var/lib/xephyguard/net:ro
       - xg_local_mitmproxy:/home/mitmproxy/.mitmproxy

@@ -23,6 +23,7 @@ class NetworkPolicyWriter
     {
         $groups = ['test' => [], 'block_ai' => [], 'isolated' => [], 'exempt' => []];
         $groupCats = ['test' => [], 'block_ai' => []];
+        $udm14Clients = [];
         $udm14 = true;
         foreach (Pc::query()->active()->whereNotNull('ip')->get() as $pc) {
             if ($pc->isolated) {
@@ -32,6 +33,9 @@ class NetworkPolicyWriter
             ['profile' => $profile, 'session' => $session, 'override' => $override] = $this->policies->effective($pc);
             $net = $profile->network ?? [];
             $cats = array_values($net['block_categories'] ?? []);
+            if ((bool) ($net['google_udm14'] ?? false)) {
+                $udm14Clients[] = $pc->ip;
+            }
             if (! $session) {
                 continue;
             }
@@ -47,6 +51,8 @@ class NetworkPolicyWriter
             $groupCats[$group] = array_values(array_unique(array_merge($groupCats[$group], $cats)));
             $udm14 = $udm14 && ($net['google_udm14'] ?? true);
         }
+        $udm14Clients = array_values(array_unique($udm14Clients));
+        $forceUdm14 = ! empty($udm14Clients) || (($groups['test'] !== [] || $groups['block_ai'] !== []) && $udm14);
 
         $categories = [];
         $paths = [];
@@ -77,7 +83,11 @@ class NetworkPolicyWriter
             'group_categories' => $groupCats,
             'always_block' => ['doh'],
             'doh_ips' => array_values(array_unique($ips)),
-            'google' => ['force_udm14' => $udm14, 'hide_selectors' => Setting::get('google_hide_selectors', [])],
+            'google' => [
+                'force_udm14' => $forceUdm14,
+                'udm14_clients' => $udm14Clients,
+                'hide_selectors' => Setting::get('google_hide_selectors', []),
+            ],
             'inspect_hosts' => Setting::get('inspect_hosts', self::DEFAULT_INSPECT_HOSTS),
             'log_urls' => $logUrls,
             'events_url' => rtrim(config('xephyguard.internal_url'), '/').'/api/internal/net-events',

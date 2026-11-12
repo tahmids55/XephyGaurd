@@ -28,6 +28,7 @@ from xg_netpolicy.proxy_logic import (  # noqa: E402
     block_page,
     google_search_rewrite,
     inject_css,
+    relax_style_csp,
 )
 
 log = logging.getLogger("xephyguard")
@@ -92,6 +93,12 @@ class XephyGuard:
                              category=d.category, matched=d.matched, reason=d.reason)
             return
         if self.cache.wants_google_rewrite(ip):
+            clean_path = path.split("?", 1)[0]
+            if GOOGLE_HOST.match(host.lower()) and clean_path.startswith("/async/folwr"):
+                flow.response = http.Response.make(204, b"", {"Cache-Control": "no-store"})
+                self.events.emit(client_ip=ip, host=host, path=clean_path[:256], layer="search-ai",
+                                 action="blocked", category="search_ai")
+                return
             new_q = google_search_rewrite(host, path, list(flow.request.query.items(multi=True)))
             if new_q is not None:
                 flow.request.query.clear()
@@ -120,6 +127,11 @@ class XephyGuard:
             new = inject_css(html, selectors)
             if new:
                 flow.response.set_text(new)
+                for hname in ("content-security-policy", "content-security-policy-report-only"):
+                    if hname in flow.response.headers:
+                        flow.response.headers[hname] = relax_style_csp(flow.response.headers[hname])
+                if flow.metadata.get("xg_rewritten"):
+                    flow.response.headers["Cache-Control"] = "no-store, private"
 
 
 addons = [XephyGuard()]

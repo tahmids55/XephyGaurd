@@ -20,7 +20,9 @@
     <div><div class="label">Downloads</div>
       @forelse ($downloads as $d)<a class="mr-3 text-indigo-600 underline" href="{{ route('downloads', $d) }}">{{ $d }}</a>@empty
         <p class="text-xs text-slate-500">No installers uploaded yet. Copy the release artifacts into <code>storage/app/public/downloads/</code> (scripts/release.sh does this).</p>@endforelse
-      <a class="ml-1 text-indigo-600 underline" href="{{ route('ca.cert') }}">xephyguard-ca.crt</a></div>
+      <a class="ml-1 text-indigo-600 underline" href="{{ route('ca.cert') }}">xephyguard-ca.crt</a>
+      <a class="ml-3 text-indigo-600 underline" href="{{ route('proxy.pac') }}">proxy.pac</a></div>
+    <p class="text-xs text-slate-500">In <b>proxy_only</b> mode, configure browsers/Windows PAC URL to <code>http://{{ $ccc }}/proxy.pac</code> (explicit proxy <code>{{ $ccc }}:8080</code>).</p>
     <p class="text-sm text-slate-600">New PCs find this CCC automatically and appear below as <b>Pending</b>. Click <b>Approve</b> — nothing else to configure.</p>
   </div>
   <div class="card">

@@ -160,6 +160,12 @@ Policy Policy::from_json(const json& j, std::string* err) {
         if (j.contains("google_search_url") && j["google_search_url"].is_string()) {
             p.google_search_url = j["google_search_url"].get<std::string>();
         }
+        if (j.contains("proxy_mode") && j["proxy_mode"].is_string()) {
+            p.proxy_mode = j["proxy_mode"].get<std::string>();
+        }
+        if (j.contains("proxy_pac_url") && j["proxy_pac_url"].is_string()) {
+            p.proxy_pac_url = j["proxy_pac_url"].get<std::string>();
+        }
     } catch (const std::exception& e) {
         if (err) *err = e.what();
     }
@@ -202,6 +208,8 @@ json Policy::to_json() const {
         {"notice_text", notice_text},
         {"suppress_ai_overview", suppress_ai_overview},
         {"google_search_url", google_search_url},
+        {"proxy_mode", proxy_mode},
+        {"proxy_pac_url", proxy_pac_url},
     };
 }
 

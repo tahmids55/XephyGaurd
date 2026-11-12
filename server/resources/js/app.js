@@ -260,6 +260,22 @@ Alpine.data('labView', (cfg) => ({
                             this.screenStatus = `Connected · ${this.drawer?.pc?.name || 'PC'} (${mode})`;
                         }
                     },
+                    onControlMessage: (msg) => {
+                        if (this.screenReqSeq !== currentReqSeq || !msg) return;
+                        if (msg.type === 'status') {
+                            if (msg.agent_connected) {
+                                if (!this.screenHasFrame) {
+                                    this.screenStatus = `Agent connected · waiting for frame…`;
+                                }
+                                this.screenViewer?.requestKeyframe(msg.stream_id || 0, 0);
+                            } else {
+                                this.screenHasFrame = false;
+                                this.screenStatus = `Waiting for agent screen stream (${this.drawer?.pc?.name || 'PC'})…`;
+                            }
+                        } else if (msg.type === 'error' && msg.message) {
+                            this.screenStatus = `Stream error: ${msg.message}`;
+                        }
+                    },
                     onFrame: () => {
                         if (this.screenReqSeq === currentReqSeq) {
                             this.screenHasFrame = true;

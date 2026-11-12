@@ -28,7 +28,7 @@ class State:
     group_categories: dict[str, list[str]] = field(default_factory=dict)
     always_block: list[str] = field(default_factory=lambda: ["doh"])
     doh_ips: list[str] = field(default_factory=list)
-    google: dict[str, Any] = field(default_factory=lambda: {"force_udm14": True, "strip_markers": []})
+    google: dict[str, Any] = field(default_factory=lambda: {"force_udm14": True, "udm14_clients": [], "hide_selectors": [], "strip_markers": []})
     inspect_hosts: list[str] = field(default_factory=list)
     log_urls: dict[str, Any] = field(default_factory=lambda: {"enabled": False, "query": False})
     events_url: str = ""
@@ -56,6 +56,9 @@ class State:
             for ip in ips:
                 if ipaddress.ip_address(ip) not in net:
                     raise ValueError(f"{g}: {ip} is outside the lab subnet {self.lab_subnet}")
+        for ip in self.google.get("udm14_clients") or []:
+            if ipaddress.ip_address(ip) not in net:
+                raise ValueError(f"udm14_clients: {ip} is outside the lab subnet {self.lab_subnet}")
         for name in self.lan_if, self.wan_if:
             if not name.replace("-", "").replace("_", "").replace(".", "").isalnum():
                 raise ValueError(f"bad interface name {name!r}")

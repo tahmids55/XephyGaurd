@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
@@ -24,10 +25,12 @@ const (
 )
 
 type Viewer struct {
-	id     uint64
-	ch     chan []byte
-	conn   *websocket.Conn
-	closed atomic.Bool
+	id                uint64
+	ch                chan []byte
+	ctrlCh            chan []byte
+	conn              *websocket.Conn
+	closed            atomic.Bool
+	sentOfflineNotice atomic.Bool
 }
 
 type Stream struct {
@@ -112,9 +115,41 @@ func buildKeyframeReq(streamID uint32, monitorID uint16) []byte {
 	return buf
 }
 
+func (s *RelayServer) broadcastStatusLocked(stream *Stream, connected bool) {
+	if len(stream.viewers) == 0 {
+		return
+	}
+	payload, err := json.Marshal(struct {
+		Type           string `json:"type"`
+		AgentConnected bool   `json:"agent_connected"`
+		StreamID       uint32 `json:"stream_id"`
+	}{
+		Type:           "status",
+		AgentConnected: connected,
+		StreamID:       stream.streamID,
+	})
+	if err != nil {
+		return
+	}
+	for _, v := range stream.viewers {
+		if connected {
+			if !v.sentOfflineNotice.Swap(false) {
+				continue
+			}
+		} else {
+			v.sentOfflineNotice.Store(true)
+		}
+		select {
+		case v.ctrlCh <- payload:
+		default:
+		}
+	}
+}
+
 func (s *RelayServer) HandleAgent(w http.ResponseWriter, r *http.Request) {
 	agentID, err := s.auth.AuthAgent(r)
 	if err != nil {
+		log.Printf("[Gateway Agent Rejected] remote=%s path=%s err=%v", r.RemoteAddr, r.URL.Path, err)
 		http.Error(w, "Unauthorized agent: "+err.Error(), http.StatusUnauthorized)
 		return
 	}
@@ -135,7 +170,7 @@ func (s *RelayServer) HandleAgent(w http.ResponseWriter, r *http.Request) {
 	c.SetReadLimit(16 * 1024 * 1024)
 	defer c.Close(websocket.StatusInternalError, "agent closed")
 
-	log.Printf("[Gateway Agent Connected] remote=%s stream_id_param=%d", r.RemoteAddr, streamIDVal)
+	log.Printf("[Gateway Agent Connected] remote=%s path=%s stream_id_param=%d", r.RemoteAddr, r.URL.Path, streamIDVal)
 
 	var stream *Stream
 	if streamIDVal != 0 {
@@ -143,6 +178,13 @@ func (s *RelayServer) HandleAgent(w http.ResponseWriter, r *http.Request) {
 		stream.mu.Lock()
 		stream.agentConn = c
 		stream.agentID = agentID
+		if len(stream.viewers) > 0 {
+			s.broadcastStatusLocked(stream, true)
+			select {
+			case stream.agentOut <- buildKeyframeReq(stream.streamID, 0):
+			default:
+			}
+		}
 		stream.mu.Unlock()
 	}
 
@@ -250,6 +292,7 @@ func (s *RelayServer) HandleAgent(w http.ResponseWriter, r *http.Request) {
 		stream.mu.Lock()
 		if stream.agentConn == c {
 			stream.agentConn = nil
+			s.broadcastStatusLocked(stream, false)
 		}
 		stream.mu.Unlock()
 	}
@@ -265,8 +308,9 @@ func (s *RelayServer) HandleView(w http.ResponseWriter, r *http.Request) {
 	stream := s.findStreamForViewer(streamID)
 
 	stream.mu.Lock()
+	hasAgent := stream.agentConn != nil
 	log.Printf("[Gateway Viewer Connect] remote=%s target_stream_id=%d has_agent=%v keyframe_cached=%v",
-		r.RemoteAddr, streamID, stream.agentConn != nil, len(stream.lastKeyframe) > 0)
+		r.RemoteAddr, streamID, hasAgent, len(stream.lastKeyframe) > 0)
 	if len(stream.viewers) >= kMaxViewers {
 		stream.mu.Unlock()
 		http.Error(w, "Max viewers reached (max 2)", http.StatusTooManyRequests)
@@ -276,12 +320,14 @@ func (s *RelayServer) HandleView(w http.ResponseWriter, r *http.Request) {
 	stream.nextViewerID++
 	viewerID := stream.nextViewerID
 	v := &Viewer{
-		id: viewerID,
-		ch: make(chan []byte, kViewerQueueSize),
+		id:     viewerID,
+		ch:     make(chan []byte, kViewerQueueSize),
+		ctrlCh: make(chan []byte, 4),
 	}
 	stream.viewers[viewerID] = v
 
-	// If we have a cached keyframe, immediately push it to the new viewer
+	// Defer notifying offline for a brief grace window so concurrent agent/viewer handshakes do not race.
+	// If we have a cached keyframe, immediately push it to the new viewer.
 	if len(stream.lastKeyframe) > 0 {
 		select {
 		case v.ch <- stream.lastKeyframe:
@@ -316,16 +362,54 @@ func (s *RelayServer) HandleView(w http.ResponseWriter, r *http.Request) {
 	writerDone := make(chan struct{})
 	go func() {
 		defer close(writerDone)
+		var offlineTimer <-chan time.Time
+		if !hasAgent {
+			t := time.NewTimer(150 * time.Millisecond)
+			defer t.Stop()
+			offlineTimer = t.C
+		}
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-stream.ctx.Done():
 				return
+			case <-offlineTimer:
+				offlineTimer = nil
+				stream.mu.Lock()
+				stillOffline := stream.agentConn == nil
+				stream.mu.Unlock()
+				if stillOffline {
+					if statusPayload, merr := json.Marshal(struct {
+						Type           string `json:"type"`
+						AgentConnected bool   `json:"agent_connected"`
+						StreamID       uint32 `json:"stream_id"`
+					}{Type: "status", AgentConnected: false, StreamID: stream.streamID}); merr == nil {
+						v.sentOfflineNotice.Store(true)
+						writeCtx, writeCancel := context.WithTimeout(ctx, 3*time.Second)
+						err := c.Write(writeCtx, websocket.MessageText, statusPayload)
+						writeCancel()
+						if err != nil {
+							return
+						}
+					}
+				}
+			case ctrlMsg, ok := <-v.ctrlCh:
+				if !ok {
+					return
+				}
+				offlineTimer = nil
+				writeCtx, writeCancel := context.WithTimeout(ctx, 3*time.Second)
+				err := c.Write(writeCtx, websocket.MessageText, ctrlMsg)
+				writeCancel()
+				if err != nil {
+					return
+				}
 			case msg, ok := <-v.ch:
 				if !ok {
 					return
 				}
+				offlineTimer = nil
 				writeCtx, writeCancel := context.WithTimeout(ctx, 3*time.Second)
 				err := c.Write(writeCtx, websocket.MessageBinary, msg)
 				writeCancel()
@@ -368,6 +452,8 @@ func (s *RelayServer) HandleView(w http.ResponseWriter, r *http.Request) {
 func (s *RelayServer) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/agent", s.HandleAgent)
+	mux.HandleFunc("/screen-gw/agent", s.HandleAgent)
 	mux.HandleFunc("/view", s.HandleView)
+	mux.HandleFunc("/screen-gw/view", s.HandleView)
 	return mux
 }
