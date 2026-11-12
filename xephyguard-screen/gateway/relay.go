@@ -176,6 +176,9 @@ func (s *RelayServer) HandleAgent(w http.ResponseWriter, r *http.Request) {
 	if streamIDVal != 0 {
 		stream = s.getOrCreateStream(streamIDVal)
 		stream.mu.Lock()
+		if stream.agentConn != c {
+			stream.lastKeyframe = nil
+		}
 		stream.agentConn = c
 		stream.agentID = agentID
 		if len(stream.viewers) > 0 {
@@ -248,6 +251,9 @@ func (s *RelayServer) HandleAgent(w http.ResponseWriter, r *http.Request) {
 			}
 
 			stream.mu.Lock()
+			if stream.agentConn != c {
+				stream.lastKeyframe = nil
+			}
 			stream.agentConn = c
 			stream.agentID = agentID
 
@@ -292,6 +298,7 @@ func (s *RelayServer) HandleAgent(w http.ResponseWriter, r *http.Request) {
 		stream.mu.Lock()
 		if stream.agentConn == c {
 			stream.agentConn = nil
+			stream.lastKeyframe = nil
 			s.broadcastStatusLocked(stream, false)
 		}
 		stream.mu.Unlock()
@@ -326,19 +333,21 @@ func (s *RelayServer) HandleView(w http.ResponseWriter, r *http.Request) {
 	}
 	stream.viewers[viewerID] = v
 
-	// Defer notifying offline for a brief grace window so concurrent agent/viewer handshakes do not race.
-	// If we have a cached keyframe, immediately push it to the new viewer.
-	if len(stream.lastKeyframe) > 0 {
+	// Only replay a cached keyframe and ask for a keyframe when a live agent is connected;
+	// otherwise keep the 150ms offline status grace timer active.
+	if hasAgent {
+		if len(stream.lastKeyframe) > 0 {
+			select {
+			case v.ch <- stream.lastKeyframe:
+			default:
+			}
+		}
+
+		// Always trigger an immediate keyframe request to the live agent
 		select {
-		case v.ch <- stream.lastKeyframe:
+		case stream.agentOut <- buildKeyframeReq(stream.streamID, 0):
 		default:
 		}
-	}
-
-	// Always trigger an immediate keyframe request to the agent
-	select {
-	case stream.agentOut <- buildKeyframeReq(stream.streamID, 0):
-	default:
 	}
 	stream.mu.Unlock()
 

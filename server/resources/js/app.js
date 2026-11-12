@@ -270,6 +270,7 @@ Alpine.data('labView', (cfg) => ({
                                 this.screenViewer?.requestKeyframe(msg.stream_id || 0, 0);
                             } else {
                                 this.screenHasFrame = false;
+                                this.screenViewer?.tileCanvas?.clear();
                                 this.screenStatus = `Waiting for agent screen stream (${this.drawer?.pc?.name || 'PC'})…`;
                             }
                         } else if (msg.type === 'error' && msg.message) {

@@ -80,3 +80,48 @@ func TestViewerReceivesAgentStatusTransitionsAndPrefixedRoutesWork(t *testing.T)
 		t.Fatalf("expected binary frame len=%d, got typ=%v len=%d", len(frame), typ, len(got))
 	}
 }
+
+func TestDisconnectedAgentDoesNotReplayStaleKeyframeToNewViewer(t *testing.T) {
+	auth := &FakeAuth{}
+	relay := NewRelayServer(auth)
+	srv := httptest.NewServer(relay.Routes())
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 1. Agent connects, sends a keyframe, and disconnects.
+	agentConn, _, err := websocket.Dial(ctx, toWSURL(srv.URL, "/agent")+"?stream_id=22", nil)
+	if err != nil {
+		t.Fatalf("dial agent: %v", err)
+	}
+	frame := makeTestFrame(22, 0, 1)
+	if err := agentConn.Write(ctx, websocket.MessageBinary, frame); err != nil {
+		t.Fatalf("agent write frame: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	_ = agentConn.Close(websocket.StatusNormalClosure, "done")
+	time.Sleep(50 * time.Millisecond)
+
+	// 2. Subsequent viewer connects with no live agent; must get offline status, NOT the stale frame.
+	viewerConn, _, err := websocket.Dial(ctx, toWSURL(srv.URL, "/screen-gw/view")+"?stream_id=22", nil)
+	if err != nil {
+		t.Fatalf("dial viewer: %v", err)
+	}
+	defer viewerConn.Close(websocket.StatusNormalClosure, "bye")
+
+	typ, data, err := viewerConn.Read(ctx)
+	if err != nil {
+		t.Fatalf("viewer read status: %v", err)
+	}
+	if typ != websocket.MessageText {
+		t.Fatalf("expected offline text status instead of stale binary frame, got msgType=%v len=%d", typ, len(data))
+	}
+	var st statusMsg
+	if err := json.Unmarshal(data, &st); err != nil {
+		t.Fatalf("decode status json: %v", err)
+	}
+	if st.Type != "status" || st.AgentConnected || st.StreamID != 22 {
+		t.Fatalf("expected agent_connected=false for stream 22, got %+v", st)
+	}
+}
