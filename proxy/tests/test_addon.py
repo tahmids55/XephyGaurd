@@ -1,6 +1,4 @@
 """Exercises the mitmproxy addon with mitmproxy's own test helpers (recorded-style flows)."""
-import json
-
 import pytest
 
 mitmproxy = pytest.importorskip("mitmproxy")

@@ -12,7 +12,6 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import parse_qsl, urlencode
 
 from .domains import DomainSet
 from .state import State

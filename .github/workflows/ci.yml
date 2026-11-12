@@ -6,7 +6,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y libssl-dev libsqlite3-dev libx11-dev libxfixes-dev python3-yaml
+      - run: sudo apt-get update && sudo apt-get install -y libssl-dev libsqlite3-dev libx11-dev libxfixes-dev libxext-dev libxdamage-dev libxrandr-dev python3-yaml
       - run: cmake -S agent -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - run: cmake --build build -j
       - run: ctest --test-dir build --output-on-failure
@@ -29,8 +29,9 @@ jobs:
           git clone -q --depth 1 -b v3.4.0 https://github.com/marzer/tomlplusplus.git toml
           for f in agent/platform/windows/*.cpp agent/apps/*.cpp agent/core/src/*.cpp; do
             x86_64-w64-mingw32-g++-posix -std=c++20 -fsyntax-only -Wall -Wextra -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
-              -D_WIN32_WINNT=0x0A00 -DXG_VERSION='"ci"' -Iagent/core/include -Iagent/platform/windows -Ihdr \
-              -Inl/include -Itoml/include "$f"
+              -D_WIN32_WINNT=0x0A00 -DXG_VERSION='"ci"' -Iagent/core/include -Iagent/platform/windows \
+              -Ixephyguard-screen/agent -Ixephyguard-screen/capture -Ixephyguard-screen/core -Ixephyguard-screen/third_party \
+              -Ihdr -Inl/include -Itoml/include "$f"
           done
 
   agent-windows-msvc:
@@ -50,7 +51,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
-        with: { php-version: '8.3', extensions: pdo_sqlite, intl, zip, gd }
+        with: { php-version: '8.3', extensions: 'pdo_sqlite, intl, zip, gd' }
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: composer install --no-interaction --prefer-dist

@@ -9,15 +9,15 @@
 #include <vector>
 
 #include "agent_state.h"
-#include "../capture/fake_capture.h"
+#include "fake_capture.h"
 
 #if defined(_WIN32)
-#include "../capture/win_dxgi_capture.h"
-#include "../capture/win_gdi_capture.h"
+#include "win_dxgi_capture.h"
+#include "win_gdi_capture.h"
 #include <windows.h>
 #include <winhttp.h>
 #else
-#include "../capture/x11_capture.h"
+#include "x11_capture.h"
 #endif
 
 namespace xg {
