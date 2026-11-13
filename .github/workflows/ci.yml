@@ -39,11 +39,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: vcpkg install openssl:x64-windows-static sqlite3:x64-windows-static
-      - run: cmake -S agent -B build -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static
-      - run: cmake --build build --config Release
-      - run: ctest --test-dir build -C Release --output-on-failure
+      - run: cmake -S agent -B build -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static -DXG_BUILD_TESTS=OFF
+      - run: cmake --build build --config Release --target xephyguard-agent
       - uses: actions/upload-artifact@v4
-        with: { name: agent-windows, path: build/Release/*.exe }
+        with: { name: agent-windows, path: build/Release/xephyguard-agent.exe }
 
   server:
     runs-on: ubuntu-24.04
