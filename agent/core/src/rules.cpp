@@ -202,6 +202,19 @@ std::vector<std::string> RuleEngine::ai_domains() const {
     return out;
 }
 
+std::vector<std::string> RuleEngine::extension_ids() const {
+    std::shared_lock lk(mu_);
+    std::vector<std::string> out;
+    std::set<std::string> seen;
+    for (const auto& r : set_.extensions) {
+        if (!enabled(r.id)) continue;
+        for (const auto& x : r.ext_ids) {
+            if (seen.insert(x).second) out.push_back(x);
+        }
+    }
+    return out;
+}
+
 PortProbe RuleEngine::probe() const { std::shared_lock lk(mu_); return set_.probe; }
 ArtifactScanSpec RuleEngine::artifact_scan() const { std::shared_lock lk(mu_); return set_.artifact_scan; }
 std::vector<ArtifactRule> RuleEngine::artifact_rules() const { std::shared_lock lk(mu_); return set_.artifacts; }

@@ -107,6 +107,14 @@ void Agent::apply_policy(const Policy& p) {
 bool Agent::apply_signatures(const json& env, bool require_signature) {
     if (!env.is_object() || !env.contains("bundle") || !env["bundle"].is_string()) return false;
     const std::string bundle = env["bundle"].get<std::string>();
+    const std::string env_version = env.value("version", "");
+    // Remember a refused version so the uplink loop does not refetch it in a tight loop.
+    auto reject = [&] {
+        std::lock_guard rl(rejected_sig_mu_);
+        rejected_sig_version_ = env_version;
+        rejected_sig_at_ms_ = now_ms();
+        return false;
+    };
     if (require_signature) {
         bool ok = false;
         const std::string ca = read_file(cfg_.ca_file, &ok);
@@ -114,16 +122,27 @@ bool Agent::apply_signatures(const json& env, bool require_signature) {
             log::error("signatures: bundle {} has an invalid signature; keeping {}", env.value("version", "?"),
                        rules_.version());
             sink_->emit(ev::tamper, {{"kind", "signature_invalid"}, {"bundle_version", env.value("version", "")}});
-            return false;
+            return reject();
         }
     }
     auto j = json::parse(bundle, nullptr, false);
-    if (j.is_discarded()) return false;
+    if (j.is_discarded()) return reject();
     std::string err;
     auto set = SignatureSet::from_json(j, &err);
     if (!err.empty()) {
         log::error("signatures: parse error: {}", err);
-        return false;
+        return reject();
+    }
+    // A bundle without any AI/IDE domain would blind domain monitoring on this PC. Keep the last-known-good
+    // bundle instead (a first load with nothing to lose is still accepted).
+    if (set.ai_domains.empty() && set.ide_domains.empty() && !rules_.ai_domains().empty()) {
+        log::warn("signatures: bundle {} has no domains; keeping {}", env.value("version", "?"), rules_.version());
+        return reject();
+    }
+    {
+        std::lock_guard rl(rejected_sig_mu_);
+        rejected_sig_version_.clear();
+        rejected_sig_at_ms_ = 0;
     }
     log::info("signatures: loaded {} ({} rules)", set.version, set.rule_count());
     rules_.load(std::move(set));
@@ -136,6 +155,7 @@ bool Agent::apply_signatures(const json& env, bool require_signature) {
     known_extensions_.clear();
     last_ext_hash_.clear();
     rescan_extensions_ = true;
+    push_helper_config();   // the helper filters WSL extensions with the bundle's ids; refresh them now
     return true;
 }
 
@@ -778,6 +798,7 @@ void Agent::push_helper_config() {
                                     {"title_capture", to_string(p.title_capture)},
                                     {"ccc_host", cfg_.ccc_host},
                                     {"pc_id", cfg_.pc_id},
+                                    {"ext_ids", rules_.extension_ids()},
                                     {"screen", {{"port", cfg_.screen_port},
                                                 {"path", cfg_.screen_path},
                                                 {"tls", cfg_.screen_tls},
@@ -1181,7 +1202,19 @@ bool Agent::flush_once() {
     if (ack->server_time_ms > 0) status_.clock_offset_ms = protocol::clock_offset(t0, t1, ack->server_time_ms);
     const Policy p = policy();
     if (ack->policy_version != 0 && ack->policy_version != p.version) policy_dirty_ = true;
-    if (!ack->signatures_version.empty() && ack->signatures_version != rules_.version()) policy_dirty_ = true;
+    if (!ack->signatures_version.empty() && ack->signatures_version != rules_.version()) {
+        // Do not spin on a bundle we already refused: only refetch when the server announces a different
+        // version, or when the retry interval (15 min) has elapsed.
+        constexpr int64_t kRejectedSigRetryMs = 15 * 60 * 1000;
+        std::lock_guard rl(rejected_sig_mu_);
+        const int64_t now = now_ms();
+        if (ack->signatures_version != rejected_sig_version_) {
+            policy_dirty_ = true;
+        } else if (now - rejected_sig_at_ms_ >= kRejectedSigRetryMs) {
+            rejected_sig_at_ms_ = now;
+            policy_dirty_ = true;
+        }
+    }
     if (ack->isolated != status_.isolated.load()) apply_isolation(ack->isolated);
     return included == events.size() || included > 0;
 }

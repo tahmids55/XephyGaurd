@@ -41,6 +41,9 @@ public:
     std::optional<RuleHit> match_device(const DeviceInfo& d) const;
     std::optional<RuleHit> match_ai_domain(const std::string& domain) const;
     std::vector<std::string> ai_domains() const;
+    /// Flat, de-duplicated list of the (lowercase) extension ids of all enabled extension rules; the WSL helper
+    /// uses it to report only matching extensions instead of its whole inventory.
+    std::vector<std::string> extension_ids() const;
 
     PortProbe probe() const;
     ArtifactScanSpec artifact_scan() const;

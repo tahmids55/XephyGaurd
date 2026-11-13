@@ -95,10 +95,36 @@ class SignatureCompiler
         return $bundle;
     }
 
-    /** Compiles, signs and activates a new version if the rule set changed. */
+    /**
+     * Refuses bundles that would blind every agent: an empty AI or IDE domain list makes the agent drop all
+     * domain visibility, so such a bundle must never be signed or activated.
+     *
+     * @throws \RuntimeException
+     */
+    public function assertPublishable(array $bundle): void
+    {
+        $missing = [];
+        foreach (['ai', 'ide'] as $key) {
+            $list = $bundle['domains'][$key] ?? null;
+            if (! is_array($list) || $list === []) {
+                $missing[] = "domains.$key";
+            }
+        }
+        if ($missing) {
+            throw new \RuntimeException('Refusing to publish signatures: '.implode(' and ', $missing)
+                .' is empty or missing. Import the blocklists first (php artisan xephyguard:bootstrap).');
+        }
+    }
+
+    /**
+     * Compiles, signs and activates a new version if the rule set changed.
+     *
+     * @throws \RuntimeException when the compiled bundle fails validation (see assertPublishable)
+     */
     public function publish(?int $userId = null, ?string $note = null): SignatureVersion
     {
         $bundle = $this->buildBundle();
+        $this->assertPublishable($bundle);
         $digest = hash('sha256', json_encode($bundle));
         $current = SignatureVersion::active();
         if ($current && $current->sha256 === $digest) {

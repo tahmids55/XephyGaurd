@@ -127,6 +127,11 @@ private:
     int default_routes_ = -1;
     std::atomic<bool> network_dirty_{true};
     std::atomic<bool> policy_dirty_{true};
+    // Signature bundle the agent refused (bad signature, parse error, no domains). While the server keeps
+    // announcing exactly this version, flush_once() does not re-trigger a fetch until the retry interval passes.
+    std::mutex rejected_sig_mu_;
+    std::string rejected_sig_version_;
+    int64_t rejected_sig_at_ms_ = 0;
     std::atomic<bool> rescan_extensions_{false}, rescan_artifacts_{false};
     std::mutex keys_mu_;
     KeyStatsAggregator keys_;

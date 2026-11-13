@@ -20,7 +20,13 @@ class PublishSignatures extends Command
         if ($this->option('import')) {
             $this->line('imported '.$c->importSeed().' new rules');
         }
-        $this->info('active: '.$c->publish(null, 'cli')->version);
+        try {
+            $this->info('active: '.$c->publish(null, 'cli')->version);
+        } catch (\RuntimeException $e) {
+            $this->error($e->getMessage());
+
+            return self::FAILURE;
+        }
 
         return self::SUCCESS;
     }

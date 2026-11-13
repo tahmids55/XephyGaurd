@@ -102,7 +102,11 @@ class SignatureController extends Controller
     /** Compile + sign a new bundle and tell every agent to refresh (hot reload). */
     public function publish(Request $request, SignatureCompiler $compiler, CommandBus $bus)
     {
-        $v = $compiler->publish($request->user()->id, $request->string('note')->toString() ?: null);
+        try {
+            $v = $compiler->publish($request->user()->id, $request->string('note')->toString() ?: null);
+        } catch (\RuntimeException $e) {
+            return back()->with('error', $e->getMessage());
+        }
         $n = $bus->sendMany(Pc::query()->active()->get(), 'policy_updated');
         Audit::log('signatures.publish', $v, ['version' => $v->version, 'agents' => $n]);
 

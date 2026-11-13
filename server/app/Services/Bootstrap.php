@@ -46,8 +46,12 @@ class Bootstrap
         $out[] = 'blocklist entries added: '.$this->blocklists->importSeed();
         $out[] = 'rules added: '.$this->signatures->importSeed();
         if (CertificateAuthority::fromConfig()->exists()) {
-            $v = $this->signatures->publish(null, 'bootstrap');
-            $out[] = 'signatures: '.$v->version;
+            try {
+                $v = $this->signatures->publish(null, 'bootstrap');
+                $out[] = 'signatures: '.$v->version;
+            } catch (\RuntimeException $e) {
+                $out[] = 'signatures: NOT published: '.$e->getMessage();
+            }
         } else {
             $out[] = 'signatures: not published (no CA yet; run xephyguard:ca:init)';
         }

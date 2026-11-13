@@ -275,3 +275,25 @@ TEST_CASE("isolate cuts the Internet (LAN + CCC kept) and closes AI apps even ou
     h.agent->scan_processes();
     CHECK(h.procs->killed.size() == 2);  // practice mode again: alert only
 }
+
+TEST_CASE("agent refuses a bundle without domains and keeps the last-known-good one") {
+    Harness h;
+    json bad = test::sample_signatures();
+    bad["version"] = "test-bad";
+    bad["domains"] = {{"ai", json::array()}, {"ide", json::array()}};
+    json env{{"version", "test-bad"}, {"bundle", bad.dump()}};
+    CHECK_FALSE(h.agent->apply_signatures(env, false));
+    CHECK(h.agent->build_heartbeat()["signatures_version"] == "test-1");  // last-known-good kept
+
+    // A refused version is not refetched in a tight loop: a good bundle still applies afterwards.
+    json good = test::sample_signatures();
+    good["version"] = "test-2";
+    CHECK(h.agent->apply_signatures(json{{"version", "test-2"}, {"bundle", good.dump()}}, false));
+    CHECK(h.agent->build_heartbeat()["signatures_version"] == "test-2");
+}
+
+TEST_CASE("agent pushes ext_ids to the helper after applying a bundle") {
+    Harness h;
+    CHECK(h.ipc->count_containing("\"ext_ids\"") >= 1);
+    CHECK(h.ipc->count_containing("github.copilot-chat") >= 1);
+}
