@@ -273,8 +273,8 @@ Paths are relative to the repo root. `S/` = `server/app/`, `A/` = `agent/`.
 - **What:** grid of seats with online/offline status, colour by open alerts and live score,
   updated live over Reverb. Right panel: alerts for all PCs + live timeline for all PCs
   (polls `GET /lab/feed` every 5 s; skips heartbeats, window titles, process stops).
-  Needs attention items show the plain-language line and "Detected by" chip, with Details (alert details popup of
-  the newest alert in the group, same as F24), Open PC and Mark reviewed.
+  Needs attention items show the plain-language line and "Detected by" chip; clicking an item opens the alert details popup of
+  the newest alert in the group (same as F24); buttons Open PC and Mark reviewed.
 - **Trigger:** `GET /` (+ `/index.html`), `GET /lab/feed`. Assistant and up. Events `PcUpdated`, `AlertRaised`,
   `SessionChanged` on `lab.{id}`.
 - **Code:** `S/Http/Controllers/Web/DashboardController.php::index`, `resources/views/dashboard/live.blade.php`,

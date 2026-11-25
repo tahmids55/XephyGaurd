@@ -162,7 +162,8 @@ class UiRegressionTest extends TestCase
         $res->assertSee('aria-label="Alert details"', false)->assertSee('openAlert(xgNewest(r.items))', false);
 
         $this->actingAs($admin)->get('/')->assertOk()
-            ->assertSee('aria-label="Alert details"', false)->assertSee('openAlert(xgNewest(g.items))', false);
+            ->assertSee('aria-label="Alert details"', false)->assertSee('openAlert(xgNewest(g.items))', false)
+            ->assertDontSee('@click.stop="openAlert(a)">Details</button>', false);
     }
 
     public function test_alerts_open_filter_and_json_acknowledge_handle_retired_pcs(): void

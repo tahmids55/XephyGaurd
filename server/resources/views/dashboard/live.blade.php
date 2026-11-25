@@ -211,12 +211,12 @@
         <div class="dsec-head" role="button" tabindex="0" :aria-expanded="dock.att" @click="dock.att = !dock.att"><svg class="i i-sm" aria-hidden="true"><use href="#i-chev"/></svg> Needs attention <span class="count" x-show="groups.length" x-text="groups.length"></span><span class="sp"></span><a href="{{ route('alerts.index') }}" @click.stop class="small" style="font-weight:500">All alerts</a></div>
         <div x-show="dock.att" style="max-height:300px;overflow:auto">
           <template x-for="g in groups" :key="g.key">
-            <div class="q-item" :class="activePcId === g.pcId && 'sel'">
+            <div class="q-item" :class="activePcId === g.pcId && 'sel'" style="cursor:pointer" @click="openAlert(xgNewest(g.items))" :title="g.count > 1 ? 'Details of the newest of ' + g.count : 'Details'">
               <div class="row" style="justify-content:space-between"><span class="sev" :class="g.sev" x-text="g.sev"></span><span class="small muted" x-text="xgAgo(g.ago)"></span></div>
               <div class="q-title"><span x-text="g.title"></span> <span class="count" x-show="g.count > 1" x-text="'×' + g.count"></span></div>
               <div class="tiny muted" style="margin:-2px 0 4px" x-text="alertExplain(g)"></div>
               <div class="q-meta"><b x-text="g.pc"></b><span class="chip plain" x-show="g.pcRetired" style="margin-left:6px">retired</span> · <span x-text="g.user"></span> · <span class="chip plain"><svg class="i i-sm" aria-hidden="true"><use :href="'#' + alertSrc(g).icon"/></svg><span x-text="alertSrc(g).label"></span></span></div>
-              <div class="q-actions"><button class="btn btn-sm" @click="openAlert(xgNewest(g.items))" :title="g.count > 1 ? 'Details of the newest of ' + g.count : 'Details'">Details</button><button class="btn btn-sm" @click="openInspector(g.pcId, 'alerts')">Open PC</button><button class="btn btn-sm btn-quiet" @click="ackGroup(g)">Mark reviewed</button></div>
+              <div class="q-actions"><button class="btn btn-sm" @click.stop="openInspector(g.pcId, 'alerts')">Open PC</button><button class="btn btn-sm btn-quiet" @click.stop="ackGroup(g)">Mark reviewed</button></div>
             </div>
           </template>
           <div class="empty-state" x-show="!groups.length"><b>All clear</b>Nothing is waiting for review.</div>
@@ -359,7 +359,7 @@
               <td><span class="chip"><svg class="i i-sm" aria-hidden="true"><use :href="'#' + alertSrc(a).icon"/></svg><span x-text="alertSrc(a).label"></span></span></td>
               <td class="num muted" x-text="a.at"></td>
               <td><span class="small muted" x-show="a.acked" x-text="a.by ? 'Reviewed by ' + a.by : 'Reviewed'"></span><span class="small" x-show="!a.acked" style="color:var(--watch);font-weight:500">Needs review</span></td>
-              <td class="right" style="white-space:nowrap"><button class="btn btn-sm" @click.stop="openAlert(a)">Details</button> <button class="btn btn-sm btn-quiet" x-show="!a.acked" @click.stop="ackGroup({ items: [a], pc: a.pc, pcId: a.pcId, count: 1 })">Mark reviewed</button></td>
+              <td class="right" style="white-space:nowrap"><button class="btn btn-sm btn-quiet" x-show="!a.acked" @click.stop="ackGroup({ items: [a], pc: a.pc, pcId: a.pcId, count: 1 })">Mark reviewed</button></td>
             </tr></template>
           </tbody></table>
           <div class="empty-state" x-show="!pcAlerts.length"><b>No alerts</b>Nothing has been raised for this PC.</div>
