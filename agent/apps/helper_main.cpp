@@ -3,6 +3,8 @@
 // student notices, and forwards everything to the service over authenticated local IPC.
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -349,7 +351,22 @@ int helper_main() {
     };
 
     int64_t next_cost_ms = 0;
+    // A helper (re)started before this login imported its environment keeps the previous session's
+    // XDG_SESSION_TYPE / DISPLAY. Under systemd (INVOCATION_ID set) exit so Restart=always starts it again with
+    // the current environment. First check after 5 s so restarts stay below systemd's start limit.
+    const bool under_systemd = std::getenv("INVOCATION_ID") != nullptr;
+    int64_t next_env_check_ms = steady_ms() + 5000;
     while (true) {
+        if (under_systemd && steady_ms() >= next_env_check_ms) {
+            next_env_check_ms = steady_ms() + 5000;
+            if (plat->system && plat->system->session_env_stale()) {
+                log::warn("helper: session environment is from an earlier login; exiting so systemd restarts it");
+                // _Exit, not return: keep the PAC set for the next helper (no unproxied gap) and do not tear down
+                // state a detached paste probe may still use.
+                std::fflush(nullptr);
+                std::_Exit(1);
+            }
+        }
         screen_streamer.tick();  // lease lapsed -> stop capturing
         // Streaming cost for the heartbeat (screen Step 57): every 10 s while viewed, numbers only.
         if (viewing_active.load() && plat->ipc->connected() && steady_ms() >= next_cost_ms) {

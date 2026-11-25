@@ -88,6 +88,21 @@
   </div>
 </div>
 
+{{-- Evidence viewer popup: open with $dispatch('xg-evidence', {url, title?, sha256?}). Each load of url is audited server-side. --}}
+<div x-data="{ ev: null }" @xg-evidence.window="ev = $event.detail" @keydown.escape.window="ev = null">
+  <div class="overlay" x-show="ev" x-cloak x-transition.opacity @click.self="ev = null">
+    <div class="modal" role="dialog" aria-label="Screen evidence" style="width:min(1100px,100%);max-height:calc(100vh - 32px);display:flex;flex-direction:column">
+      <div class="modal-head" style="flex:none"><span class="h2" x-text="(ev && ev.title) || 'Screen evidence'"></span><button class="xbtn" @click="ev = null" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+      <div class="modal-body" style="flex:1 1 auto;min-height:0;overflow:auto;padding-bottom:16px">
+        <template x-if="ev"><div class="stack" style="--gap:8px">
+          <img :src="ev.url" :alt="(ev.title || 'Screen evidence')" style="display:block;max-width:100%;max-height:calc(100vh - 160px);margin:0 auto;object-fit:contain;border:1px solid var(--border);border-radius:6px">
+          <div class="small muted mono" style="word-break:break-all" x-show="ev.sha256" x-text="'sha256 ' + ev.sha256"></div>
+        </div></template>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="toasts" x-data aria-live="polite">
   <template x-for="t in $store.toasts.items" :key="t.id">
     <div class="toast" x-transition.opacity>

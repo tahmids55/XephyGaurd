@@ -205,6 +205,12 @@ class SessionNetworkTest extends TestCase
             ->assertJsonPath('ai_traffic.0.mode', 'Observed')
             ->assertJsonPath('ai_traffic.0.count', 2)
             ->assertJsonPath('network.0.action', 'observed');
+
+        // After review the same traffic raises a new alert (high: reviewed alerts do not suppress repeats).
+        Alert::where('rule_id', 'proxy.ide_ai_observed')->first()->acknowledgeBy($this->user('instructor')->id, null);
+        $payload['events'][0]['ts'] = $ts + 5000;
+        $this->withToken('test-internal-token')->postJson('/api/internal/net-events', ['events' => [$payload['events'][0]]])->assertOk();
+        $this->assertSame(2, Alert::where('pc_id', $pc->id)->where('rule_id', 'proxy.ide_ai_observed')->count());
     }
 
     public function test_report_show_and_pdf_render_when_blocked_net_events_exist(): void

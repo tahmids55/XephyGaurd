@@ -132,6 +132,19 @@ class AgentApiTest extends TestCase
         ];
         $this->withHeaders($h)->postJson('/api/agent/v1/events', $this->batch($pc->id, $again))->assertOk();
         $this->assertSame(3, Alert::count());
+
+        // High hit after review: the reviewed alert no longer suppresses it, a new alert is raised.
+        Alert::where('rule_id', 'proc.ollama')->first()->acknowledgeBy($this->user('instructor')->id, null);
+        $this->withHeaders($h)->postJson('/api/agent/v1/events', $this->batch($pc->id, [$this->ev(9, 'rule_hit', $events[0]['data'])]))->assertOk();
+        $this->assertSame(2, Alert::where('rule_id', 'proc.ollama')->count());
+        $this->assertSame(1, Alert::where('rule_id', 'proc.ollama')->whereNull('acknowledged_at')->count());
+
+        // Medium hit after review: still de-duplicated for 30 min.
+        $med = ['rule_id' => 'proc.med', 'severity' => 'medium', 'description' => 'Med', 'subject' => 'med', 'actions' => ['alert']];
+        $this->withHeaders($h)->postJson('/api/agent/v1/events', $this->batch($pc->id, [$this->ev(10, 'rule_hit', $med)]))->assertOk();
+        Alert::where('rule_id', 'proc.med')->first()->acknowledgeBy($this->user('instructor')->id, null);
+        $this->withHeaders($h)->postJson('/api/agent/v1/events', $this->batch($pc->id, [$this->ev(11, 'rule_hit', $med)]))->assertOk();
+        $this->assertSame(1, Alert::where('rule_id', 'proc.med')->count());
         // Only the latest process_snapshot row is kept per PC (zero DB bloat)
         $this->assertSame(1, Event::where('pc_id', $pc->id)->where('type', 'process_snapshot')->count());
         $this->actingAs($this->user('instructor'))

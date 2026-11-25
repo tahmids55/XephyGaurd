@@ -104,7 +104,11 @@ class EvidenceCaptureTest extends TestCase
             ->get(route('reports.show', $session))
             ->assertOk()
             ->assertSee('Saved screen evidence (1)')
-            ->assertSee(substr($capture->sha256, 0, 12));
+            ->assertSee(substr($capture->sha256, 0, 12))
+            // Opens in the in-page evidence popup, not a new tab.
+            ->assertSee("\$dispatch('xg-evidence'", false)
+            ->assertSee('aria-label="Screen evidence"', false)
+            ->assertDontSee('href="'.e(route('evidence.show', $capture)).'" target="_blank"', false);
 
         $this->actingAs($instructor)
             ->get(route('reports.pdf', $session))

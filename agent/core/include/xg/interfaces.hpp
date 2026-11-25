@@ -244,6 +244,9 @@ public:
     virtual void set_taskmgr_disabled(bool /*disabled*/) {}
     /// Sets (non-empty) or clears (empty) the user's system proxy PAC URL. Idempotent.
     virtual void set_user_proxy(const std::string& pac_url) = 0;
+    /// Linux: the session environment the helper inherited (XDG_SESSION_TYPE) is from an earlier login, so it
+    /// cannot see this session's display. Other platforms: never.
+    virtual bool session_env_stale() { return false; }
 };
 
 /// Everything the per-session helper needs.
