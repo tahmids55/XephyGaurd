@@ -541,7 +541,10 @@ on `private-pc.<id>` (`S/Events/AgentCommand.php`) and acknowledged in the next 
   request: `S/Observers/AutoScreenshotRequester.php`, `PrivacySettings::autoScreenshot`; upload:
   `S/Http/Controllers/Agent/EvidenceUploadController.php`; agent: `agent/core/src/agent.cpp` (command, nonce, upload),
   `ScreenStreamer::evidence_shot` in `agent/apps/screen_streamer.cpp` (helper capture); UI: `AlertController::show/snapshot`,
-  `alerts/_details-modal.blade.php`; Step 8 planned (docs/plan/evidence.md).
+  `alerts/_details-modal.blade.php`. Fast path (step 8): an agent `rule_hit` with the `alert` action at/above
+  `screen.evidence_min_severity` asks the helper itself and sends `evidence_nonce`; the CCC records it as a `local`
+  command (same guards, nothing pushed) and the uplink uploads after that event's ack (`Agent::request_evidence`,
+  `Uplink::send_evidence`; agent tests run, uplink ordering not run against a real CCC).
 - **In/out/side effects:** `alert_snapshots` row (copies of data the CCC already holds + sha256); screenshot as an
   `evidence_captures` row with `alert_id`, `source = auto`, stored like F46; audit on save and every view.
 - **Status:** context snapshot working (`AlertSnapshotTest`: latest process list, events and net of the last 120 s, sha256

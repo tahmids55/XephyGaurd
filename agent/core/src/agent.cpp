@@ -201,6 +201,16 @@ void Agent::handle_rule_hit(const RuleHit& hit, const std::string& subject, json
         return;
     }
 
+    // F123 fast path (plan step 8): an alert worth a screenshot asks the helper now, before warn/kill change the
+    // screen, with no CCC round trip. The nonce goes with this event; the CCC records it only if the alert passes
+    // its own guards (policy, severity, 30 s per PC), else the upload is refused.
+    std::string evidence_nonce;
+    if (std::find(actions.begin(), actions.end(), Action::alert) != actions.end() &&
+        hit.severity >= pol.screen_evidence_min_severity) {
+        std::string nonce = random_hex(16);
+        if (!request_evidence("", nonce, "rule " + hit.rule_id, true)) evidence_nonce = std::move(nonce);
+    }
+
     json taken = json::array();
     json result = json::object();
     for (auto a : actions) {
@@ -222,17 +232,19 @@ void Agent::handle_rule_hit(const RuleHit& hit, const std::string& subject, json
                 break;  // alert/isolate are executed by the CCC when it ingests the event
         }
     }
-    sink_->emit(ev::rule_hit, {{"rule_id", hit.rule_id},
-                               {"severity", to_string(hit.severity)},
-                               {"category", hit.category},
-                               {"description", hit.description},
-                               {"subject", limit(subject, 512)},
-                               {"actions", taken},
-                               {"result", result},
-                               {"context", std::move(context)},
-                               {"mode", to_string(pol.mode)},
-                               {"session_id", pol.session_id},
-                               {"user", active_user()}});
+    json data = {{"rule_id", hit.rule_id},
+                 {"severity", to_string(hit.severity)},
+                 {"category", hit.category},
+                 {"description", hit.description},
+                 {"subject", limit(subject, 512)},
+                 {"actions", taken},
+                 {"result", result},
+                 {"context", std::move(context)},
+                 {"mode", to_string(pol.mode)},
+                 {"session_id", pol.session_id},
+                 {"user", active_user()}};
+    if (!evidence_nonce.empty()) data["evidence_nonce"] = std::move(evidence_nonce);
+    sink_->emit(ev::rule_hit, std::move(data));
     wake_uplink();  // alerts should reach the CCC within seconds
 }
 
@@ -862,8 +874,8 @@ void Agent::on_helper_message(const IIpcServer::Peer& peer, const std::string& l
         uint64_t want = peer.conn_id;
         if (!evidence_wait_conn_.compare_exchange_strong(want, 0)) return;  // a JPEG from it is already on its way
         if (t == "evidence_masked") {
-            evidence_out_(EvidenceUpload{evidence_pending_->nonce, {}, true});
-            log::info("evidence: alert {}: screen masked, no image", evidence_pending_->alert_id);
+            evidence_out_(EvidenceUpload{evidence_pending_->nonce, {}, true, evidence_pending_->local});
+            log::info("evidence: {}: screen masked, no image", evidence_pending_->label);
             evidence_pending_.reset();
         } else {
             cancel_evidence(("helper failed: " + limit(jr::str(j, "reason"), 120)).c_str());
@@ -887,8 +899,25 @@ uint64_t Agent::evidence_helper() const {
 
 void Agent::cancel_evidence(const char* why) {
     evidence_wait_conn_ = 0;
-    if (evidence_pending_) log::warn("evidence: alert {}: no screenshot ({})", evidence_pending_->alert_id, why);
+    if (evidence_pending_) log::warn("evidence: {}: no screenshot ({})", evidence_pending_->label, why);
     evidence_pending_.reset();
+}
+
+const char* Agent::request_evidence(const std::string& cmd_id, std::string nonce, std::string label, bool local) {
+    const int64_t now = steady_ms();
+    uint64_t conn = 0;
+    if (!policy_.screen_auto_evidence || !cfg_.screen_enabled) return "disabled";
+    if (evidence_pending_ && now <= evidence_pending_->deadline) return "busy";
+    if (last_evidence_req_ != 0 && now - last_evidence_req_ < kEvidenceGapMs) return "rate_limited";
+    if ((conn = evidence_helper()) == 0) return "no_helper";
+    if (evidence_pending_) cancel_evidence("helper did not reply");
+    evidence_pending_ = PendingEvidence{cmd_id, std::move(nonce), std::move(label), conn, now + kEvidenceReplyMs, local};
+    last_evidence_req_ = now;
+    evidence_wait_conn_ = conn;
+    if (plat_.ipc)
+        plat_.ipc->send(conn, ipc::line({{"t", "evidence_snap"}, {"max_width", 1920}, {"quality", 70},
+                                          {"max_bytes", ipc::kMaxEvidenceJpeg}}));
+    return nullptr;
 }
 
 bool Agent::offer_evidence_record(const IIpcServer::Peer& peer, std::string&& jpeg) {
@@ -907,8 +936,8 @@ void Agent::on_evidence_jpeg(const IIpcServer::Peer& peer, std::string&& jpeg) {
     if (n < 4 || n > ipc::kMaxEvidenceJpeg || b(0) != 0xFF || b(1) != 0xD8 || b(2) != 0xFF || b(n - 2) != 0xFF ||
         b(n - 1) != 0xD9)
         return cancel_evidence("helper sent something that is not a JPEG");
-    log::info("evidence: alert {}: screenshot {} bytes", evidence_pending_->alert_id, n);
-    evidence_out_(EvidenceUpload{evidence_pending_->nonce, std::move(jpeg), false});
+    log::info("evidence: {}: screenshot {} bytes", evidence_pending_->label, n);
+    evidence_out_(EvidenceUpload{evidence_pending_->nonce, std::move(jpeg), false, evidence_pending_->local});
     evidence_pending_.reset();
 }
 
@@ -1420,26 +1449,11 @@ void Agent::handle_command(const protocol::Command& cmd) {
     } else if (cmd.type == "evidence_snapshot") {
         // A serious alert on this PC (F123, DECISIONS #32): one screenshot from the active session's helper, which
         // honours the privacy mask. The nonce stays in the service; the helper only gets the capture limits.
-        const int64_t now = steady_ms();
-        const char* refuse = nullptr;
-        uint64_t conn = 0;
-        if (!policy_.screen_auto_evidence || !cfg_.screen_enabled) refuse = "disabled";
-        else if (evidence_pending_ && now <= evidence_pending_->deadline) refuse = "busy";
-        else if (last_evidence_req_ != 0 && now - last_evidence_req_ < kEvidenceGapMs) refuse = "rate_limited";
-        else if ((conn = evidence_helper()) == 0) refuse = "no_helper";
-        if (refuse) {
+        if (const char* refuse = request_evidence(
+                cmd.id, jr::str(cmd.args, "nonce"), "alert " + std::to_string(jr::i64(cmd.args, "alert_id", 0, 1)), false))
             command_result(cmd.id, "ignored", {{"reason", refuse}});
-            return;
-        }
-        if (evidence_pending_) cancel_evidence("helper did not reply");
-        evidence_pending_ = PendingEvidence{cmd.id, jr::str(cmd.args, "nonce"), jr::i64(cmd.args, "alert_id", 0, 1), conn,
-                                            now + kEvidenceReplyMs};
-        last_evidence_req_ = now;
-        evidence_wait_conn_ = conn;
-        if (plat_.ipc)
-            plat_.ipc->send(conn, ipc::line({{"t", "evidence_snap"}, {"max_width", 1920}, {"quality", 70},
-                                              {"max_bytes", ipc::kMaxEvidenceJpeg}}));
-        command_result(cmd.id, "ok", {{"requested", true}});
+        else
+            command_result(cmd.id, "ok", {{"requested", true}});
     } else if (cmd.type == "flush" || cmd.type == "ping") {
         wake_uplink();
         command_result(cmd.id, "ok", {{"pong", now_ms()}});

@@ -27,4 +27,4 @@ What: when an alert is raised, keep evidence at once: (a) a **context snapshot**
 - [x] 5 agent core: command parse + pending nonce + helper IPC request/reply (caps) + upload + tests. PROTOCOL.
 - [x] 6 agent helper: one-frame capture + mask check + full-frame JPEG (Linux, fake-capture tests; Windows: CI MinGW syntax check only, never run).
 - [x] 7 server UI: alert detail shows context + screenshot (audited view).
-- [ ] 8 agent (speed): rule_hit with `alert` action triggers the helper locally, no CCC round trip; server links it.
+- [x] 8 agent (speed): rule_hit with `alert` action triggers the helper locally, no CCC round trip; server links it.

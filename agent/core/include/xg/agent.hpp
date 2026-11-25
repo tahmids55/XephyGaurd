@@ -107,6 +107,9 @@ private:
     /// The connection of the active session's helper that can take an evidence screenshot, or 0.
     uint64_t evidence_helper() const;
     void cancel_evidence(const char* why);
+    /// Asks the active session's helper for one evidence screenshot, or returns why not (`disabled`, `busy`,
+    /// `rate_limited`, `no_helper`). `local`: raised by our own rule hit (the upload waits for that event's ack).
+    const char* request_evidence(const std::string& cmd_id, std::string nonce, std::string label, bool local);
 
     // periodic tasks
     void run_periodic(int64_t now_steady);
@@ -206,7 +209,13 @@ private:
     int64_t proc_lease_until_ = 0;
     // Auto evidence (F123): helpers whose screen_caps say `evidence`, the one request in flight, the last request.
     std::set<uint64_t> evidence_helpers_;
-    struct PendingEvidence { std::string cmd_id, nonce; int64_t alert_id = 0; uint64_t conn = 0; int64_t deadline = 0; };
+    struct PendingEvidence {
+        std::string cmd_id, nonce;
+        std::string label;  // for the log: "alert 7", or "rule <id>" on the local path (the CCC links it by nonce)
+        uint64_t conn = 0;
+        int64_t deadline = 0;
+        bool local = false;
+    };
     std::optional<PendingEvidence> evidence_pending_;
     int64_t last_evidence_req_ = 0;  // steady_ms() of the last request sent to a helper; 0 = never
     std::atomic<uint64_t> evidence_wait_conn_{0};  // read by the IPC thread: the one conn allowed to send a JPEG

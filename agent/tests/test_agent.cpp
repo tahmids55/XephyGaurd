@@ -454,6 +454,53 @@ TEST_CASE("evidence_snapshot: only a capable helper of the active session is ask
     CHECK(r.snaps_to(8) == 0);
 }
 
+TEST_CASE("evidence fast path: an alert rule hit asks the helper at once and sends the nonce with the event (step 8)") {
+    EvidenceRig r;
+    r.connect(r.alice);
+    r.h.agent->handle_rule_hit(RuleHit{"proc.ollama", "local_model", "Ollama", Severity::medium}, "ollama", json::object());
+    CHECK_FALSE(r.h.of(ev::rule_hit).back().data.contains("evidence_nonce"));  // below the default min (high)
+    CHECK(r.snaps_to(5) == 0);
+
+    r.h.agent->handle_rule_hit(RuleHit{"proc.lmstudio", "local_model", "LM Studio", Severity::high}, "lms", json::object());
+    const auto d = r.h.of(ev::rule_hit).back().data;
+    REQUIRE(d.contains("evidence_nonce"));
+    const auto nonce = d.at("evidence_nonce").get<std::string>();
+    CHECK(protocol::valid_evidence_nonce(nonce));
+    REQUIRE(r.snaps_to(5) == 1);
+    {
+        std::lock_guard lk(r.h.ipc->mu);
+        CHECK(r.h.ipc->sent.back().second.find(nonce) == std::string::npos);  // the nonce stays in the service
+    }
+    REQUIRE(r.h.agent->offer_evidence_record(r.alice, EvidenceRig::jpeg()));
+    r.h.agent->drain();
+    REQUIRE(r.uploads.size() == 1);
+    CHECK(r.uploads[0].nonce == nonce);
+    CHECK(r.uploads[0].after_events);   // sent only after the CCC stored this rule_hit
+    CHECK(r.request("e9") == "rate_limited");  // the CCC's command is refused inside the 30 s gap
+
+    r.h.agent->handle_rule_hit(RuleHit{"proc.jan", "local_model", "Jan", Severity::critical}, "jan", json::object());
+    CHECK_FALSE(r.h.of(ev::rule_hit).back().data.contains("evidence_nonce"));  // rate-limited: no nonce
+    CHECK(r.snaps_to(5) == 1);
+}
+
+TEST_CASE("evidence fast path: nothing when the policy flag is off or the rule does not alert (step 8)") {
+    EvidenceRig off(false);
+    off.connect(off.alice);
+    off.h.agent->handle_rule_hit(RuleHit{"proc.ollama", "local_model", "Ollama", Severity::critical}, "o", json::object());
+    CHECK_FALSE(off.h.of(ev::rule_hit).back().data.contains("evidence_nonce"));
+    CHECK(off.snaps_to(5) == 0);
+
+    EvidenceRig r;
+    r.connect(r.alice);
+    auto pol = Policy::default_for(Mode::test);
+    pol.screen_auto_evidence = true;
+    pol.rule_actions["proc.ollama"] = {Action::log};
+    r.h.agent->apply_policy(pol);
+    r.h.agent->handle_rule_hit(RuleHit{"proc.ollama", "local_model", "Ollama", Severity::critical}, "o", json::object());
+    CHECK_FALSE(r.h.of(ev::rule_hit).back().data.contains("evidence_nonce"));
+    CHECK(r.snaps_to(5) == 0);
+}
+
 TEST_CASE("process_lease command: a grant sends a snapshot at once, a renewal does not, bad ttls are ignored") {
     Harness h;
     h.procs->procs = {{1, 0, "/sbin/init", "init", "", "root", 0, 1}};

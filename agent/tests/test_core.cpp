@@ -201,6 +201,21 @@ TEST_CASE("policy screen.auto_evidence is on only for a literal true (F123)") {
     CHECK(Policy::from_json(p.to_json()).screen_auto_evidence);
 }
 
+TEST_CASE("policy screen.evidence_min_severity: low..critical, anything else keeps high (plan step 8)") {
+    auto sev = [](const json& v) {
+        return Policy::from_json({{"mode", "test"}, {"screen", {{"evidence_min_severity", v}}}}).screen_evidence_min_severity;
+    };
+    CHECK(Policy::from_json({{"mode", "test"}}).screen_evidence_min_severity == Severity::high);
+    CHECK(sev("medium") == Severity::medium);
+    CHECK(sev("critical") == Severity::critical);
+    CHECK(sev("info") == Severity::high);
+    CHECK(sev("HIGHEST") == Severity::high);
+    CHECK(sev(2) == Severity::high);
+    auto p = Policy::default_for(Mode::test);
+    p.screen_evidence_min_severity = Severity::low;
+    CHECK(Policy::from_json(p.to_json()).screen_evidence_min_severity == Severity::low);
+}
+
 TEST_CASE("server JSON with wrong types never throws (I-AGENT-13)") {
     // Ack fields of the wrong type fall back to defaults instead of throwing json::type_error.
     std::optional<protocol::BatchAck> ack;

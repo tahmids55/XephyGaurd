@@ -29,6 +29,11 @@ struct EvidenceUpload {
     std::string nonce;  // 32 lowercase hex, from the CCC's evidence_snapshot command
     std::string jpeg;   // empty when masked
     bool masked = false;
+    /// Local fast path (plan step 8): the nonce came with our own rule_hit, so the CCC knows it only once that event
+    /// is stored. The uplink sends it after an ack covering `after_seq` (set by queue_evidence), within 60 s.
+    bool after_events = false;
+    int64_t after_seq = 0;
+    int64_t queued_ms = 0;
 };
 
 /// HTTPS batch uplink (POST /events), policy fetch and enrollment polling.
@@ -68,6 +73,8 @@ private:
     bool wake_ = false;
     std::mutex evidence_mu_;
     std::optional<EvidenceUpload> evidence_;  // guarded by evidence_mu_
+    std::atomic<int64_t> acked_seq_{0};        // highest seq the CCC acknowledged (uplink thread writes)
+    static constexpr int64_t kEvidenceWaitMs = 55000;  // a local nonce is valid 60 s from ingest on the CCC
 };
 
 /// Reverb (Pusher protocol) WSS channel for commands from the CCC.

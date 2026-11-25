@@ -72,6 +72,9 @@ struct Policy {
     /// `screen.auto_evidence` (bool, F123): the CCC may ask for one screenshot on a serious alert
     /// (`evidence_snapshot`). Anything but `true` keeps it off.
     bool screen_auto_evidence = false;
+    /// `screen.evidence_min_severity` (low|medium|high|critical, default high; plan step 8): an `alert` rule hit at or
+    /// above it asks the helper at once, without waiting for the CCC's command. Anything else keeps the default.
+    Severity screen_evidence_min_severity = Severity::high;
 
     static Policy default_for(Mode m);
     static Policy from_json(const json& j, std::string* err = nullptr);

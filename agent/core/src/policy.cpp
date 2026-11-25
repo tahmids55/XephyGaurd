@@ -230,6 +230,11 @@ Policy Policy::from_json(const json& j, std::string* err) {
             }
             p.screen_auto_evidence = s.contains("auto_evidence") && s["auto_evidence"].is_boolean() &&
                                      s["auto_evidence"].get<bool>();
+            if (s.contains("evidence_min_severity") && s["evidence_min_severity"].is_string()) {
+                const auto v = s["evidence_min_severity"].get<std::string>();
+                if (v == "low" || v == "medium" || v == "high" || v == "critical")
+                    p.screen_evidence_min_severity = parse_severity(v);
+            }
         }
     } catch (const std::exception& e) {
         if (err) *err = e.what();
@@ -281,7 +286,8 @@ json Policy::to_json() const {
             for (const auto& m : screen_mask_rules) a.push_back({{"process", m.process}, {"title_regex", m.title_regex}});
             return a;
         }()}, {"codec", screen_codec}, {"quality", screen_quality}, {"webp_method", screen_webp_method},
-                    {"cpu_budget_pct", screen_cpu_budget_pct}, {"auto_evidence", screen_auto_evidence}}},
+                    {"cpu_budget_pct", screen_cpu_budget_pct}, {"auto_evidence", screen_auto_evidence},
+                    {"evidence_min_severity", to_string(screen_evidence_min_severity)}}},
     };
 }
 
