@@ -271,12 +271,13 @@ Paths are relative to the repo root. `S/` = `server/app/`, `A/` = `agent/`.
 
 ### F23. Live lab seat map
 - **What:** grid of seats with online/offline status, colour by open alerts and live score,
-  updated live over Reverb.
-- **Trigger:** `GET /` (+ `/index.html`). Assistant and up. Events `PcUpdated`, `AlertRaised`,
+  updated live over Reverb. Right panel: alerts for all PCs + live timeline for all PCs
+  (polls `GET /lab/feed` every 5 s; skips heartbeats, window titles, process stops).
+- **Trigger:** `GET /` (+ `/index.html`), `GET /lab/feed`. Assistant and up. Events `PcUpdated`, `AlertRaised`,
   `SessionChanged` on `lab.{id}`.
 - **Code:** `S/Http/Controllers/Web/DashboardController.php::index`, `resources/views/dashboard/live.blade.php`,
   `resources/js/app.js`, `S/Events/*`.
-- **Status:** working (`dashboard_includes_all_52_unacknowledged_alerts_including_retired_pcs`,
+- **Status:** working (`feed_returns_tiles_alerts_and_events_for_all_pcs`, `dashboard_includes_all_52_unacknowledged_alerts_including_retired_pcs`,
   `dashboard_reconciles_stale_live_score_when_no_open_alerts_exist`).
 - **Test:** 1. Open `/` with one PC online. 2. Stop the agent: the seat goes offline within ~15 s.
 

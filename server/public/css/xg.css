@@ -332,6 +332,19 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent);width:15px;hei
 .timeline time{font:400 12px var(--f-mono);color:var(--muted);margin-right:10px}
 
 /* ---------- Live lab ---------- */
+.livedot{width:8px;height:8px;border-radius:50%;background:var(--ok);margin-left:8px;animation:xg-pulse 2s ease-in-out infinite}
+.livedot.down{background:var(--off);animation:none}
+@keyframes xg-pulse{50%{opacity:.35}}
+.timeline.feed{margin:0 16px 12px 22px;padding-left:20px}
+.timeline.feed li{cursor:pointer;padding:6px 8px 8px;margin-left:-8px;border-radius:8px}
+.timeline.feed li::before{top:11px;left:-12px}
+.timeline.feed li:hover{background:var(--surface-2)}
+.timeline.feed li.fresh{animation:xg-fresh 2.5s ease-out}
+@keyframes xg-fresh{from{background:var(--accent-soft)}to{background:transparent}}
+.feed-meta{display:flex;gap:6px;align-items:baseline;font-size:12px;min-width:0}
+.feed-meta b{font-weight:600}
+.feed-txt{font-size:13px;color:var(--text-2);overflow-wrap:anywhere}
+@media (prefers-reduced-motion:reduce){.livedot,.timeline.feed li.fresh{animation:none}}
 .work{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 360px}
 .work.full{grid-template-columns:minmax(0,1fr)}
 .work>.center{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--bg)}

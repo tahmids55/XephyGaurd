@@ -223,34 +223,27 @@
         </div>
       </section>
 
-      <section class="dsec">
-        <div class="dsec-head" role="button" tabindex="0" :aria-expanded="dock.props" @click="dock.props = !dock.props"><svg class="i i-sm" aria-hidden="true"><use href="#i-chev"/></svg> Selected PC <span class="sp"></span></div>
-        <div x-show="dock.props">
-          <div class="empty-state" x-show="!activePcId" style="padding:24px 16px">Select a seat to see its details. Double-click to inspect.</div>
-          <div x-show="activePcId" x-cloak>
-            <div style="padding:0 16px 12px">
-              <div class="screenbox" style="cursor:pointer" @click="openInspector(activePcId)"><canvas width="320" height="180" :data-pc="activePcId" x-effect="xgDraw($el, pc(activePcId), performance.now())"></canvas></div>
-            </div>
-            <div class="row" style="padding:0 16px;--gap:10px;flex-wrap:nowrap">
-              <div class="scorering" style="width:40px;height:40px" :style="'--v:'+(typeof active.score === 'number' ? active.score : 0)+';--c:'+ringColor(active)"><b x-text="active.score" style="font-size:12px"></b></div>
-              <div style="min-width:0"><div style="font-weight:600;font-size:14px" x-text="active.name"></div><div class="small muted" x-text="statusText(active) + ' · ' + active.user"></div></div>
-            </div>
-            <dl class="prop"><dt>Computer</dt><dd class="mono" x-text="active.host"></dd><dt>Address</dt><dd class="mono" x-text="active.ip"></dd><dt>System</dt><dd x-text="active.os"></dd><dt>Agent</dt><dd x-text="'v' + active.agent"></dd><dt x-show="active.streamCost">Streaming</dt><dd class="mono" x-show="active.streamCost" x-text="active.streamCost"></dd><dt>Last event</dt><dd x-text="active.last"></dd></dl>
-            <div class="row" style="padding:0 16px 16px">
-              <button class="btn btn-sm btn-solid" @click="openInspector(activePcId)">Open inspector</button>
-              <button class="btn btn-sm" @click="message(activePcId)">Message</button>
-              <button class="btn btn-sm" :class="active.isolated ? '' : 'btn-danger'" @click="toggleIsolate(active)" x-text="active.isolated ? 'Reconnect' : 'Cut off'"></button>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <section class="dsec" style="border-bottom:0">
-        <div class="dsec-head" role="button" tabindex="0" :aria-expanded="dock.list" @click="dock.list = !dock.list"><svg class="i i-sm" aria-hidden="true"><use href="#i-chev"/></svg> All PCs <span class="sp"></span>
-          <span class="pills" @click.stop><button class="pill" :aria-pressed="pcFilter === 'all'" @click="pcFilter = 'all'">All</button><button class="pill" :aria-pressed="pcFilter === 'attn'" @click="pcFilter = 'attn'">Flagged</button></span></div>
-        <ul class="pclist" x-show="dock.list">
-          <template x-for="p in listed" :key="p.id"><li :class="activePcId === p.id && 'sel'" @click="select(p.id)" @dblclick="openInspector(p.id)"><span class="dot" :class="dotOf(p)"></span><span style="font-weight:500" x-text="p.name"></span><span class="u" x-text="p.user"></span><span class="mono small" x-text="p.score"></span></li></template>
-        </ul>
+        <div class="dsec-head" role="button" tabindex="0" :aria-expanded="dock.feed" @click="dock.feed = !dock.feed"><svg class="i i-sm" aria-hidden="true"><use href="#i-chev"/></svg> Live timeline <span class="livedot" :class="!feedOk && 'down'" :title="feedOk ? 'Updated ' + feedAt : 'Can’t reach the server'"></span><span class="sp"></span>
+          <span class="small muted" x-text="feedOk ? feedAt : 'offline'"></span></div>
+        <div x-show="dock.feed">
+          <div class="row" style="padding:0 16px 10px;--gap:8px">
+            <select class="select select-sm" style="flex:1;min-width:0" x-model.number="feedPcFilter" aria-label="Filter by PC">
+              <option value="0">All PCs</option>
+              <template x-for="p in pcs" :key="p.id"><option :value="p.id" x-text="p.name"></option></template>
+            </select>
+            <label class="check small" title="Show every program start"><span class="switch"><input type="checkbox" :checked="!feedQuiet" @change="feedQuiet = !$event.target.checked"><i></i></span> Programs</label>
+          </div>
+          <ul class="timeline feed">
+            <template x-for="e in feedShown" :key="e.id">
+              <li :class="[e.sev, feedFresh[e.id] && 'fresh']" @click="openInspector(e.pc_id, 'timeline')" role="button" tabindex="0" @keydown.enter="openInspector(e.pc_id, 'timeline')">
+                <div class="feed-meta"><time x-text="e.at"></time><b x-text="e.pc"></b><span class="muted" x-show="e.user" x-text="' · ' + e.user"></span></div>
+                <div class="feed-txt" x-text="e.summary"></div>
+              </li>
+            </template>
+          </ul>
+          <div class="empty-state" x-show="!feedShown.length" style="padding:20px 16px"><b>Quiet</b>No activity yet. New events show up here within a few seconds.</div>
+        </div>
       </section>
     </aside>
   </div>

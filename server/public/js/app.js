@@ -560,7 +560,7 @@ document.addEventListener('alpine:init', () => {
     activePcId: null, inspector: false, tab: 'screen', screenMode: 'snapshot', monitor: 0, screenMonitors: [], screenMonitorActive: 0, screenAllScreens: false, snapT: 4200, snapAt: '',
     screenStreaming: false, screenHasFrame: false, screenStatus: '', screenAuditId: null, screenViewer: null, screenRenewTimer: null,
     wallStreams: {},
-    tile: 240, flagged: false, blur: false, pinned: [], dock: { att: true, props: true, list: true }, pcFilter: 'all',
+    tile: 240, flagged: false, blur: false, pinned: [], dock: { att: true, feed: true }, feed: [], feedSeen: 0, feedFresh: {}, feedOk: true, feedAt: '', feedPcFilter: 0, feedQuiet: true,
     messageModal: false, messageTarget: null, messageText: '', showDone: false, closeModal: false, closeName: '', closePid: null, closeStart: null, closeManual: false,
 
     init() {
@@ -596,6 +596,41 @@ document.addEventListener('alpine:init', () => {
         if (t !== 'screen' && this.screenStreaming) this.stopScreen();
       });
       this.$watch('monitor', () => this.paintLive());
+      if (document.getElementById('xg-live-data')) {
+        this.pollFeed();
+        this._feedTimer = setInterval(() => { if (!document.hidden && !this.editing) this.pollFeed(); }, 5000);
+      }
+    },
+    /* Live feed: tiles, alerts and lab-wide timeline for every PC, polled from /lab/feed. */
+    async pollFeed() {
+      if (this._feedBusy) return; this._feedBusy = true;
+      try {
+        const d = await window.xgApi('/lab/feed');
+        if (!d) return;
+        (d.tiles || []).forEach(t => this.applyTile(t.id, t));
+        if (Array.isArray(d.alerts)) this.alerts = d.alerts.map(a => this.mapAlert(a));
+        const ev = (d.events || []).map(e => ({ ...e, sev: this.feedSev(e) }));
+        const top = ev.reduce((m, e) => Math.max(m, e.id), 0);
+        const fresh = {};
+        if (this.feedSeen) ev.forEach(e => { if (e.id > this.feedSeen) fresh[e.id] = true; });
+        this.feedFresh = fresh; this.feedSeen = Math.max(this.feedSeen, top); this.feed = ev;
+        this.feedOk = true; this.feedAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      } catch (e) {
+        this.feedOk = false;
+      } finally { this._feedBusy = false; }
+    },
+    mapAlert(a) {
+      return { id: a.id, pcId: a.pc_id, pc: a.pc || ('PC-' + a.pc_id), pcRetired: !!a.pc_retired, user: a.user || '—', sev: a.severity || 'medium',
+        title: a.title || a.rule_id, rule: a.rule_id || '', at: a.occurred_at || '', ago: Number(a.ago_min || 0), acked: !!a.acked, by: a.by || '', note: a.note || '' };
+    },
+    feedSev(e) {
+      if (e.type === 'rule_hit' || e.type === 'tamper') return 'high';
+      if (e.type === 'listening_port' || e.type === 'device' || e.type === 'net_adapter') return 'medium';
+      if (e.type === 'paste' || e.type === 'copy') return 'low';
+      return '';
+    },
+    get feedShown() {
+      return this.feed.filter(e => (!this.feedPcFilter || e.pc_id === this.feedPcFilter) && (!this.feedQuiet || e.type !== 'process_start' || this.feedSev(e)));
     },
     paintLive() {
       if (this.$refs.live && !this.screenHasFrame) {
@@ -719,7 +754,6 @@ document.addEventListener('alpine:init', () => {
       return out;
     },
     get unplaced() { return this.pcs.filter(p => !p.seat); },
-    get listed() { return this.pcs.filter(p => p.seat && (this.pcFilter === 'all' || !['ok', 'idle'].includes(this.kind(p)))); },
     get wallPcs() { return this.pcs.filter(p => p.seat && !this.pinned.includes(p.id) && (!this.flagged || !['ok', 'idle'].includes(this.kind(p)))); },
     get pinnedPcs() { return this.pinned.map(id => this.pcs.find(p => p.id === id)).filter(Boolean); },
     get screenOk() { return !!(this.active.caps && this.active.caps.snapshot && this.active.status !== 'offline'); },

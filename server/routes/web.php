@@ -43,6 +43,7 @@ Route::group([], function () {
             Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
             Route::get('/index.html', [DashboardController::class, 'index'])->name('dashboard.html');
             Route::get('/pcs/{pc}', [DashboardController::class, 'pc'])->name('pcs.show');
+            Route::get('/lab/feed', [DashboardController::class, 'feed'])->name('lab.feed');
             Route::get('/alerts', [AlertController::class, 'index'])->name('alerts.index');
             Route::get('/alerts.html', [AlertController::class, 'index'])->name('alerts.html');
             Route::post('/alerts/ack-batch', [AlertController::class, 'acknowledgeBatch'])->name('alerts.ack_batch');
