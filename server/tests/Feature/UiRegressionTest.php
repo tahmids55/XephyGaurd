@@ -118,6 +118,33 @@ class UiRegressionTest extends TestCase
         $this->assertTrue($retiredAlerts[0]['pcRetired']);
     }
 
+    public function test_alert_details_json_returns_reported_context_and_review_history(): void
+    {
+        Queue::fake();
+        $lab = $this->bootLab();
+        $pc = Pc::create(['lab_id' => $lab->id, 'name' => 'PC-07', 'hostname' => 'pc07', 'ip' => '192.168.10.27',
+            'os' => 'Ubuntu 24.04', 'macs' => ['aa:bb:cc:00:00:07']]);
+        $alert = Alert::create([
+            'pc_id' => $pc->id, 'rule_id' => 'net.browser_ai', 'severity' => 'high', 'category' => 'browser_ai',
+            'title' => 'AI web service stream (chatgpt.com): chrome', 'user' => 'student1', 'occurred_at' => now()->subMinute(),
+            'details' => ['rule_id' => 'net.browser_ai', 'subject' => 'chrome', 'actions' => ['log', 'alert'],
+                'context' => ['process' => 'chrome', 'domain' => 'chatgpt.com']],
+        ]);
+
+        $this->get('/alerts/'.$alert->id)->assertRedirect('/login');
+
+        $admin = $this->user('admin');
+        $this->actingAs($admin)->getJson('/alerts/'.$alert->id)->assertOk()
+            ->assertJson(['id' => $alert->id, 'pc' => 'PC-07', 'category' => 'browser_ai', 'acked' => false,
+                'details' => ['context' => ['domain' => 'chatgpt.com']], 'reviews' => []]);
+
+        $this->actingAs($admin)->postJson('/alerts/'.$alert->id.'/ack', ['comment' => 'Checked, closed tab'])->assertOk();
+        $this->actingAs($admin)->getJson('/alerts/'.$alert->id)->assertOk()
+            ->assertJson(['acked' => true, 'by' => 'Admin', 'reviews' => [['by' => 'Admin', 'note' => 'Checked, closed tab']]]);
+
+        $this->actingAs($admin)->getJson('/alerts/999999')->assertNotFound();
+    }
+
     public function test_alerts_open_filter_and_json_acknowledge_handle_retired_pcs(): void
     {
         Queue::fake();

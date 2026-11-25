@@ -290,9 +290,13 @@ Paths are relative to the repo root. `S/` = `server/app/`, `A/` = `agent/`.
   Programs tab: search box (name, title, rule) and click-to-sort on Program, CPU, Memory, Network (client-side);
   while open it holds a process lease (`POST /pcs/{pc}/process-lease`, agent snapshot every 2 s, DECISIONS #31)
   and re-reads `GET /pcs/{pc}` every 2 s, so the list updates like a task manager.
-- **Trigger:** `GET /pcs/{pc}` (JSON for the popup). Assistant and up.
+  Alerts tab: plain-language line per alert, "Detected by" column (Program, Browser / website, Code editor, Network,
+  USB device, Files on disk, Container / VM, Open port, XephyGuard agent; from rule prefix + category) with filter pills,
+  and a Details popup (`GET /alerts/{alert}`: what the PC reported, what the agent did, session, review history,
+  rule id under "Technical details") with Mark reviewed.
+- **Trigger:** `GET /pcs/{pc}` (JSON for the popup), `GET /alerts/{alert}` (alert details JSON). Assistant and up.
 - **Code:** `DashboardController::pc` (also marks some data as seen).
-- **Status:** working (`copy_from_chrome_and_paste_in_vscode_updates_dashboard`,
+- **Status:** working (`copy_from_chrome_and_paste_in_vscode_updates_dashboard`, `alert_details_json_returns_reported_context_and_review_history`,
   `every_screen_renders_for_admin`). ⚠PRIV shows window/tab titles and file names (F75, F79).
 - **Test:** 1. Click a seat. 2. Open each tab and check it has data.
 

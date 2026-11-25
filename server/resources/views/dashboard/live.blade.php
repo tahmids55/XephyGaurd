@@ -49,6 +49,7 @@
           'sev' => $a['severity'] ?? 'medium',
           'title' => $a['title'] ?? $a['rule_id'],
           'rule' => $a['rule_id'] ?? '',
+          'cat' => $a['category'] ?? '',
           'at' => $a['occurred_at'] ?? '',
           'ago' => (int) ($a['ago_min'] ?? 0),
           'acked' => (bool) ($a['acked'] ?? false),
@@ -346,8 +347,19 @@
         </section>
 
         <section x-show="tab === 'alerts'" x-cloak style="padding:0">
-          <table class="tbl"><thead><tr><th>Severity</th><th>Alert</th><th>Time</th><th></th></tr></thead><tbody>
-            <template x-for="a in pcAlerts" :key="a.id"><tr><td><span class="sev" :class="a.sev" x-text="a.sev"></span></td><td><div class="cut" x-text="a.title"></div><div class="tiny muted mono" x-text="a.rule"></div></td><td class="num muted" x-text="a.at"></td><td class="right"><span class="small muted" x-show="a.acked">Reviewed</span><button class="btn btn-sm" x-show="!a.acked" @click="ackGroup({ items: [a], pc: a.pc, count: 1 })">Mark reviewed</button></td></tr></template>
+          <div class="pills" style="padding:12px 16px 4px" x-show="pcAlerts.length" role="group" aria-label="Filter by what detected it">
+            <button class="pill" :aria-pressed="!alertSrcFilter ? 'true' : 'false'" @click="alertSrcFilter = ''">All <span class="n" x-text="pcAlerts.length"></span></button>
+            <template x-for="s in pcAlertSources" :key="s.key"><button class="pill" :aria-pressed="alertSrcFilter === s.key ? 'true' : 'false'" @click="alertSrcFilter = s.key"><svg class="i i-sm" aria-hidden="true"><use :href="'#' + s.icon"/></svg> <span x-text="s.label"></span> <span class="n" x-text="s.n"></span></button></template>
+          </div>
+          <table class="tbl"><thead><tr><th>Severity</th><th>What happened</th><th>Detected by</th><th>Time</th><th>Status</th><th></th></tr></thead><tbody>
+            <template x-for="a in pcAlertsShown" :key="a.id"><tr style="cursor:pointer" @click="openAlert(a)">
+              <td><span class="sev" :class="a.sev" x-text="a.sev"></span></td>
+              <td><div class="cut" style="font-weight:500" x-text="a.title"></div><div class="tiny muted cut" x-text="alertExplain(a)"></div></td>
+              <td><span class="chip"><svg class="i i-sm" aria-hidden="true"><use :href="'#' + alertSrc(a).icon"/></svg><span x-text="alertSrc(a).label"></span></span></td>
+              <td class="num muted" x-text="a.at"></td>
+              <td><span class="small muted" x-show="a.acked" x-text="a.by ? 'Reviewed by ' + a.by : 'Reviewed'"></span><span class="small" x-show="!a.acked" style="color:var(--watch);font-weight:500">Needs review</span></td>
+              <td class="right" style="white-space:nowrap"><button class="btn btn-sm" @click.stop="openAlert(a)">Details</button> <button class="btn btn-sm btn-quiet" x-show="!a.acked" @click.stop="ackGroup({ items: [a], pc: a.pc, pcId: a.pcId, count: 1 })">Mark reviewed</button></td>
+            </tr></template>
           </tbody></table>
           <div class="empty-state" x-show="!pcAlerts.length"><b>No alerts</b>Nothing has been raised for this PC.</div>
         </section>
@@ -437,6 +449,56 @@
         <div class="pills"><button class="pill" @click="messageText = '10 minutes left. Save and push all work.'">10 minute warning</button><button class="pill" @click="messageText = 'Please close other browser tabs.'">Close tabs</button><button class="pill" @click="messageText = 'Time is up. Please stop typing.'">Time is up</button></div>
       </div>
       <div class="modal-foot"><button class="btn" @click="messageModal = false">Cancel</button><button class="btn btn-solid" @click="sendMessage()">Send</button></div>
+    </div>
+  </div>
+  <div class="overlay" x-show="alertModal" x-cloak x-transition.opacity @click.self="alertModal = false">
+    <div class="modal" role="dialog" aria-label="Alert details" style="width:min(680px,100%);max-height:calc(100vh - 48px);display:flex;flex-direction:column" x-show="alertDet">
+      <div class="modal-head"><span class="h2">Alert details</span><button class="xbtn" @click="alertModal = false" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+      <div class="modal-body stack" style="overflow:auto" x-show="alertDet">
+        <template x-if="alertDet"><div class="stack">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <span class="sev" :class="alertDet.sev" x-text="alertDet.sev"></span>
+            <span class="chip"><svg class="i i-sm" aria-hidden="true"><use :href="'#' + alertSrc(alertDet).icon"/></svg><span x-text="'Detected by: ' + alertSrc(alertDet).label"></span></span>
+            <span class="chip" x-text="alertDet.acked ? ('Reviewed' + (alertDet.by ? ' by ' + alertDet.by : '')) : 'Needs review'"></span>
+          </div>
+          <div><div style="font-weight:600;font-size:15px" x-text="alertDet.title"></div><p class="muted" style="margin:4px 0 0" x-text="alertExplain(alertDet)"></p></div>
+          <p class="small muted" style="margin:0" x-text="(window.xgSevMeaning[alertDet.sev] || '') + ' This is a flag for you to check, not proof.'"></p>
+
+          <div class="label">Where and when</div>
+          <dl class="prop" style="margin:0">
+            <dt>PC</dt><dd x-text="alertDet.pc || '—'"></dd>
+            <dt>Student</dt><dd x-text="alertDet.user || '—'"></dd>
+            <dt>When</dt><dd x-text="alertWhen"></dd>
+            <dt>Session</dt><dd x-text="alertDet.session ? alertDet.session.name + (alertDet.session.mode ? ' (' + alertDet.session.mode + ')' : '') : 'No session (always-on monitoring)'"></dd>
+            <dt x-show="alertDet.os">Operating system</dt><dd x-show="alertDet.os" x-text="alertDet.os"></dd>
+          </dl>
+
+          <div class="muted small" x-show="alertLoading">Loading details…</div>
+          <div class="small" style="color:var(--alert)" x-show="alertErr" x-text="alertErr"></div>
+
+          <div x-show="alertFacts.length"><div class="label">What the PC reported</div>
+            <dl class="prop" style="margin:0"><template x-for="f in alertFacts" :key="f.k + f.v"><div style="display:contents"><dt x-text="f.k"></dt><dd class="mono" style="word-break:break-all" x-text="f.v"></dd></div></template></dl>
+          </div>
+
+          <div x-show="alertActions.length"><div class="label">What XephyGuard did</div>
+            <ul style="margin:4px 0 0;padding-left:18px"><template x-for="t in alertActions" :key="t"><li x-text="t"></li></template></ul>
+          </div>
+
+          <div x-show="alertDet.acked || (alertDet.reviews && alertDet.reviews.length)"><div class="label">Review</div>
+            <template x-for="(r, i) in (alertDet.reviews || [])" :key="i"><div class="small"><b x-text="r.by || 'Staff'"></b> <span class="muted" x-text="r.at ? new Date(r.at).toLocaleString() : ''"></span><div x-show="r.note" x-text="r.note"></div></div></template>
+          </div>
+
+          <details><summary class="small muted" style="cursor:pointer">Technical details</summary>
+            <dl class="prop" style="margin:6px 0 0">
+              <dt>Rule</dt><dd class="mono" x-text="alertDet.rule || '—'"></dd>
+              <dt>Category</dt><dd class="mono" x-text="alertDet.cat || '—'"></dd>
+              <dt>Alert ID</dt><dd class="mono" x-text="alertDet.id"></dd>
+              <dt x-show="alertDet.details && alertDet.details.mode">PC mode</dt><dd class="mono" x-show="alertDet.details && alertDet.details.mode" x-text="alertDet.details && alertDet.details.mode"></dd>
+            </dl>
+          </details>
+        </div></template>
+      </div>
+      <div class="modal-foot"><button class="btn" @click="alertModal = false">Close</button><button class="btn btn-solid" x-show="alertDet && !alertDet.acked" @click="ackAlertFromModal()">Mark reviewed</button></div>
     </div>
   </div>
   <div class="overlay" x-show="closeModal" x-cloak x-transition.opacity @click.self="closeModal = false">

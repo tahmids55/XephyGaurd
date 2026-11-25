@@ -77,6 +77,107 @@ window.xgApi = async function (url, opts = {}) {
   return ct.includes('application/json') ? res.json() : res.text();
 };
 
+/* ---------- Alerts in plain language (teacher view) ---------- */
+/* Where an alert came from: rule-id prefix first, then the agent's category. Labels only; rules stay in data/. */
+window.xgAlertSource = function (a) {
+  const rule = String((a && (a.rule || a.rule_id)) || ''), cat = String((a && (a.cat || a.category)) || '');
+  const S = {
+    program: { key: 'program', label: 'Program', icon: 'i-terminal' },
+    browser: { key: 'browser', label: 'Browser / website', icon: 'i-globe' },
+    editor: { key: 'editor', label: 'Code editor', icon: 'i-grid' },
+    network: { key: 'network', label: 'Network', icon: 'i-wifi' },
+    device: { key: 'device', label: 'USB device', icon: 'i-key' },
+    files: { key: 'files', label: 'Files on disk', icon: 'i-report' },
+    vm: { key: 'vm', label: 'Container / VM', icon: 'i-layers' },
+    port: { key: 'port', label: 'Open port', icon: 'i-radio' },
+    agent: { key: 'agent', label: 'XephyGuard agent', icon: 'i-shield' },
+    other: { key: 'other', label: 'Other', icon: 'i-info' }
+  };
+  const p = rule.split('.')[0];
+  if (cat === 'browser_ai' || rule === 'net.browser_ai' || p === 'web' && cat !== 'tunnel') return S.browser;
+  if (cat === 'ide_ai_backend' || cat === 'ai_extension' || cat === 'extension' || p === 'ext' || rule === 'net.ide_ai') return S.editor;
+  if (p === 'tamper' || cat === 'tamper') return S.agent;
+  if (p === 'dev' || cat === 'device') return S.device;
+  if (p === 'file' || cat === 'local_model') return S.files;
+  if (p === 'vm' || cat === 'virtualization') return S.vm;
+  if (p === 'port') return S.port;
+  if (p === 'net' || cat === 'network' || cat === 'tunnel') return S.network;
+  if (p === 'proc' || ['ai_desktop', 'ai_editor', 'cli_agent', 'local_llm', 'bypass'].includes(cat)) return S.program;
+  return S.other;
+};
+/* One sentence a teacher can read without knowing rule ids. */
+window.xgAlertExplain = function (a) {
+  const rule = String((a && (a.rule || a.rule_id)) || ''), cat = String((a && (a.cat || a.category)) || '');
+  const byCat = {
+    ai_desktop: 'An AI chat app is open on this PC.',
+    ai_editor: 'A code editor with built-in AI is running.',
+    cli_agent: 'An AI coding assistant is running in a terminal.',
+    local_llm: 'A program that runs an AI model offline on this PC is running.',
+    bypass: 'A tool that can get around the lab network rules is running.',
+    browser_ai: 'A browser on this PC is talking to an AI website.',
+    ide_ai_backend: 'A code editor is talking to an AI service.',
+    ai_extension: 'A code editor is talking to an AI service.',
+    extension: 'An AI extension is installed in a code editor.',
+    local_model: 'AI model files were found on this PC’s disk.',
+    virtualization: 'A container or virtual machine is running. Programs inside it are harder to see.',
+    tunnel: 'A program opened a hidden connection (tunnel) out of the lab network.',
+    device: 'A USB device was plugged in.'
+  };
+  const byRule = {
+    'net.wifi_new': 'A Wi-Fi adapter turned on. The PC could join a phone hotspot and skip the lab network.',
+    'net.vpn_adapter': 'A VPN or tunnel adapter is active. Traffic through it can skip the lab network rules.',
+    'net.tether_usb': 'A phone is sharing its internet over USB. The PC can skip the lab network.',
+    'net.second_route': 'The PC has a second way to the internet that skips the lab gateway.',
+    'net.usb_ethernet': 'A USB network adapter or mobile modem is connected.',
+    'dev.usb_storage': 'A USB storage device (pen drive, card reader or phone) was plugged in.'
+  };
+  if (byRule[rule]) return byRule[rule];
+  if (rule.startsWith('tamper.')) return 'The monitoring agent reported a change to itself or its settings (possible tampering).';
+  if (rule.startsWith('port.')) return 'A program is listening on a network port that AI tools use.';
+  return byCat[cat] || 'XephyGuard matched one of its rules on this PC.';
+};
+window.xgSevMeaning = {
+  critical: 'Critical — check this PC now.',
+  high: 'High — strong sign of AI use or a way around the rules.',
+  medium: 'Medium — worth a look.',
+  low: 'Low — usually harmless; listed for the record.',
+  info: 'Info — for the record only.'
+};
+/* Readable rows from the stored event (already allow-listed by the server at ingest). Unknown keys are skipped. */
+window.xgAlertFacts = function (d) {
+  d = d || {};
+  const c = (d.context && typeof d.context === 'object') ? d.context : {};
+  const L = [
+    ['app', 'Program'], ['process', 'Program'], ['exe', 'Program file'], ['pid', 'Process ID'], ['title', 'Window title'],
+    ['domain', 'Website / service'], ['ai_site', 'AI site'], ['remote_ip', 'Remote address'], ['remote_port', 'Remote port'],
+    ['sent_kb', 'Sent (KB)'], ['recv_kb', 'Received (KB)'], ['port', 'Port'], ['adapter', 'Network adapter'], ['driver', 'Driver'],
+    ['default_routes', 'Internet routes'], ['ide', 'Editor'], ['extension', 'Extension'], ['version', 'Version'],
+    ['activity', 'Activity'], ['path', 'File path'], ['size_mb', 'Size (MB)'], ['class', 'Device type'], ['vendor', 'Vendor ID'],
+    ['model', 'Device'], ['signal', 'Detected by'], ['user', 'OS user']
+  ];
+  const seen = new Set(), out = [];
+  const add = (k, label, v) => {
+    if (v === null || v === undefined || v === '' || typeof v === 'object') return;
+    if (seen.has(label + '|' + v)) return;
+    seen.add(label + '|' + v); out.push({ k: label, v: String(v) });
+  };
+  if (d.subject) add('subject', 'Matched', d.subject);
+  L.forEach(([k, label]) => add(k, label, c[k] !== undefined ? c[k] : (['model', 'vendor', 'class'].includes(k) ? d[k] : undefined)));
+  if (d.kind) add('kind', 'Tamper type', d.kind);
+  if (d.detail) add('detail', 'Detail', d.detail);
+  if (c.initial || d.initial) add('initial', 'When', 'Already present when the agent started');
+  return out;
+};
+/* What the agent did on the PC (policy actions), in words. */
+window.xgAlertActions = function (d) {
+  d = d || {};
+  const words = { log: 'Logged', warn: 'Warned the student on screen', kill: 'Tried to close the program', alert: 'Sent this alert', isolate: 'Cut the PC off the network' };
+  const acts = Array.isArray(d.actions) ? d.actions.map(x => words[x] || x) : [];
+  const k = d.result && d.result.kill;
+  if (k) acts.push(k.killed ? 'Program was closed' : ('Program was not closed' + (k.reason ? ' (' + k.reason + ')' : '')));
+  return acts;
+};
+
 /* ---------- Binary Screen Protocol (0x5847) & TileCanvas ---------- */
 (function () {
   const TILE_SIZE = 64;
@@ -564,6 +665,7 @@ document.addEventListener('alpine:init', () => {
     wallStreams: {},
     tile: 240, flagged: false, blur: false, pinned: [], dock: { att: true, feed: true }, feed: [], feedSeen: 0, feedFresh: {}, feedOk: true, feedAt: '', feedPcFilter: 0, feedQuiet: true, progQ: '', progSort: '', progDir: -1,
     messageModal: false, messageTarget: null, messageText: '', showDone: false, closeModal: false, closeName: '', closePid: null, closeStart: null, closeManual: false,
+    alertModal: false, alertDet: null, alertLoading: false, alertErr: '', alertSrcFilter: '',
 
     init() {
       const h = location.hash;
@@ -636,7 +738,7 @@ document.addEventListener('alpine:init', () => {
     },
     mapAlert(a) {
       return { id: a.id, pcId: a.pc_id, pc: a.pc || ('PC-' + a.pc_id), pcRetired: !!a.pc_retired, user: a.user || '—', sev: a.severity || 'medium',
-        title: a.title || a.rule_id, rule: a.rule_id || '', at: a.occurred_at || '', ago: Number(a.ago_min || 0), acked: !!a.acked, by: a.by || '', note: a.note || '' };
+        title: a.title || a.rule_id, rule: a.rule_id || '', cat: a.category || '', at: a.occurred_at || '', ago: Number(a.ago_min || 0), acked: !!a.acked, by: a.by || '', note: a.note || '' };
     },
     feedSev(e) {
       if (e.type === 'rule_hit' || e.type === 'tamper') return 'high';
@@ -814,6 +916,16 @@ document.addEventListener('alpine:init', () => {
     },
     progArrow(k) { return this.progSort === k ? (this.progDir > 0 ? ' ▲' : ' ▼') : ''; },
     get pcAlerts() { return this.alerts.filter(a => a.pcId === this.activePcId); },
+    /* Alerts tab: source filter pills (Program, Browser, Network, ...) with counts, and the filtered list. */
+    get pcAlertSources() {
+      const m = new Map();
+      this.pcAlerts.forEach(a => { const src = window.xgAlertSource(a); const e = m.get(src.key) || { ...src, n: 0 }; e.n++; m.set(src.key, e); });
+      return [...m.values()].sort((x, y) => y.n - x.n);
+    },
+    get pcAlertsShown() {
+      const f = this.alertSrcFilter;
+      return f ? this.pcAlerts.filter(a => window.xgAlertSource(a).key === f) : this.pcAlerts;
+    },
     get tabs() {
       const d = this.det; if (!d) return [];
       return [['overview', 'Overview', 'info', ''], ['screen', 'Screen', 'monitor', ''], ['timeline', 'Timeline', 'clock', ''], ['alerts', 'Alerts', 'bell', this.pcAlerts.length || ''],
@@ -932,7 +1044,7 @@ document.addEventListener('alpine:init', () => {
     openInspector(id, tab) {
       if (this.editing) return;
       if (this.inspector && this.activePcId !== id) this.stopScreen();
-      this.activePcId = id; this.tab = tab || 'overview'; this.screenMode = 'snapshot'; this.monitor = 0; this.inspector = true; this.fetchDetail(id);
+      this.activePcId = id; this.tab = tab || 'overview'; this.screenMode = 'snapshot'; this.monitor = 0; this.alertSrcFilter = ''; this.inspector = true; this.fetchDetail(id);
       // Opening a PC is the staff request: start Live (audited, student sees the indicator) so the screen shows first;
       // a PC without live capability gets one snapshot instead.
       this.$nextTick(() => { if (this.activePcId === id && !this.screenHasFrame) this.autoLive(); });
@@ -945,7 +1057,42 @@ document.addEventListener('alpine:init', () => {
       if (this.active.caps && this.active.caps.live) this.goLive(); else if (!this.screenHasFrame) this.snapshot();
     },
     closeInspector() { this.stopScreen(); this.inspector = false; },
-    clear() { this.stopScreen(); this.inspector = false; this.messageModal = false; this.closeModal = false; },
+    clear() {
+      if (this.alertModal) { this.alertModal = false; return; } // Esc closes only the alert popup, the PC popup stays.
+      this.stopScreen(); this.inspector = false; this.messageModal = false; this.closeModal = false;
+    },
+    /* Alert details popup: plain-language summary first, raw rule id last. */
+    alertSrc(a) { return window.xgAlertSource(a); },
+    alertExplain(a) { return window.xgAlertExplain(a); },
+    async openAlert(a) {
+      this.alertDet = { ...a, details: null, session: null, reviews: [] };
+      this.alertErr = ''; this.alertLoading = true; this.alertModal = true;
+      try {
+        const r = await window.xgApi(`/alerts/${a.id}`);
+        if (this.alertDet && this.alertDet.id === a.id) {
+          this.alertDet = { ...this.alertDet, ...r, cat: r.category || a.cat || '', rule: r.rule_id || a.rule, sev: r.severity || a.sev };
+        }
+      } catch (e) {
+        this.alertErr = e.message || 'Could not load the alert details.';
+      } finally {
+        this.alertLoading = false;
+      }
+    },
+    get alertFacts() { return this.alertDet ? window.xgAlertFacts(this.alertDet.details) : []; },
+    get alertActions() { return this.alertDet ? window.xgAlertActions(this.alertDet.details) : []; },
+    get alertWhen() {
+      const d = this.alertDet;
+      if (!d) return '';
+      if (!d.occurred_at) return d.at || '';
+      try { return new Date(d.occurred_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' }); } catch (e) { return d.at || ''; }
+    },
+    async ackAlertFromModal() {
+      const d = this.alertDet;
+      if (!d) return;
+      const a = this.alerts.find(x => x.id === d.id) || d;
+      await this.ackGroup({ items: [a], pc: a.pc, pcId: a.pcId, count: 1 });
+      if (a.acked) this.alertDet = { ...this.alertDet, acked: true, by: a.by };
+    },
     confirmForm(evt, msg) { if (!confirm(msg)) evt.preventDefault(); },
 
     async toggleIsolate(pc) {

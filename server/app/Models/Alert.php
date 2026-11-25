@@ -63,7 +63,7 @@ class Alert extends Model
     {
         return [
             'id' => $this->id, 'pc_id' => $this->pc_id, 'pc' => $this->pc?->name, 'rule_id' => $this->rule_id,
-            'severity' => $this->severity, 'title' => $this->title, 'user' => $this->user,
+            'category' => $this->category, 'severity' => $this->severity, 'title' => $this->title, 'user' => $this->user,
             'occurred_at' => $this->occurred_at?->format('H:i:s'), 'session_id' => $this->lab_session_id,
         ];
     }

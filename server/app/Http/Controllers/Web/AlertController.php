@@ -50,6 +50,35 @@ class AlertController extends Controller
         ]);
     }
 
+    /** JSON for the alert details popup: what the agent reported (allow-listed at ingest), session and review history. */
+    public function show(Alert $alert)
+    {
+        $alert->load(['pc:id,name,os,retired_at', 'session:id,course,title,mode', 'acknowledger:id,name', 'reviews.user:id,name']);
+        $d = is_array($alert->details) ? $alert->details : [];
+
+        return response()->json([
+            'id' => $alert->id,
+            'pc' => $alert->pc?->name, 'pc_id' => $alert->pc_id, 'os' => $alert->pc?->os,
+            'user' => $alert->user,
+            'severity' => $alert->severity, 'rule_id' => $alert->rule_id, 'category' => $alert->category,
+            'title' => $alert->title,
+            'occurred_at' => $alert->occurred_at?->toIso8601String(),
+            'session' => $alert->session ? [
+                'id' => $alert->session->id,
+                'name' => trim(($alert->session->course ?? '').' '.($alert->session->title ?? '')) ?: 'Session '.$alert->session->id,
+                'mode' => $alert->session->mode,
+            ] : null,
+            'details' => $d,
+            'acked' => $alert->acknowledged_at !== null,
+            'acked_at' => $alert->acknowledged_at?->toIso8601String(),
+            'by' => $alert->acknowledger?->name,
+            'note' => $alert->comment,
+            'reviews' => $alert->reviews->map(fn ($r) => [
+                'by' => $r->user?->name, 'note' => $r->note, 'at' => $r->reviewed_at?->toIso8601String(),
+            ])->values(),
+        ]);
+    }
+
     public function acknowledge(Request $request, Alert $alert, EventIngestor $ingestor)
     {
         $d = $request->validate(['comment' => 'nullable|string|max:2000']);
