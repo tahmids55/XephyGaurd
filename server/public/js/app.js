@@ -177,6 +177,49 @@ window.xgAlertActions = function (d) {
   if (k) acts.push(k.killed ? 'Program was closed' : ('Program was not closed' + (k.reason ? ' (' + k.reason + ')' : '')));
   return acts;
 };
+/* Newest alert of a group (smallest age); the Details button opens that one. */
+window.xgNewest = items => (items || []).reduce((m, a) => (!m || a.ago < m.ago ? a : m), null);
+/* Copy props incl. getters (a plain spread would evaluate the getters once). */
+window.xgMix = function (target, ...srcs) {
+  srcs.forEach(s => Object.defineProperties(target, Object.getOwnPropertyDescriptors(s)));
+  return target;
+};
+/* Alert details popup state, shared by Live lab (PC popup, Needs attention) and /alerts.
+   The page supplies alertAckOne(a) -> Promise; it marks that one alert reviewed in the page's own list. */
+window.xgAlertDetails = () => ({
+  alertModal: false, alertDet: null, alertLoading: false, alertErr: '',
+  alertSrc(a) { return window.xgAlertSource(a); },
+  alertExplain(a) { return window.xgAlertExplain(a); },
+  async openAlert(a) {
+    if (!a || !a.id) return;
+    this.alertDet = { ...a, details: null, session: null, reviews: [] };
+    this.alertErr = ''; this.alertLoading = true; this.alertModal = true;
+    try {
+      const r = await window.xgApi(`/alerts/${a.id}`);
+      if (this.alertDet && this.alertDet.id === a.id) {
+        this.alertDet = { ...this.alertDet, ...r, cat: r.category || a.cat || '', rule: r.rule_id || a.rule, sev: r.severity || a.sev };
+      }
+    } catch (e) {
+      this.alertErr = e.message || 'Could not load the alert details.';
+    } finally {
+      this.alertLoading = false;
+    }
+  },
+  get alertFacts() { return this.alertDet ? window.xgAlertFacts(this.alertDet.details) : []; },
+  get alertActions() { return this.alertDet ? window.xgAlertActions(this.alertDet.details) : []; },
+  get alertWhen() {
+    const d = this.alertDet;
+    if (!d) return '';
+    if (!d.occurred_at) return d.at || '';
+    try { return new Date(d.occurred_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' }); } catch (e) { return d.at || ''; }
+  },
+  async ackAlertFromModal() {
+    const d = this.alertDet;
+    if (!d) return;
+    const a = await this.alertAckOne(d);
+    if (a && a.acked && this.alertDet && this.alertDet.id === d.id) this.alertDet = { ...this.alertDet, acked: true, by: a.by };
+  }
+});
 
 /* ---------- Binary Screen Protocol (0x5847) & TileCanvas ---------- */
 (function () {
@@ -529,7 +572,7 @@ window.xgGroup = function (list) {
   const map = new Map();
   list.forEach(a => {
     const k = a.pcId + '|' + a.rule;
-    if (!map.has(k)) map.set(k, { key: k, pcId: a.pcId, pc: a.pc, pcRetired: !!a.pcRetired, user: a.user, rule: a.rule, sev: a.sev, title: a.title, at: a.at, ago: a.ago, items: [] });
+    if (!map.has(k)) map.set(k, { key: k, pcId: a.pcId, pc: a.pc, pcRetired: !!a.pcRetired, user: a.user, rule: a.rule, cat: a.cat || '', sev: a.sev, title: a.title, at: a.at, ago: a.ago, items: [] });
     const g = map.get(k); g.items.push(a);
     if ((rank[a.sev] || 0) > (rank[g.sev] || 0)) g.sev = a.sev;
     if (a.ago < g.ago) { g.ago = a.ago; g.at = a.at; g.title = a.title; }
@@ -652,7 +695,7 @@ document.addEventListener('alpine:init', () => {
   }));
 
   /* ---------- Live lab ---------- */
-  Alpine.data('labView', () => ({
+  Alpine.data('labView', () => window.xgMix({
     view: 'map',
     cols: (window.XG_LIVE && (window.XG_LIVE.cols || (window.XG_LIVE.lab && window.XG_LIVE.lab.cols))) || 6,
     rows: (window.XG_LIVE && (window.XG_LIVE.rows || (window.XG_LIVE.lab && window.XG_LIVE.lab.rows))) || 4,
@@ -665,7 +708,7 @@ document.addEventListener('alpine:init', () => {
     wallStreams: {},
     tile: 240, flagged: false, blur: false, pinned: [], dock: { att: true, feed: true }, feed: [], feedSeen: 0, feedFresh: {}, feedOk: true, feedAt: '', feedPcFilter: 0, feedQuiet: true, progQ: '', progSort: '', progDir: -1,
     messageModal: false, messageTarget: null, messageText: '', showDone: false, closeModal: false, closeName: '', closePid: null, closeStart: null, closeManual: false,
-    alertModal: false, alertDet: null, alertLoading: false, alertErr: '', alertSrcFilter: '',
+    alertSrcFilter: '',
 
     init() {
       const h = location.hash;
@@ -1061,37 +1104,11 @@ document.addEventListener('alpine:init', () => {
       if (this.alertModal) { this.alertModal = false; return; } // Esc closes only the alert popup, the PC popup stays.
       this.stopScreen(); this.inspector = false; this.messageModal = false; this.closeModal = false;
     },
-    /* Alert details popup: plain-language summary first, raw rule id last. */
-    alertSrc(a) { return window.xgAlertSource(a); },
-    alertExplain(a) { return window.xgAlertExplain(a); },
-    async openAlert(a) {
-      this.alertDet = { ...a, details: null, session: null, reviews: [] };
-      this.alertErr = ''; this.alertLoading = true; this.alertModal = true;
-      try {
-        const r = await window.xgApi(`/alerts/${a.id}`);
-        if (this.alertDet && this.alertDet.id === a.id) {
-          this.alertDet = { ...this.alertDet, ...r, cat: r.category || a.cat || '', rule: r.rule_id || a.rule, sev: r.severity || a.sev };
-        }
-      } catch (e) {
-        this.alertErr = e.message || 'Could not load the alert details.';
-      } finally {
-        this.alertLoading = false;
-      }
-    },
-    get alertFacts() { return this.alertDet ? window.xgAlertFacts(this.alertDet.details) : []; },
-    get alertActions() { return this.alertDet ? window.xgAlertActions(this.alertDet.details) : []; },
-    get alertWhen() {
-      const d = this.alertDet;
-      if (!d) return '';
-      if (!d.occurred_at) return d.at || '';
-      try { return new Date(d.occurred_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' }); } catch (e) { return d.at || ''; }
-    },
-    async ackAlertFromModal() {
-      const d = this.alertDet;
-      if (!d) return;
+    /* Alert details popup (xgAlertDetails mixin): mark one alert reviewed in this view. */
+    async alertAckOne(d) {
       const a = this.alerts.find(x => x.id === d.id) || d;
       await this.ackGroup({ items: [a], pc: a.pc, pcId: a.pcId, count: 1 });
-      if (a.acked) this.alertDet = { ...this.alertDet, acked: true, by: a.by };
+      return a;
     },
     confirmForm(evt, msg) { if (!confirm(msg)) evt.preventDefault(); },
 
@@ -1423,13 +1440,14 @@ document.addEventListener('alpine:init', () => {
         Alpine.store('toasts').add(e.message || 'Could not save seat map.', 'alert');
       }
     }
-  }));
+  }, window.xgAlertDetails()));
 
   /* ---------- Alerts page ---------- */
   Alpine.data('alertsPage', () => {
     const d = window.xgJson('xg-page-data', {}) || {};
-    return {
+    return window.xgMix({
       sev: d.sev || '',
+      src: '',
       unacked: !!d.unacked,
       session: d.session || '',
       grouped: true,
@@ -1447,8 +1465,15 @@ document.addEventListener('alpine:init', () => {
         return this.all.filter(a =>
           (!this.sev || a.sev === this.sev)
           && (!this.unacked || !a.acked)
-          && (!q || (a.pc + ' ' + a.title + ' ' + a.rule + ' ' + a.user).toLowerCase().includes(q))
+          && (!this.src || window.xgAlertSource(a).key === this.src)
+          && (!q || (a.pc + ' ' + a.title + ' ' + a.rule + ' ' + a.user + ' ' + window.xgAlertSource(a).label).toLowerCase().includes(q))
         );
+      },
+      /* "Detected by" pills with counts over the alerts on this page. */
+      get sources() {
+        const m = new Map();
+        this.all.forEach(a => { const s = window.xgAlertSource(a); const e = m.get(s.key) || { ...s, n: 0 }; e.n++; m.set(s.key, e); });
+        return [...m.values()].sort((x, y) => y.n - x.n);
       },
       get rows() {
         return this.grouped
@@ -1505,8 +1530,15 @@ document.addEventListener('alpine:init', () => {
         } catch (e) {
           Alpine.store('toasts').add(e.message || 'Could not mark reviewed.', 'alert');
         }
+      },
+      /* Alert details popup (xgAlertDetails mixin): mark one alert reviewed, using any note typed for it. */
+      async alertAckOne(det) {
+        const a = this.all.find(x => x.id === det.id) || det;
+        const key = 'a' + a.id;
+        await this.ack({ key, pc: a.pc, items: [a] });
+        return a;
       }
-    };
+    }, window.xgAlertDetails());
   });
 
   /* ---------- Settings page ---------- */

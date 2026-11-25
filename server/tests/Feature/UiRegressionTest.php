@@ -145,6 +145,26 @@ class UiRegressionTest extends TestCase
         $this->actingAs($admin)->getJson('/alerts/999999')->assertNotFound();
     }
 
+    public function test_alerts_page_and_needs_attention_carry_category_and_details_popup(): void
+    {
+        Queue::fake();
+        $lab = $this->bootLab();
+        $pc = Pc::create(['lab_id' => $lab->id, 'name' => 'PC-08', 'hostname' => 'pc08', 'ip' => '192.168.10.28',
+            'os' => 'Ubuntu 24.04', 'macs' => ['aa:bb:cc:00:00:08']]);
+        Alert::create(['pc_id' => $pc->id, 'rule_id' => 'net.vpn_adapter', 'severity' => 'high', 'category' => 'network',
+            'title' => 'VPN adapter up', 'user' => 'student2', 'occurred_at' => now()->subMinute()]);
+
+        $admin = $this->user('admin');
+        $res = $this->actingAs($admin)->get('/alerts')->assertOk();
+        preg_match('/<script type="application\/json" id="xg-page-data">(.*?)<\/script>/s', $res->getContent(), $m);
+        $data = json_decode(html_entity_decode($m[1] ?? '{}'), true);
+        $this->assertSame('network', $data['items'][0]['cat'] ?? null);
+        $res->assertSee('aria-label="Alert details"', false)->assertSee('openAlert(xgNewest(r.items))', false);
+
+        $this->actingAs($admin)->get('/')->assertOk()
+            ->assertSee('aria-label="Alert details"', false)->assertSee('openAlert(xgNewest(g.items))', false);
+    }
+
     public function test_alerts_open_filter_and_json_acknowledge_handle_retired_pcs(): void
     {
         Queue::fake();

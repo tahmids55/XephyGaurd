@@ -273,12 +273,14 @@ Paths are relative to the repo root. `S/` = `server/app/`, `A/` = `agent/`.
 - **What:** grid of seats with online/offline status, colour by open alerts and live score,
   updated live over Reverb. Right panel: alerts for all PCs + live timeline for all PCs
   (polls `GET /lab/feed` every 5 s; skips heartbeats, window titles, process stops).
+  Needs attention items show the plain-language line and "Detected by" chip, with Details (alert details popup of
+  the newest alert in the group, same as F24), Open PC and Mark reviewed.
 - **Trigger:** `GET /` (+ `/index.html`), `GET /lab/feed`. Assistant and up. Events `PcUpdated`, `AlertRaised`,
   `SessionChanged` on `lab.{id}`.
 - **Code:** `S/Http/Controllers/Web/DashboardController.php::index`, `resources/views/dashboard/live.blade.php`,
   `resources/js/app.js`, `S/Events/*`.
 - **Status:** working (`feed_returns_tiles_alerts_and_events_for_all_pcs`, `dashboard_includes_all_52_unacknowledged_alerts_including_retired_pcs`,
-  `dashboard_reconciles_stale_live_score_when_no_open_alerts_exist`).
+  `dashboard_reconciles_stale_live_score_when_no_open_alerts_exist`, `alerts_page_and_needs_attention_carry_category_and_details_popup`).
 - **Test:** 1. Open `/` with one PC online. 2. Stop the agent: the seat goes offline within ~15 s.
 
 ### F24. PC inspector (10 tabs, popup)
@@ -444,9 +446,13 @@ on `private-pc.<id>` (`S/Events/AgentCommand.php`) and acknowledged in the next 
 - **Test:** 1. Start a Test session. 2. Open an AI app on a PC. 3. An alert appears on `/alerts`.
 
 ### F40. Alerts list and filters
+- **What:** severity, session and unreviewed filters, search, group repeats; each row has the plain-language line and
+  "Detected by" chip, with "Detected by" filter pills (client-side, current page) and the alert details popup
+  (`GET /alerts/{alert}`, same as F24) from the expanded row or any grouped item.
 - **Trigger:** `GET /alerts` (+ `.html`). Assistant and up.
 - **Code:** `S/Http/Controllers/Web/AlertController.php::index`.
-- **Status:** working (`alerts_open_filter_and_json_acknowledge_handle_retired_pcs`).
+- **Status:** working (`alerts_open_filter_and_json_acknowledge_handle_retired_pcs`,
+  `alerts_page_and_needs_attention_carry_category_and_details_popup`).
 - **Test:** 1. Open `/alerts`. 2. Filter "open": only unacknowledged alerts.
 
 ### F41. Acknowledge alerts (single and batch)
