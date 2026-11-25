@@ -538,11 +538,13 @@ on `private-pc.<id>` (`S/Events/AgentCommand.php`) and acknowledged in the next 
 - **Trigger:** any `Alert` created (EventIngestor, NetEventsController, SessionManager). Screenshot only with policy
   `evidence.auto_screenshot` (default off) and severity ≥ `evidence.min_severity` (default `high`), at most 1 per PC per 30 s.
 - **Code:** context: `S/Observers/AlertSnapshotRecorder.php` (`#[ObservedBy]` on `Alert`), `S/Models/AlertSnapshot.php`;
-  screenshot: planned (docs/plan/evidence.md Steps 3–8).
+  request: `S/Observers/AutoScreenshotRequester.php`, `PrivacySettings::autoScreenshot`; rest planned (docs/plan/evidence.md Steps 4–8).
 - **In/out/side effects:** `alert_snapshots` row (copies of data the CCC already holds + sha256); screenshot as an
   `evidence_captures` row with `alert_id`, `source = auto`, stored like F46; audit on save and every view.
 - **Status:** context snapshot working (`AlertSnapshotTest`: latest process list, events and net of the last 120 s, sha256
-  tamper check; purged with raw data). Screenshot not built yet.
+  tamper check; purged with raw data). Screenshot request working server side (`AutoScreenshotRequestTest`: settings
+  `evidence.auto_screenshot` / `evidence.min_severity`, `evidence_snapshot` command with a single-use nonce after commit,
+  policy `screen.auto_evidence`, notice sentence); no admin toggle in the UI yet; upload and agent not built yet.
 - **Test:** 1. Turn on `evidence.auto_screenshot`. 2. Trigger a high alert on a PC. 3. The alert shows context and a screenshot.
 
 ---

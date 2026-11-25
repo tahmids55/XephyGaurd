@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Models\Alert;
 use App\Models\Setting;
 
 /**
@@ -59,5 +60,19 @@ final class PrivacySettings
         $enabled = is_array($v) && (bool) ($v['enabled'] ?? false);
 
         return ['enabled' => $enabled, 'query' => $enabled && (bool) ($v['query'] ?? false)];
+    }
+
+    /**
+     * F123 auto screenshot on alert (DECISIONS #32): off unless an admin turned it on; minimum severity
+     * defaults to high, an invalid stored value counts as high. Never in Always-on mode (ETHICS table).
+     *
+     * @return array{enabled: bool, min_severity: string}
+     */
+    public static function autoScreenshot(): array
+    {
+        $sev = Setting::get('evidence.min_severity', 'high');
+
+        return ['enabled' => Setting::get('evidence.auto_screenshot', false) === true,
+            'min_severity' => is_string($sev) && isset(Alert::SEVERITY_POINTS[$sev]) && $sev !== 'info' ? $sev : 'high'];
     }
 }

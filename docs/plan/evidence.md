@@ -22,7 +22,7 @@ What: when an alert is raised, keep evidence at once: (a) a **context snapshot**
 ## Steps (one commit each)
 - [x] 1 docs: DECISIONS #32, ETHICS row, FEATURES F123 + F46 note, THREAT_MODEL row, this plan.
 - [x] 2 server: `alert_snapshots` migration + model + observer + test (context only).
-- [ ] 3 server: policy keys + notice sentence + `evidence_snapshot` command on alert (rate limit) + PROTOCOL + tests.
+- [x] 3 server: policy keys + notice sentence + `evidence_snapshot` command on alert (rate limit) + PROTOCOL + tests.
 - [ ] 4 server: `POST /api/agent/v1/evidence` (nonce, mTLS PC, size/type) → `evidence_captures` (`alert_id`, `source`) + tests.
 - [ ] 5 agent core: command parse + pending nonce + helper IPC request/reply (caps) + upload + tests. PROTOCOL.
 - [ ] 6 agent helper: one-frame capture + mask check + full-frame JPEG (Linux; Windows compile-checked only).

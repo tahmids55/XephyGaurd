@@ -57,6 +57,8 @@ drops entries that would make the agent reject the policy (bad type, over 256 by
 shown; measured in docs/EVALUATION.md M4-5). All optional; a missing or invalid value keeps the default and never rejects
 the policy. The service passes them to the helper in `config.screen`; a view in progress keeps its settings. The server
 does not send them yet (agent defaults apply).
+`policy.screen.auto_evidence` (bool, sent only when `true`; F123): an admin enabled automatic screenshots on serious
+alerts and the PC is not in Always-on mode. Without it the agent refuses `evidence_snapshot`.
 `policy.screen.cpu_budget_pct` (number 1..100, default 8, optional, invalid keeps the default) is the CPU budget of the
 helper's capture/encode thread in percent of one core; the governor lowers fps (floor 2) then quality to stay under it.
 Passed in `config.screen` like the above, applied at once (also to a running view). The server sends it only after an
@@ -142,6 +144,7 @@ signs the agent's own channel. Event name `command`, data `{id, type, args}`:
 | `ping`, `flush` | – | flush the queue now |
 | `screen_lease` | `ttl_s` (1..3600, the agent's cap; the CCC sends the viewer lease, default 30) | the CCC has a live-view lease on this PC for `ttl_s` more seconds; sent with every screen token and every renewal. The agent captures the screen only while a lease is active (screen Step 15) |
 | `process_lease` | `ttl_s` (1..60, the agent's cap; values outside are ignored) | the dashboard's Programs tab is open on this PC: send `process_snapshot` every 2 s (instead of `intervals.snapshot_s`) for `ttl_s` more seconds and flush the queue after each. A new grant sends one snapshot at once; a renewal inside the lease only extends it. Same fields as the regular snapshot. Ignored (`ignored`) when the policy does not collect processes |
+| `evidence_snapshot` | `alert_id` (int ≥ 1), `nonce` (32 lowercase hex) | F123 (DECISIONS #32): a serious alert was raised on this PC; take one screenshot now and upload it with this `nonce` (agent side: docs/plan/evidence.md Step 5). The CCC sends it only when `policy.screen.auto_evidence` is true, at most once per PC per 30 s. The agent must ignore it (`ignored`) unless its current policy has `screen.auto_evidence: true`; the nonce is single-use |
 
 Every command is acknowledged with a `command_result` event.
 The CCC checks the arguments of every type before storing or sending a command (`CommandBus`, S-30): arguments not

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Observers\AlertSnapshotRecorder;
+use App\Observers\AutoScreenshotRequester;
 use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,7 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Facades\DB;
 
-#[ObservedBy(AlertSnapshotRecorder::class)]
+#[ObservedBy([AlertSnapshotRecorder::class, AutoScreenshotRequester::class])]
 class Alert extends Model
 {
     protected $fillable = ['pc_id', 'lab_session_id', 'event_id', 'rule_id', 'severity', 'category', 'title', 'details',

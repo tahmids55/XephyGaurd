@@ -23,14 +23,19 @@ class NoticeText
      * Live view needs a screen-gateway signing secret (no secret, no viewer token). A screenshot can only be
      * saved from an open audited live view (S-12), so it is on exactly when live view is.
      *
-     * @return array{live_view: bool, screenshots: bool}
+     * Auto screenshots on alert (F123) do not need live view; they follow their own admin setting.
+     *
+     * @return array{live_view: bool, screenshots: bool, auto_screenshots: bool}
      */
     public static function features(): array
     {
         $live = (string) config('services.screen_gateway.secret', '') !== '';
 
-        return ['live_view' => $live, 'screenshots' => $live];
+        return ['live_view' => $live, 'screenshots' => $live, 'auto_screenshots' => PrivacySettings::autoScreenshot()['enabled']];
     }
+
+    public const AUTO_SENTENCE = ' During a lab session a screenshot is taken automatically when a serious alert is raised; '.
+        'saving and viewing it are logged.';
 
     /** The admin's own text (or the default), without the generated part. */
     public static function adminText(): string
@@ -43,15 +48,16 @@ class NoticeText
     public static function featureSentences(): string
     {
         $f = self::features();
+        $auto = $f['auto_screenshots'] ? self::AUTO_SENTENCE : '';
         if (! $f['live_view']) {
-            return 'Live screen viewing is turned off on this lab.';
+            return 'Live screen viewing is turned off on this lab.'.$auto;
         }
         $s = 'Lab staff can view this screen live; it is not recorded and every view is logged.';
         if ($f['screenshots']) {
             $s .= ' An instructor watching live may save a screenshot as evidence; saving and viewing it are logged.';
         }
 
-        return $s;
+        return $s.$auto;
     }
 
     public static function text(): string
