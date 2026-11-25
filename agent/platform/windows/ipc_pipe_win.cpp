@@ -71,6 +71,7 @@ public:
     }
 
     void set_frame_handler(FrameHandler h) override { on_frame_ = std::move(h); }
+    void set_evidence_handler(FrameHandler h) override { on_evidence_ = std::move(h); }
 
     void stop() override {
         running_ = false;
@@ -215,7 +216,8 @@ private:
             const bool valid = reader.feed(tmp.data(), n, records);
             for (auto& r : records) {
                 if (r.kind == ipc::Record::Kind::line) on_msg(c->peer, r.data);
-                else if (on_frame_) on_frame_(c->peer, std::move(r.data));
+                else if (r.kind == ipc::Record::Kind::screen_frame) { if (on_frame_) on_frame_(c->peer, std::move(r.data)); }
+                else if (on_evidence_) on_evidence_(c->peer, std::move(r.data));
             }
             if (!valid) {
                 log::warn("ipc: protocol error from helper pid {}, closing", c->peer.pid);
@@ -234,6 +236,7 @@ private:
 
     std::string allowed_;
     FrameHandler on_frame_;
+    FrameHandler on_evidence_;
     std::wstring name_;
     std::atomic<bool> running_{false};
     std::thread accept_;

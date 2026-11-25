@@ -10,12 +10,15 @@
 //   {"t":"ping"}
 //   {"t":"screen_caps",...,"ipc_stream":true}  (helper streams over IPC; the service relays, screen Step 60)
 //   binary screen frame record (opaque, not JSON): see ipc_framing.hpp
+//   {"t":"screen_caps",...,"evidence":true}    (helper can take one evidence screenshot, F123)
+//   binary evidence JPEG record, {"t":"evidence_masked"}, {"t":"evidence_failed","reason":"..."}  (reply to evidence_snap)
 // service -> helper:
 //   {"t":"config","title_capture":"app_only","collect":{"window":true,"clipboard":true,"keys":false},"mode":"test"}
 //   {"t":"indicator","text":"Monitored by XephyGuard","mode":"test"}
 //   {"t":"notify","title":"...","body":"...","urgent":true}
 //   {"t":"pong"}
 //   {"t":"screen_rx","data":"<base64>"}   (one gateway message: Ack / KeyframeReq / Status, <= 1 KiB)
+//   {"t":"evidence_snap","max_width":1920,"quality":70,"max_bytes":4194304}  (one masked-aware JPEG now, F123)
 #include <string>
 
 #include "xg/event.hpp"

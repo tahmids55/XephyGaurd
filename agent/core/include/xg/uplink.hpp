@@ -5,6 +5,8 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <string>
 
 #include "xg/agent_messages.hpp"
 #include "xg/event_queue.hpp"
@@ -22,6 +24,13 @@ struct AgentStatus {
 
 net::TlsOptions tls_options_for(const UplinkView& v, bool with_client_cert);
 
+/// One auto evidence upload (F123): the JPEG the helper took, or `masked` with no image. The core checked it.
+struct EvidenceUpload {
+    std::string nonce;  // 32 lowercase hex, from the CCC's evidence_snapshot command
+    std::string jpeg;   // empty when masked
+    bool masked = false;
+};
+
 /// HTTPS batch uplink (POST /events), policy fetch and enrollment polling.
 class Uplink {
 public:
@@ -33,10 +42,14 @@ public:
     bool flush_once();
     /// Asks the next loop iteration to (re)fetch the policy.
     void request_policy() { policy_dirty_ = true; wake(); }
+    /// Thread-safe: uploads `u` on the next loop iteration, before the event batch. One slot: a newer upload
+    /// replaces one not sent yet (each nonce is valid for 60 s only). One attempt; the CCC consumes the nonce.
+    void queue_evidence(EvidenceUpload u);
     void wake();
 
 private:
     bool fetch_policy(const UplinkView& v);
+    void send_evidence(const UplinkView& v);
     void poll_enrollment(const UplinkView& v);
     net::HttpsClient& api(const UplinkView& v);
 
@@ -53,6 +66,8 @@ private:
     std::mutex wake_mu_;
     std::condition_variable wake_cv_;
     bool wake_ = false;
+    std::mutex evidence_mu_;
+    std::optional<EvidenceUpload> evidence_;  // guarded by evidence_mu_
 };
 
 /// Reverb (Pusher protocol) WSS channel for commands from the CCC.

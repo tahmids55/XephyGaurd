@@ -33,6 +33,24 @@ TEST_CASE("IPC stream reader splits lines and screen frames, also when split acr
     }
 }
 
+TEST_CASE("IPC stream reader tells evidence JPEG records from screen frames and caps them", "[ipc]") {
+    std::vector<ipc::Record> out;
+    ipc::StreamReader r;
+    const std::string jpeg = std::string("\xff\xd8\xff\n\x00", 5) + "abc\xff\xd9";
+    const std::string stream = ipc::evidence_jpeg_record(jpeg) + ipc::screen_frame_record("f") + "{}\n";
+    REQUIRE(r.feed(stream.data(), stream.size(), out));
+    REQUIRE(out.size() == 3);
+    CHECK(out[0].kind == ipc::Record::Kind::evidence_jpeg);
+    CHECK(out[0].data == jpeg);
+    CHECK(out[1].kind == ipc::Record::Kind::screen_frame);
+    CHECK(out[2].kind == ipc::Record::Kind::line);
+    CHECK(ipc::evidence_jpeg_record("").empty());
+    CHECK(ipc::evidence_jpeg_record(std::string(ipc::kMaxEvidenceJpeg + 1, 'a')).empty());
+    ipc::StreamReader big;
+    const auto h = header(ipc::kEvidenceJpeg, uint32_t(ipc::kMaxEvidenceJpeg + 1));
+    CHECK_FALSE(big.feed(h.data(), h.size(), out));
+}
+
 TEST_CASE("IPC stream reader rejects oversize, empty and unknown-type binary records", "[ipc]") {
     std::vector<ipc::Record> out;
     SECTION("oversize is rejected from the header, before the payload arrives") {
@@ -52,7 +70,7 @@ TEST_CASE("IPC stream reader rejects oversize, empty and unknown-type binary rec
     }
     SECTION("wrong type") {
         ipc::StreamReader r;
-        const auto h = header(0x02, 4) + "abcd";
+        const auto h = header(0x03, 4) + "abcd";  // 0x01 screen frame and 0x02 evidence JPEG are the only types
         CHECK_FALSE(r.feed(h.data(), h.size(), out));
         CHECK(out.empty());
     }
@@ -87,7 +105,7 @@ struct UnixIpcRig {
     std::string path = (std::filesystem::temp_directory_path() / ("xg-ipc-test-" + std::to_string(::getpid()) + ".sock")).string();
     std::unique_ptr<IIpcServer> server;
     std::mutex mu;
-    std::vector<std::string> lines, frames;
+    std::vector<std::string> lines, frames, evidence;
     std::atomic<int> disconnects{0};
 
     explicit UnixIpcRig(const std::string& allowed_exe) {
@@ -96,6 +114,10 @@ struct UnixIpcRig {
         server->set_frame_handler([this](const IIpcServer::Peer&, std::string&& f) {
             std::lock_guard lk(mu);
             frames.push_back(std::move(f));
+        });
+        server->set_evidence_handler([this](const IIpcServer::Peer&, std::string&& f) {
+            std::lock_guard lk(mu);
+            evidence.push_back(std::move(f));
         });
         REQUIRE(server->start(path, [this](const IIpcServer::Peer&, const std::string& l) {
             std::lock_guard lk(mu);
@@ -128,12 +150,27 @@ TEST_CASE("Unix IPC server delivers screen frames opaque to the frame handler, l
     CHECK_FALSE(ipc::send_screen_frame(*client, std::string(ipc::kMaxScreenFrame + 1, 'a')));
 }
 
+TEST_CASE("Unix IPC server delivers an evidence JPEG record to the evidence handler only", "[ipc][linux]") {
+    UnixIpcRig rig(self_exe());
+    auto client = lnx::make_ipc_client();
+    REQUIRE(client->connect(rig.path));
+    const std::string jpeg = std::string("\xff\xd8\xff", 3) + std::string(200 * 1024, '\0') + "\xff\xd9";
+    REQUIRE(ipc::send_evidence_jpeg(*client, jpeg));
+    REQUIRE(client->send("{\"t\":\"ping\"}\n"));
+    REQUIRE(rig.wait([&] { return rig.lines.size() == 1 && rig.evidence.size() == 1; }));
+    CHECK(rig.evidence[0] == jpeg);
+    CHECK(rig.frames.empty());  // never reaches the screen relay
+}
+
 TEST_CASE("Unix IPC server closes a helper that sends an oversize or unknown binary record", "[ipc][linux]") {
     UnixIpcRig rig(self_exe());
-    for (uint8_t type : {ipc::kScreenFrame, uint8_t(0x02)}) {
+    // 0x03 is unknown (0x01 screen frame, 0x02 evidence JPEG); the known types are sent one byte over their cap.
+    for (uint8_t type : {ipc::kScreenFrame, ipc::kEvidenceJpeg, uint8_t(0x03)}) {
         auto client = lnx::make_ipc_client();
         REQUIRE(client->connect(rig.path));
-        const uint32_t len = type == ipc::kScreenFrame ? uint32_t(ipc::kMaxScreenFrame + 1) : 4;
+        const uint32_t len = type == ipc::kScreenFrame    ? uint32_t(ipc::kMaxScreenFrame + 1)
+                             : type == ipc::kEvidenceJpeg ? uint32_t(ipc::kMaxEvidenceJpeg + 1)
+                                                          : 4;
         const int before = rig.disconnects.load();
         REQUIRE(client->send(header(type, len)));
         REQUIRE(rig.wait([&] { return rig.disconnects.load() == before + 1; }));
@@ -142,6 +179,7 @@ TEST_CASE("Unix IPC server closes a helper that sends an oversize or unknown bin
     }
     std::lock_guard lk(rig.mu);
     CHECK(rig.frames.empty());
+    CHECK(rig.evidence.empty());
 }
 
 TEST_CASE("Unix IPC server accepts screen frames only from the helper binary", "[ipc][linux]") {

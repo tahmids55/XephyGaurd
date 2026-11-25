@@ -69,6 +69,9 @@ struct Policy {
     int screen_webp_method = 1;
     /// `screen.cpu_budget_pct` (number 1..100, default 8): CPU budget of the screen capture/encode thread.
     double screen_cpu_budget_pct = 8.0;
+    /// `screen.auto_evidence` (bool, F123): the CCC may ask for one screenshot on a serious alert
+    /// (`evidence_snapshot`). Anything but `true` keeps it off.
+    bool screen_auto_evidence = false;
 
     static Policy default_for(Mode m);
     static Policy from_json(const json& j, std::string* err = nullptr);

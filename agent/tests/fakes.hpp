@@ -83,10 +83,16 @@ public:
 class FakeIpc : public IIpcServer {
 public:
     std::vector<std::string> broadcasts;
+    std::vector<std::pair<uint64_t, std::string>> sent;  // send() only: target connection + line
     std::mutex mu;
     bool start(const std::string&, std::function<void(const Peer&, const std::string&)>,
                std::function<void(const Peer&, bool)>) override { return true; }
-    bool send(uint64_t, const std::string& l) override { std::lock_guard lk(mu); broadcasts.push_back(l); return true; }
+    bool send(uint64_t c, const std::string& l) override {
+        std::lock_guard lk(mu);
+        broadcasts.push_back(l);
+        sent.emplace_back(c, l);
+        return true;
+    }
     void broadcast(const std::string& l) override { std::lock_guard lk(mu); broadcasts.push_back(l); }
     void stop() override {}
     size_t count_containing(const std::string& s) {

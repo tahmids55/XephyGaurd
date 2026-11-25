@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -76,6 +77,16 @@ public:
     void publish_view();
     void check_helpers();
     void set_helper_grace_for_tests(int64_t ms) { helper_grace_ms_ = ms; }
+    /// IPC thread (thread-safe): accepts one evidence JPEG record, only from the helper the core asked
+    /// (`evidence_snap`), and posts it to the core. Anything else is dropped. True if posted.
+    bool offer_evidence_record(const IIpcServer::Peer& peer, std::string&& jpeg);
+    /// Core thread: checks the helper's evidence JPEG against the pending request and hands it to the uplink.
+    void on_evidence_jpeg(const IIpcServer::Peer& peer, std::string&& jpeg);
+    /// Where checked evidence goes (default: the uplink). Tests capture it.
+    void set_evidence_out_for_tests(std::function<void(EvidenceUpload)> f) { evidence_out_ = std::move(f); }
+
+    static constexpr int64_t kEvidenceGapMs = 30000;    // at most one auto screenshot per 30 s (DECISIONS #32)
+    static constexpr int64_t kEvidenceReplyMs = 10000;  // the helper must answer within this
 
 private:
     void dispatch(AgentMessage& m);
@@ -93,6 +104,9 @@ private:
     void maybe_start_artifact_scan(int64_t now_steady);
     void command_result(const std::string& id, const std::string& status, const json& detail);
     void wake_uplink() { uplink_->wake(); }
+    /// The connection of the active session's helper that can take an evidence screenshot, or 0.
+    uint64_t evidence_helper() const;
+    void cancel_evidence(const char* why);
 
     // periodic tasks
     void run_periodic(int64_t now_steady);
@@ -190,6 +204,13 @@ private:
     std::map<std::string, int64_t> next_run_;
     // Steady-clock deadline of the CCC's process lease (Programs tab open): process_snapshot every 2 s until then.
     int64_t proc_lease_until_ = 0;
+    // Auto evidence (F123): helpers whose screen_caps say `evidence`, the one request in flight, the last request.
+    std::set<uint64_t> evidence_helpers_;
+    struct PendingEvidence { std::string cmd_id, nonce; int64_t alert_id = 0; uint64_t conn = 0; int64_t deadline = 0; };
+    std::optional<PendingEvidence> evidence_pending_;
+    int64_t last_evidence_req_ = 0;  // steady_ms() of the last request sent to a helper; 0 = never
+    std::atomic<uint64_t> evidence_wait_conn_{0};  // read by the IPC thread: the one conn allowed to send a JPEG
+    std::function<void(EvidenceUpload)> evidence_out_;
     bool reevaluate_ = false;
 };
 

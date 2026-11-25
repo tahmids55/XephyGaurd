@@ -177,6 +177,30 @@ TEST_CASE("protocol batch and command validation") {
     CHECK(protocol::parse_command({{"id", "c5"}, {"type", "process_lease"}, {"args", {{"ttl_s", 20}}}}));
 }
 
+TEST_CASE("evidence_snapshot command needs an alert id and a 32 lowercase hex nonce (F123)") {
+    const std::string nonce(32, 'a');
+    auto cmd = [](json args) { return protocol::parse_command({{"id", "e1"}, {"type", "evidence_snapshot"}, {"args", args}}); };
+    CHECK(cmd({{"alert_id", 9}, {"nonce", "0123456789abcdef0123456789abcdef"}}));
+    CHECK_FALSE(cmd({{"nonce", nonce}}));
+    CHECK_FALSE(cmd({{"alert_id", 0}, {"nonce", nonce}}));
+    CHECK_FALSE(cmd({{"alert_id", "9"}, {"nonce", nonce}}));
+    CHECK_FALSE(cmd({{"alert_id", 9}}));
+    CHECK_FALSE(cmd({{"alert_id", 9}, {"nonce", std::string(32, 'A')}}));        // uppercase
+    CHECK_FALSE(cmd({{"alert_id", 9}, {"nonce", std::string(31, 'a')}}));
+    CHECK_FALSE(cmd({{"alert_id", 9}, {"nonce", nonce.substr(0, 31) + "&"}}));  // never reaches the URL
+    CHECK(protocol::evidence_upload_path(nonce, false) == "/api/agent/v1/evidence?nonce=" + nonce);
+    CHECK(protocol::evidence_upload_path(nonce, true) == "/api/agent/v1/evidence?nonce=" + nonce + "&masked=1");
+}
+
+TEST_CASE("policy screen.auto_evidence is on only for a literal true (F123)") {
+    CHECK_FALSE(Policy::from_json({{"mode", "test"}}).screen_auto_evidence);
+    CHECK(Policy::from_json({{"mode", "test"}, {"screen", {{"auto_evidence", true}}}}).screen_auto_evidence);
+    CHECK_FALSE(Policy::from_json({{"mode", "test"}, {"screen", {{"auto_evidence", "true"}}}}).screen_auto_evidence);
+    CHECK_FALSE(Policy::from_json({{"mode", "test"}, {"screen", {{"auto_evidence", 1}}}}).screen_auto_evidence);
+    const auto p = Policy::from_json({{"mode", "test"}, {"screen", {{"auto_evidence", true}}}});
+    CHECK(Policy::from_json(p.to_json()).screen_auto_evidence);
+}
+
 TEST_CASE("server JSON with wrong types never throws (I-AGENT-13)") {
     // Ack fields of the wrong type fall back to defaults instead of throwing json::type_error.
     std::optional<protocol::BatchAck> ack;

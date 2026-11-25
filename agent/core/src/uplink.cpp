@@ -34,6 +34,31 @@ void Uplink::wake() {
     wake_cv_.notify_all();
 }
 
+void Uplink::queue_evidence(EvidenceUpload u) {
+    {
+        std::lock_guard lk(evidence_mu_);
+        evidence_ = std::move(u);
+    }
+    wake();
+}
+
+void Uplink::send_evidence(const UplinkView& v) {
+    std::optional<EvidenceUpload> u;
+    {
+        std::lock_guard lk(evidence_mu_);
+        u.swap(evidence_);
+    }
+    if (!u || !protocol::valid_evidence_nonce(u->nonce)) return;
+    auto r = api(v).request("POST", protocol::evidence_upload_path(u->nonce, u->masked), u->masked ? "" : u->jpeg,
+                            {{"Content-Type", u->masked ? "application/octet-stream" : "image/jpeg"}});
+    if (r.ok()) {
+        status_.bytes_up += u->jpeg.size();
+        log::info("evidence: {} uploaded", u->masked ? "masked notice" : "screenshot");
+    } else {
+        log::warn("evidence: upload failed ({} {})", r.status, r.error);
+    }
+}
+
 net::HttpsClient& Uplink::api(const UplinkView& v) {
     const std::string key = v.ccc_host + ":" + std::to_string(v.api_port) + ":" + v.token;
     if (!api_ || key != api_key_) {
@@ -126,6 +151,7 @@ void Uplink::run(const std::atomic<bool>& stop) {
                     last_policy_fetch_ = now;
                     if (fetch_policy(*v)) policy_dirty_ = false;
                 }
+                send_evidence(*v);  // first: the nonce expires 60 s after the alert
                 const bool ok = flush_once();
                 if (ok != status_.online.load())
                     log::info("uplink: CCC {}", ok ? "reachable" : "unreachable (buffering locally)");
