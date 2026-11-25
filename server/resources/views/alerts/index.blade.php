@@ -61,14 +61,28 @@
     <template x-for="s in sources" :key="s.key"><button class="pill" :aria-pressed="src === s.key ? 'true' : 'false'" @click="src = s.key"><svg class="i i-sm" aria-hidden="true"><use :href="'#' + s.icon"/></svg> <span x-text="s.label"></span> <span class="n" x-text="s.n"></span></button></template>
   </div>
 
+  <div class="selbar" x-show="rows.some(r => !r.acked)" role="group" aria-label="Selected alerts">
+    <label class="check small"><input type="checkbox" :checked="allPicked()" :indeterminate="picked.length && !allPicked()" @change="pickAll($event.target.checked)"> Select all shown</label>
+    <template x-if="picked.length">
+      <span class="row" style="--gap:8px;flex:1">
+        <span class="small"><b x-text="picked.length"></b> selected</span>
+        <input class="input input-sm" style="width:240px" placeholder="Note (optional)" x-model="pickNote" aria-label="Note for selected alerts">
+        <button class="btn btn-sm btn-solid" :disabled="busy" @click="ackPicked()" x-text="'Mark ' + picked.length + ' as reviewed'"></button>
+        <button class="btn btn-sm btn-quiet" @click="picked = []">Clear</button>
+      </span>
+    </template>
+  </div>
   <template x-for="r in rows" :key="r.key">
     <div class="msg" :class="{ unread: !r.acked }">
+      <div class="msg-head">
+      <label class="msg-pick" :title="r.acked ? 'Already reviewed' : 'Select'"><input type="checkbox" :disabled="r.acked" :checked="isPicked(r)" @change="pick(r, $event.target.checked)" :aria-label="'Select ' + r.title + ' on ' + r.pc"></label>
       <button class="msg-row" @click="openKey = openKey === r.key ? null : r.key" :aria-expanded="openKey === r.key">
         <span class="sev" :class="r.sev" x-text="r.sev"></span>
         <span><span class="t"><span x-text="r.title"></span> <span class="count" x-show="r.count > 1" x-text="'×' + r.count"></span></span><span class="m" x-text="alertExplain(r)"></span><span class="m"><b x-text="r.pc"></b><span class="chip plain" x-show="r.pcRetired" style="margin-left:6px">retired</span> · <span x-text="r.user"></span> · <span class="chip plain"><svg class="i i-sm" aria-hidden="true"><use :href="'#' + alertSrc(r).icon"/></svg><span x-text="alertSrc(r).label"></span></span></span></span>
         <span class="when" x-text="xgAgo(r.ago)"></span>
         <span><span class="chip alert" x-show="!r.acked">Needs review</span><span class="small muted" x-show="r.acked">Reviewed</span></span>
       </button>
+      </div>
       <div x-show="openKey === r.key" x-cloak>
         <template x-if="r.count > 1"><div><template x-for="i in r.items" :key="i.id"><div class="msg-sub" style="grid-template-columns:96px minmax(0,1fr) 120px auto"><span class="mono muted" x-text="i.at"></span><span x-text="i.title"></span><span class="muted" x-text="xgAgo(i.ago)"></span><button class="link-btn small" @click="openAlert(i)">Details</button></div></template></div></template>
         <div class="msg-detail" style="padding-left:20px">

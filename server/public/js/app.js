@@ -1454,6 +1454,9 @@ document.addEventListener('alpine:init', () => {
       q: '',
       openKey: null,
       notes: {},
+      picked: [],
+      pickNote: '',
+      busy: false,
       byName: d.byName || window.XG_USER_NAME || 'Staff',
       openTotal: Number(d.openTotal ?? 0),
       total: Number(d.total ?? 0),
@@ -1526,9 +1529,54 @@ document.addEventListener('alpine:init', () => {
           this.openTotal = Math.max(0, this.openTotal - pending.length);
           window.xgAdjustAlertBadge(-pending.length);
           this.openKey = null;
+          this.picked = this.picked.filter(id => !pending.some(p => p.id === id));
           Alpine.store('toasts').add(r.pc + ': marked as reviewed.', 'ok');
         } catch (e) {
           Alpine.store('toasts').add(e.message || 'Could not mark reviewed.', 'alert');
+        }
+      },
+      /* A filter change clears the selection, so hidden alerts are never marked by accident. */
+      init() {
+        this.$watch('q', () => { this.picked = []; });
+        this.$watch('src', () => { this.picked = []; });
+        this.$watch('sev', () => { this.picked = []; });
+      },
+      /* Selection: ids of unreviewed alerts; a grouped row selects all of its unreviewed items. */
+      openIds(r) {
+        return (r.items || []).filter(i => !i.acked && i.id).map(i => i.id);
+      },
+      isPicked(r) {
+        const ids = this.openIds(r);
+        return ids.length > 0 && ids.every(id => this.picked.includes(id));
+      },
+      pick(r, on) {
+        const ids = this.openIds(r);
+        this.picked = on ? [...new Set([...this.picked, ...ids])] : this.picked.filter(id => !ids.includes(id));
+      },
+      allPicked() {
+        const ids = this.rows.flatMap(r => this.openIds(r));
+        return ids.length > 0 && ids.every(id => this.picked.includes(id));
+      },
+      pickAll(on) {
+        this.picked = on ? [...new Set(this.rows.flatMap(r => this.openIds(r)))] : [];
+      },
+      async ackPicked() {
+        const items = this.all.filter(a => this.picked.includes(a.id) && !a.acked);
+        if (!items.length || this.busy) { this.picked = []; return; }
+        const note = (this.pickNote || '').trim() || 'Reviewed.';
+        this.busy = true;
+        try {
+          await window.xgAckItems(items, note);
+          items.forEach(a => { a.acked = true; a.by = this.byName; a.note = note; });
+          this.openTotal = Math.max(0, this.openTotal - items.length);
+          window.xgAdjustAlertBadge(-items.length);
+          this.picked = [];
+          this.pickNote = '';
+          Alpine.store('toasts').add(items.length + (items.length === 1 ? ' alert' : ' alerts') + ' marked as reviewed.', 'ok');
+        } catch (e) {
+          Alpine.store('toasts').add(e.message || 'Could not mark reviewed.', 'alert');
+        } finally {
+          this.busy = false;
         }
       },
       /* Alert details popup (xgAlertDetails mixin): mark one alert reviewed, using any note typed for it. */

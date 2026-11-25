@@ -456,7 +456,9 @@ on `private-pc.<id>` (`S/Events/AgentCommand.php`) and acknowledged in the next 
 - **Test:** 1. Open `/alerts`. 2. Filter "open": only unacknowledged alerts.
 
 ### F41. Acknowledge alerts (single and batch)
-- **What:** staff mark alerts reviewed, with a comment; the seat turns green again.
+- **What:** staff mark alerts reviewed, with a comment; the seat turns green again. On `/alerts`, checkboxes
+  select unreviewed rows (a grouped row selects all its items; "Select all shown"; a filter change clears the
+  selection) and "Mark N as reviewed" sends them in one batch with an optional note.
 - **Trigger:** `POST /alerts/{alert}/ack`, `POST /alerts/ack-batch` (up to 500 IDs).
 - **Code:** `AlertController::acknowledge`, `acknowledgeBatch`.
 - **Status:** working (`acknowledging_all_alerts_turns_seat_green_and_resets_live_score`).

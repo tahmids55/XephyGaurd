@@ -160,6 +160,8 @@ class UiRegressionTest extends TestCase
         $data = json_decode(html_entity_decode($m[1] ?? '{}'), true);
         $this->assertSame('network', $data['items'][0]['cat'] ?? null);
         $res->assertSee('aria-label="Alert details"', false)->assertSee('openAlert(xgNewest(r.items))', false);
+        $res->assertSee('aria-label="Selected alerts"', false)->assertSee('@click="ackPicked()"', false)
+            ->assertSee('pick(r, $event.target.checked)', false);
 
         $this->actingAs($admin)->get('/')->assertOk()
             ->assertSee('aria-label="Alert details"', false)->assertSee('openAlert(xgNewest(g.items))', false)
