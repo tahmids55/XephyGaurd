@@ -974,6 +974,7 @@ document.addEventListener('alpine:init', () => {
       return [['overview', 'Overview', 'info', ''], ['screen', 'Screen', 'monitor', ''], ['timeline', 'Timeline', 'clock', ''], ['alerts', 'Alerts', 'bell', this.pcAlerts.length || ''],
         ['programs', 'Programs', 'terminal', d.processes.length], ['browser', 'Browser', 'globe', d.aiTraffic.length || ''],
         ['installed', 'Installed AI', 'shield', (d.extensions.length + d.artifacts.length) || ''], ['network', 'Network', 'wifi', ''],
+        ['dns', 'DNS log', 'list', (d.netEvents && d.netEvents.length) || ''], ['usb', 'USB', 'layers', d.devices.length || ''],
         ['typing', 'Typing', 'keyboard', ''], ['pastes', 'Pastes', 'clipboard', d.pastes.length || '']];
     },
     pct(n) { return Math.max(0, n / Math.max(1, this.total) * 100); },

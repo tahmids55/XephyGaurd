@@ -406,12 +406,13 @@
           <div style="padding:16px 20px 8px" class="h3">Listening ports</div>
           <table class="tbl" x-show="det && det.ports.length"><tbody><template x-for="(p, idx) in (det ? det.ports : [])" :key="idx + '-' + p.port"><tr><td class="mono" x-text="p.port + '/' + p.proto"></td><td x-text="p.proc"></td><td class="right nw"><span class="chip alert" style="margin-right:6px">Local AI port</span><button class="btn btn-sm" @click="promptCloseProgram(p.exe || p.proc, p.pid || null)">End task</button></td></tr></template></tbody></table>
           <div class="empty-state" x-show="det && !det.ports.length" style="padding:16px"><b>Nothing unusual</b></div>
-          <div style="padding:16px 20px 8px" class="h3">USB devices</div>
-          <table class="tbl" x-show="det && det.devices.length"><tbody><template x-for="(d, idx) in (det ? det.devices : [])" :key="idx + '-' + d.vidpid"><tr><td class="mono small" x-text="d.vidpid"></td><td x-text="d.name"></td><td class="num muted" x-text="d.time"></td></tr></template></tbody></table>
-          <div class="empty-state" x-show="det && !det.devices.length" style="padding:16px"><b>None attached</b></div>
+        </section>
+
+        <section x-show="tab === 'dns'" x-cloak style="padding:0">
+          <div style="padding:16px 20px 8px" class="h3">Gateway DNS &amp; proxy log</div>
+          <div class="empty-state" x-show="!(det && det.netEvents && det.netEvents.length)" style="padding:16px"><b>No entries</b></div>
           <template x-if="det && det.netEvents && det.netEvents.length">
             <div>
-              <div style="padding:16px 20px 8px" class="h3">Gateway DNS &amp; proxy log</div>
               <table class="tbl"><thead><tr><th>Time</th><th>Host</th><th>Layer</th><th>Category</th><th class="right">Action</th></tr></thead><tbody>
                 <template x-for="(n, idx) in det.netEvents" :key="idx">
                   <tr>
@@ -425,6 +426,12 @@
               </tbody></table>
             </div>
           </template>
+        </section>
+
+        <section x-show="tab === 'usb'" x-cloak style="padding:0">
+          <div style="padding:16px 20px 8px" class="h3">USB devices</div>
+          <table class="tbl" x-show="det && det.devices.length"><tbody><template x-for="(d, idx) in (det ? det.devices : [])" :key="idx + '-' + d.vidpid"><tr><td class="mono small" x-text="d.vidpid"></td><td x-text="d.name"></td><td class="num muted" x-text="d.time"></td></tr></template></tbody></table>
+          <div class="empty-state" x-show="det && !det.devices.length" style="padding:16px"><b>None attached</b></div>
         </section>
 
         <section x-show="tab === 'typing'" x-cloak>

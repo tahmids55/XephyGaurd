@@ -283,8 +283,8 @@ Paths are relative to the repo root. `S/` = `server/app/`, `A/` = `agent/`.
   `dashboard_reconciles_stale_live_score_when_no_open_alerts_exist`, `alerts_page_and_needs_attention_carry_category_and_details_popup`).
 - **Test:** 1. Open `/` with one PC online. 2. Stop the agent: the seat goes offline within ~15 s.
 
-### F24. PC inspector (10 tabs, popup)
-- **What:** centered popup opened by clicking a seat; per-PC detail: overview (props + counts), processes, extensions/installed AI, network/ports/adapters, USB devices,
+### F24. PC inspector (12 tabs, popup)
+- **What:** centered popup opened by clicking a seat; per-PC detail: overview (props + counts), processes, extensions/installed AI, network (adapters + ports), DNS log (gateway DNS & proxy log), USB devices (each its own tab),
   copy/paste, browser tabs, events timeline, screen, alerts. Opening the popup on an online X11 PC starts Live
   (audited; the student sees the viewing indicator) so Overview and Screen show the live screen first; a PC without
   live capability gets one snapshot. Live runs on Overview and Screen, stops on other tabs or when the popup closes, and resumes on
