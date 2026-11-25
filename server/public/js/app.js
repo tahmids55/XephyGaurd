@@ -597,8 +597,8 @@ document.addEventListener('alpine:init', () => {
       });
       this.$watch('tab', t => {
         this.$nextTick(() => { this.paintLive(); this.paintOverview(); });
-        if (t !== 'screen' && this.screenStreaming) {
-          // Keep the last frame so Overview still shows the screen after Live stops.
+        if (t !== 'screen' && t !== 'overview' && this.screenStreaming) {
+          // Live keeps running on Overview (it mirrors the Screen canvas); other tabs stop it but keep the last frame.
           const had = this.screenHasFrame;
           this.stopScreen(had);
           if (had) { this.screenMode = 'snapshot'; this.snapAt = new Date().toTimeString().slice(0, 8); }
@@ -903,8 +903,12 @@ document.addEventListener('alpine:init', () => {
       if (this.editing) return;
       if (this.inspector && this.activePcId !== id) this.stopScreen();
       this.activePcId = id; this.tab = tab || 'overview'; this.screenMode = 'snapshot'; this.monitor = 0; this.inspector = true; this.fetchDetail(id);
-      // Opening a PC is the staff request: take one snapshot (audited like any view) so the screen shows first.
-      this.$nextTick(() => { if (this.inspector && this.activePcId === id && this.screenOk && !this.screenStreaming && !this.screenHasFrame) this.snapshot(); });
+      // Opening a PC is the staff request: start Live (audited, student sees the indicator) so the screen shows first;
+      // a PC without live capability gets one snapshot instead.
+      this.$nextTick(() => {
+        if (!this.inspector || this.activePcId !== id || !this.screenOk || this.screenStreaming || this.screenHasFrame) return;
+        if (this.active.caps && this.active.caps.live) this.goLive(); else this.snapshot();
+      });
     },
     closeInspector() { this.stopScreen(); this.inspector = false; },
     clear() { this.stopScreen(); this.inspector = false; this.messageModal = false; this.closeModal = false; },
