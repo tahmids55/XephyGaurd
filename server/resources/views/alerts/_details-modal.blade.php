@@ -1,6 +1,6 @@
 {{-- Alert details popup. Needs the xgAlertDetails() mixin (public/js/app.js) in the enclosing x-data. --}}
   <div class="overlay" x-show="alertModal" x-cloak x-transition.opacity @click.self="alertModal = false">
-    <div class="modal" role="dialog" aria-label="Alert details" style="width:min(680px,100%);max-height:calc(100vh - 32px);display:flex;flex-direction:column">
+    <div class="modal" role="dialog" aria-label="Alert details" style="width:min(680px,100%);min-width:min(360px,100%);max-width:calc(100vw - 32px);min-height:240px;max-height:calc(100vh - 32px);display:flex;flex-direction:column;resize:both">
       <div class="modal-head" style="flex:none"><span class="h2">Alert details</span><button class="xbtn" @click="alertModal = false" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
       <div class="modal-body stack" style="flex:1 1 auto;min-height:0;overflow:auto;padding-bottom:12px">
         <template x-if="alertDet"><div class="stack">
