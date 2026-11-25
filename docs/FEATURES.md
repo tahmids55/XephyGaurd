@@ -30,7 +30,7 @@ Paths are relative to the repo root. `S/` = `server/app/`, `A/` = `agent/`.
 5. [Sessions, profiles and timetable](#5-sessions-profiles-and-timetable) — F27–F33
 6. [Commands to PCs](#6-commands-to-pcs) — F34–F38
 7. [Alerts and review](#7-alerts-and-review) — F39–F42
-8. [Screen viewing and evidence](#8-screen-viewing-and-evidence) — F43–F47
+8. [Screen viewing and evidence](#8-screen-viewing-and-evidence) — F43–F47, F123
 9. [Scoring, reports and research](#9-scoring-reports-and-research) — F48–F53
 10. [Roster and consent](#10-roster-and-consent) — F54–F57
 11. [Signatures and blocklists](#11-signatures-and-blocklists) — F58–F63
@@ -531,6 +531,17 @@ on `private-pc.<id>` (`S/Events/AgentCommand.php`) and acknowledged in the next 
   and `xgbench`.
 - **Status:** retired. Screen streaming is only through the helper-embedded streamer (F43).
 - **Test:** none; nothing to test.
+
+### F123. Auto evidence snapshot on alert ⚠PRIV ⚠SEC
+- **What:** when an alert is raised the CCC keeps evidence at once: a context snapshot (always) and, if the policy
+  turns it on, one screenshot taken by the PC itself (DECISIONS #32, docs/plan/evidence.md).
+- **Trigger:** any `Alert` created (EventIngestor, NetEventsController, SessionManager). Screenshot only with policy
+  `evidence.auto_screenshot` (default off) and severity ≥ `evidence.min_severity` (default `high`), at most 1 per PC per 30 s.
+- **Code:** planned (docs/plan/evidence.md Steps 2–8).
+- **In/out/side effects:** `alert_snapshots` row (copies of data the CCC already holds + sha256); screenshot as an
+  `evidence_captures` row with `alert_id`, `source = auto`, stored like F46; audit on save and every view.
+- **Status:** not built yet.
+- **Test:** 1. Turn on `evidence.auto_screenshot`. 2. Trigger a high alert on a PC. 3. The alert shows context and a screenshot.
 
 ---
 
