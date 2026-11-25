@@ -136,6 +136,20 @@ code,pre,.mono{font-family:var(--f-mono);font-size:.92em}
 .tool .n{position:absolute;right:1px;top:1px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--alert);color:#fff;font:600 10px/16px var(--f-ui);text-align:center}
 .tool-sep{width:20px;height:1px;margin:6px 0;background:var(--border)}
 .rail .grow{flex:1}
+/* expandable rail: html[data-rail="wide"] set by theme.js before paint */
+.body{transition:grid-template-columns .18s ease}
+.tool .lbl{display:none}
+.rail-toggle{border:0;background:none;cursor:pointer;margin-top:4px}
+.rail-toggle .i{transition:transform .18s ease}
+html[data-rail="wide"] .body:not(.no-rail){grid-template-columns:200px minmax(0,1fr)}
+html[data-rail="wide"] .rail{align-items:stretch;padding:10px 8px;overflow-y:auto}
+html[data-rail="wide"] .tool{display:flex;align-items:center;justify-content:flex-start;gap:10px;width:auto;padding:0 10px;font-size:13px}
+html[data-rail="wide"] .tool .lbl{display:block;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+html[data-rail="wide"] .tool .n{position:static;order:3}
+html[data-rail="wide"] .tool-sep{width:auto;margin:6px 4px}
+html[data-rail="wide"] .rail [data-tip]:hover::after{display:none}
+html[data-rail="wide"] .rail-toggle .i{transform:rotate(180deg)}
+@media (prefers-reduced-motion:reduce){.body,.rail-toggle .i{transition:none}}
 [data-tip]:hover::after{content:attr(data-tip);position:absolute;left:calc(100% + 10px);top:50%;transform:translateY(-50%);z-index:100;padding:4px 9px;border-radius:6px;background:var(--text);color:var(--bg);font-size:12px;font-weight:500;white-space:nowrap;pointer-events:none}
 
 /* page bar */

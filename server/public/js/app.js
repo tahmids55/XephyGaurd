@@ -466,6 +466,21 @@ document.addEventListener('alpine:init', () => {
   });
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (Alpine.store('theme').mode === 'system') apply('system'); });
 
+  /* ---------- Sidebar (rail) expand / collapse ---------- */
+  Alpine.store('rail', {
+    wide: document.documentElement.dataset.rail === 'wide',
+    toggle() {
+      this.wide = !this.wide;
+      document.documentElement.dataset.rail = this.wide ? 'wide' : 'narrow';
+      try { localStorage.setItem('xg-rail', this.wide ? 'wide' : 'narrow'); } catch (e) {}
+    }
+  });
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'b' && !e.target.closest('input,textarea,select,[contenteditable]')) {
+      e.preventDefault(); Alpine.store('rail').toggle();
+    }
+  });
+
   /* ---------- Toasts & copy ---------- */
   Alpine.store('toasts', {
     items: [],
