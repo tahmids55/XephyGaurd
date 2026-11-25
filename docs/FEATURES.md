@@ -287,7 +287,8 @@ Paths are relative to the repo root. `S/` = `server/app/`, `A/` = `agent/`.
   (audited; the student sees the viewing indicator) so Overview and Screen show the live screen first; a PC without
   live capability gets one snapshot. Live runs on Overview and Screen, stops on other tabs or when the popup closes, and resumes on
   return to Overview or Screen.
-  Programs tab: search box (name, title, rule) and click-to-sort on Program, CPU, Memory, Network (client-side).
+  Programs tab: search box (name, title, rule) and click-to-sort on Program, CPU, Memory, Network (client-side);
+  while open it re-reads `GET /pcs/{pc}` every 3 s, so the list follows the agent's latest process_snapshot.
 - **Trigger:** `GET /pcs/{pc}` (JSON for the popup). Assistant and up.
 - **Code:** `DashboardController::pc` (also marks some data as seen).
 - **Status:** working (`copy_from_chrome_and_paste_in_vscode_updates_dashboard`,

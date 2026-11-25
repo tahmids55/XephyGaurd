@@ -578,6 +578,10 @@ document.addEventListener('alpine:init', () => {
           xgDraw(this.$refs.live, this.active, this.screenMode === 'live' ? performance.now() : this.snapT, this.monitor);
         }
       }, 110);
+      // Programs tab acts like a task manager: re-read the PC every 3 s while it is visible.
+      this._progTimer = setInterval(() => {
+        if (!document.hidden && this.inspector && this.tab === 'programs' && this.activePcId) this.fetchDetail(this.activePcId);
+      }, 3000);
       this.$watch('view', v => {
         if (v === 'wall' && !this.inspector) this.$nextTick(() => this.syncWallStreams());
         else this.stopWallStreams();
@@ -717,7 +721,7 @@ document.addEventListener('alpine:init', () => {
             ? d.timeline.map(e => ({ time: e.at, sev: e.type === 'rule_hit' || e.type === 'tamper' ? 'high' : 'info', label: e.summary }))
             : base.events,
           processes: (d.running_processes && d.running_processes.length)
-            ? d.running_processes.map(p => ({ pid: p.pid || 0, start: p.start || 0, name: p.exe || p.name || 'process', title: p.title || p.cmdline || '', cpu: Number(p.cpu || 0), mem: Math.round(Number(p.rss_mb || p.mem || 0)), net: Number(p.net_mbps || 0), threat: p.rule_id || '' }))
+            ? d.running_processes.map(p => ({ pid: p.pid || 0, start: p.start || 0, name: p.exe || p.name || 'process', title: p.title || p.cmdline || '', cpu: Number(p.cpu_pct ?? p.cpu ?? 0), mem: Math.round(Number(p.rss_mb || p.mem || 0)), net: Number(p.net_kbps ?? (Number(p.net_mbps || 0) * 125)), threat: p.rule_id || '' }))
             : ((d.processes && d.processes.length)
               ? d.processes.map(p => ({ pid: p.pid || 0, name: p.exe || 'process', title: p.type || '', cpu: 0, mem: 0, net: 0, threat: p.rule || '' }))
               : base.processes),
@@ -798,6 +802,7 @@ document.addEventListener('alpine:init', () => {
       if (this.progSort === k) this.progDir = -this.progDir;
       else { this.progSort = k; this.progDir = k === 'name' ? 1 : -1; }
     },
+    fmtNet(kb) { return kb >= 1000 ? (kb / 1000).toFixed(1) + ' MB/s' : kb.toFixed(1) + ' KB/s'; },
     progArrow(k) { return this.progSort === k ? (this.progDir > 0 ? ' ▲' : ' ▼') : ''; },
     get pcAlerts() { return this.alerts.filter(a => a.pcId === this.activePcId); },
     get tabs() {
