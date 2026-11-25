@@ -84,6 +84,8 @@ Route::group([], function () {
             Route::post('/sessions/{session}/pcs/{pc}/override', [SessionController::class, 'override'])->name('sessions.override');
             Route::get('/profiles', [ProfileController::class, 'index'])->name('profiles.index');
             Route::get('/profiles.html', [ProfileController::class, 'index'])->name('profiles.html');
+            Route::get('/timetable', [ProfileController::class, 'timetable'])->name('timetable.index');
+            Route::get('/timetable.html', [ProfileController::class, 'timetable'])->name('timetable.html');
             Route::post('/timetable', [ProfileController::class, 'saveEntry'])->name('timetable.store');
             Route::post('/timetable/{entry}/toggle', [ProfileController::class, 'toggleEntry'])->name('timetable.toggle');
             Route::delete('/timetable/{entry}', [ProfileController::class, 'deleteEntry'])->name('timetable.delete');

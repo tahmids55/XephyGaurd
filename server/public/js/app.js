@@ -508,7 +508,8 @@ document.addEventListener('alpine:init', () => {
       ];
       if (canInstructor) {
         nav.push(
-          { g: 'Go to', t: 'Timetable and profiles', icon: 'calendar', href: '/profiles', k: 'Alt+4' },
+          { g: 'Go to', t: 'Timetable', icon: 'calendar', href: '/timetable', k: 'Alt+4' },
+          { g: 'Go to', t: 'Profiles', icon: 'layers', href: '/profiles', k: 'Alt+0' },
           { g: 'Go to', t: 'Roster', icon: 'users', href: '/roster', k: 'Alt+5' }
         );
       }
@@ -1375,11 +1376,12 @@ document.addEventListener('alpine:init', () => {
     };
   });
 
-  /* ---------- Timetable & Profiles page ---------- */
+  /* ---------- Timetable and Profiles pages (one component, two routes) ---------- */
   Alpine.data('profilesPage', () => {
     const d = window.xgJson('xg-page-data', {}) || {};
+    // old links to /profiles#timetable now go to the separate Timetable page
+    if (location.hash === '#timetable' && /^\/profiles/.test(location.pathname)) location.replace('/timetable');
     return {
-      tab: location.hash === '#timetable' ? 'timetable' : 'profiles',
       cur: 0, hr: 44, start: 8, end: 18,
       days: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
       addOpen: false,
@@ -1743,7 +1745,7 @@ document.addEventListener('alpine:initialized', () => {
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); window.dispatchEvent(new CustomEvent('xg-palette')); return; }
   if (!e.altKey || e.ctrlKey || e.metaKey) return;
-  const map = { 1: '/', 2: '/alerts', 3: '/sessions', 4: '/profiles', 5: '/roster', 6: '/signatures', 7: '/reports', 8: '/enroll', 9: '/admin/health' };
+  const map = { 1: '/', 2: '/alerts', 3: '/sessions', 4: '/timetable', 0: '/profiles', 5: '/roster', 6: '/signatures', 7: '/reports', 8: '/enroll', 9: '/admin/health' };
   const code = e.code && e.code.startsWith('Digit') ? e.code.slice(5) : e.key;
   if (map[code]) { e.preventDefault(); location.href = map[code]; }
 });

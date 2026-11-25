@@ -351,7 +351,7 @@ Paths are relative to the repo root. `S/` = `server/app/`, `A/` = `agent/`.
 
 ### F31. Timetable
 - **What:** sessions start and stop on a weekly schedule.
-- **Trigger:** `POST /timetable`, `POST /timetable/{entry}/toggle`, `DELETE /timetable/{entry}`
+- **Trigger:** page `GET /timetable` (+ `.html`, own sidebar entry, Alt+4; Profiles is Alt+0); `POST /timetable`, `POST /timetable/{entry}/toggle`, `DELETE /timetable/{entry}`
   (instructor and up); cron F107.
 - **Code:** `ProfileController` (`saveEntry`, `toggleEntry`, `deleteEntry`), `SessionManager::timetableTick`.
 - **In/out/side effects:** writes `timetable_entries`; starts/stops `lab_sessions`.
