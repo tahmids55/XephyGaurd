@@ -142,7 +142,7 @@ std::optional<std::string> generate_key_and_csr(const std::string& key_path, con
     ::fchmod(fd, 0600);
     ::close(fd);
 #else
-    if (!write_file_atomic(key_path, kpem)) { if (err) *err = "cannot write key file"; return std::nullopt; }
+    if (!write_file_atomic(key_path, kpem, FileMode::secret)) { if (err) *err = "cannot write key file"; return std::nullopt; }
 #endif
     ReqPtr req(X509_REQ_new());
     X509_REQ_set_version(req.get(), 0);

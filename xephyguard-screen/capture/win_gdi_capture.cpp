@@ -1,5 +1,6 @@
 #if defined(_WIN32)
 #include "win_gdi_capture.h"
+#include <algorithm>
 #include <cstring>
 
 namespace xg {
@@ -65,6 +66,13 @@ CaptureStatus WinGdiCapture::capture(Frame& out) {
     return CaptureStatus::Lost;
   }
 
+  // 5 fps cap: too early => NoChange, and the capture loop's wait_for_change() sleeps until the next slot.
+  const auto now = std::chrono::steady_clock::now();
+  if (!full_pending_ && now < last_capture_ + std::chrono::milliseconds(1000 / kMaxFps)) {
+    return CaptureStatus::NoChange;
+  }
+  full_pending_ = false;
+  last_capture_ = now;
   BOOL ok = BitBlt(hdc_mem_, 0, 0, width_, height_,
                    hdc_screen_, 0, 0, SRCCOPY | CAPTUREBLT);
   if (!ok) {
@@ -88,6 +96,24 @@ CaptureStatus WinGdiCapture::capture(Frame& out) {
   out.secure_desktop = false;
 
   return CaptureStatus::Ok;
+}
+
+bool WinGdiCapture::wait_for_change(int timeout_ms) {
+  const auto due = last_capture_ + std::chrono::milliseconds(1000 / kMaxFps);
+  const auto limit = std::chrono::steady_clock::now() + std::chrono::milliseconds(std::max(timeout_ms, 0));
+  std::unique_lock<std::mutex> lock(wait_mu_);
+  wait_cv_.wait_until(lock, std::min(due, limit), [&] { return interrupted_; });
+  const bool woke = interrupted_;
+  interrupted_ = false;
+  return woke || std::chrono::steady_clock::now() >= due;
+}
+
+void WinGdiCapture::interrupt_wait() {
+  {
+    std::lock_guard<std::mutex> lock(wait_mu_);
+    interrupted_ = true;
+  }
+  wait_cv_.notify_all();
 }
 
 void WinGdiCapture::stop() {
@@ -115,6 +141,14 @@ void WinGdiCapture::cleanup() {
   bits_ = nullptr;
   width_ = 0;
   height_ = 0;
+}
+
+bool WinGdiCapture::cursor_position(int& x, int& y) {
+  POINT pt;
+  if (!GetCursorPos(&pt)) return false;
+  x = std::max(0, std::min(static_cast<int>(pt.x), width_ - 1));
+  y = std::max(0, std::min(static_cast<int>(pt.y), height_ - 1));
+  return true;
 }
 
 }  // namespace xg

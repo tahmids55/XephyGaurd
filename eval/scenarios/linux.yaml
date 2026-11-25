@@ -5,6 +5,9 @@
 #   detected  - the CCC recorded an alert / blocked network event matching `expect`
 #   missed    - neither
 # `cleanup` always runs. Commands use only stock tools so they work on a fresh lab image.
+# `@CCC@` in a command is replaced by `redteam.py run --ccc HOST` (skipped without it). `expect: { blocked_only: true }`
+# marks an attack that raises no CCC alert by design: the outcome is blocked or missed from `blocked_if` alone.
+# The curl calls below are the attacker's tools (-k: an attacker does not verify the server), not XephyGuard code.
 version: 1
 platform: linux
 scenarios:
@@ -230,3 +233,163 @@ scenarios:
       net.tether_usb (USB) or net.wifi_new + net.second_route (Wi-Fi). 4. Record the outcome with
       `redteam.py record behavior.phone_hotspot detected|missed`.
     expect: { alert_rule_prefix: net. }
+
+  # ---------------------------------------------------------------- screen streaming (screen Step 23)
+  # Student-side attacks on the screen gateway. Attacks that need a valid instructor token or the agent
+  # certificate are covered by gateway tests, listed as manual entries below.
+  - id: screen.agent_spoof_fingerprint
+    layer: screen
+    title: Open the agent screen path with a forged X-Agent-Cert-Fingerprint and no client certificate
+    run: |-
+      curl -sk -o /dev/null -w '%{http_code}' --max-time 8 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' -H 'X-Agent-Cert-Fingerprint: 0000000000000000000000000000000000000000000000000000000000000000' 'https://@CCC@:8443/screen-gw/agent?stream_id=1'
+    blocked_if: { stdout_not_in: ["101", "200"] }
+    expect: { blocked_only: true }
+  - id: screen.agent_spoof_verify_header
+    layer: screen
+    title: Open the agent screen path claiming X-SSL-Client-Verify SUCCESS with a made-up certificate
+    run: |-
+      curl -sk -o /dev/null -w '%{http_code}' --max-time 8 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-Cert: -----BEGIN%20CERTIFICATE-----%0AAAAA%0A-----END%20CERTIFICATE-----' 'https://@CCC@:8443/screen-gw/agent?stream_id=1'
+    blocked_if: { stdout_not_in: ["101", "200"] }
+    expect: { blocked_only: true }
+  - id: screen.gateway_port_8082
+    layer: screen
+    title: Reach the gateway directly on plaintext :8082 (agent path, metrics, revoke)
+    run: |-
+      for p in /agent?stream_id=1 /metrics /health; do curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://@CCC@:8082$p"; echo; done | sort -u | tr '\n' ' '
+    blocked_if: { stdout_in: ["000"] }
+    expect: { blocked_only: true }
+  - id: screen.view_without_token
+    layer: screen
+    title: Watch a PC's screen through the dashboard path without a lease token (the gateway must close the socket, 1008, with no data)
+    run: |-
+      python3 - '' <<'PY'
+      import socket, ssl, struct, os, sys
+      msg = sys.argv[1].encode()
+      ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+      try:
+          s = ctx.wrap_socket(socket.create_connection(("@CCC@", 443), 8), server_hostname="@CCC@"); s.settimeout(10)
+          s.sendall(b"GET /screen-gw/view HTTP/1.1\r\nHost: @CCC@\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")
+          buf = b""
+          while b"\r\n\r\n" not in buf:
+              buf += s.recv(1)
+          code = buf.split(b" ")[1].decode()
+          if code != "101":
+              print("refused http", code); sys.exit()
+          if msg:
+              mask = os.urandom(4)
+              hdr = bytes([0x81, 0x80 | len(msg)]) if len(msg) < 126 else bytes([0x81, 0x80 | 126]) + struct.pack(">H", len(msg))
+              s.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(msg)))
+          def need(n):
+              d = b""
+              while len(d) < n:
+                  c = s.recv(n - len(d))
+                  if not c: raise EOFError
+                  d += c
+              return d
+          while True:
+              b0, b1 = need(2)
+              n = b1 & 0x7f
+              if n == 126: n = struct.unpack(">H", need(2))[0]
+              elif n == 127: n = struct.unpack(">Q", need(8))[0]
+              data = need(n)
+              if b0 & 0x0f == 8:
+                  print("refused ws close", struct.unpack(">H", data[:2])[0] if len(data) >= 2 else 0); break
+              if b0 & 0x0f == 2:
+                  print("open: data received"); break
+      except (EOFError, ConnectionError):
+          print("refused connection closed")
+      except Exception as e:
+          print("error", type(e).__name__)
+      PY
+    blocked_if: { stdout_contains: "refused" }
+    expect: { blocked_only: true }
+  - id: screen.view_forged_jwt
+    layer: screen
+    title: Watch a PC's screen with a lease token signed with a guessed secret, sent as the first WebSocket message
+    run: |-
+      b64() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+      h=$(printf '{"alg":"HS256","typ":"JWT"}' | b64)
+      p=$(printf '{"iss":"xephyguard-ccc","aud":"xephyguard-gateway","jti":"redteam-1","exp":4102444800,"stream_id":1,"pc_id":1,"mode":"live","student_id":1,"lab_session_id":1,"audit_id":1}' | b64)
+      sig=$(printf '%s.%s' "$h" "$p" | openssl dgst -sha256 -hmac secret -binary | b64)
+      tok=$h.$p.$sig
+      python3 - "{\"type\":\"auth\",\"token\":\"$tok\"}" <<'PY'
+      import socket, ssl, struct, os, sys
+      msg = sys.argv[1].encode()
+      ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+      try:
+          s = ctx.wrap_socket(socket.create_connection(("@CCC@", 443), 8), server_hostname="@CCC@"); s.settimeout(10)
+          s.sendall(b"GET /screen-gw/view HTTP/1.1\r\nHost: @CCC@\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")
+          buf = b""
+          while b"\r\n\r\n" not in buf:
+              buf += s.recv(1)
+          code = buf.split(b" ")[1].decode()
+          if code != "101":
+              print("refused http", code); sys.exit()
+          if msg:
+              mask = os.urandom(4)
+              hdr = bytes([0x81, 0x80 | len(msg)]) if len(msg) < 126 else bytes([0x81, 0x80 | 126]) + struct.pack(">H", len(msg))
+              s.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(msg)))
+          def need(n):
+              d = b""
+              while len(d) < n:
+                  c = s.recv(n - len(d))
+                  if not c: raise EOFError
+                  d += c
+              return d
+          while True:
+              b0, b1 = need(2)
+              n = b1 & 0x7f
+              if n == 126: n = struct.unpack(">H", need(2))[0]
+              elif n == 127: n = struct.unpack(">Q", need(8))[0]
+              data = need(n)
+              if b0 & 0x0f == 8:
+                  print("refused ws close", struct.unpack(">H", data[:2])[0] if len(data) >= 2 else 0); break
+              if b0 & 0x0f == 2:
+                  print("open: data received"); break
+      except (EOFError, ConnectionError):
+          print("refused connection closed")
+      except Exception as e:
+          print("error", type(e).__name__)
+      PY
+    blocked_if: { stdout_contains: "refused" }
+    expect: { blocked_only: true }
+  - id: screen.read_agent_key
+    layer: screen
+    title: Read the agent's TLS private key as the student user (would allow impersonating the PC's screen stream)
+    run: |-
+      cat /etc/xephyguard/agent.key >/dev/null 2>&1 && echo readable || echo denied
+    blocked_if: { stdout_contains: "denied" }
+    expect: { blocked_only: true }
+  - id: screen.agent_wrong_stream
+    layer: manual
+    title: An enrolled agent asks for another PC's stream_id
+    manual: |
+      Needs the PC's own certificate (root only), so it is not a student attack. Covered by the gateway tests
+      TestAgentRefusedForAnotherPCsStream and TestAgentFramesForAnotherStreamAreDropped (go test -race ./...).
+      To try it by hand on a PC as root: open wss://<ccc>:8443/screen-gw/agent?stream_id=<other pc id> with the
+      PC's agent.crt/agent.key; the answer must be 403. Record with `redteam.py record screen.agent_wrong_stream blocked|missed`.
+    expect: { blocked_only: true }
+  - id: screen.viewer_injection
+    layer: manual
+    title: A viewer sends control messages other than Ack and KeyframeReq to the agent
+    manual: |
+      Needs an instructor lease token. Covered by TestViewerControlForAgentAllowList, TestViewerInjectionNeverReachesAgent
+      and TestViewerOversizeMessageClosesSocket. By hand: as an instructor open a live view and send a 28-byte message of
+      type Frame or Status from the browser console; the agent must not receive it. Record the outcome with `redteam.py record`.
+    expect: { blocked_only: true }
+  - id: screen.lease_expiry
+    layer: manual
+    title: The viewer keeps watching after its lease expires or is revoked
+    manual: |
+      Covered by TestViewerClosedAtLeaseExpiry, TestViewerRenewalRefused and the revoke tests. By hand: start a live view,
+      stop it from the dashboard (or wait out the lease); the viewer socket must close with 4003 within seconds and a reused
+      token must be refused. Record the outcome with `redteam.py record`.
+    expect: { blocked_only: true }
+  - id: screen.idle_pc_view
+    layer: manual
+    title: Ask to view a PC with no agent connected or no lease
+    manual: |
+      Needs an instructor token. With the PC's agent stopped, open a live view of it: the viewer must see "agent offline"/no
+      frames and the service must not start capture without a CCC lease (agent tests for screen_lease). Record the outcome with
+      `redteam.py record`.
+    expect: { blocked_only: true }

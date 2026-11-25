@@ -49,8 +49,11 @@
             "@php artisan dev"
         ],
         "test": [
-            "@php artisan config:clear --ansi @no_additional_args",
-            "@php artisan test"
+            "Composer\\Config::disableProcessTimeout",
+            "php artisan config:clear --ansi && APP_KEY=\"${APP_KEY:-base64:$(php -r 'echo base64_encode(random_bytes(32));')}\" php artisan test"
+        ],
+        "lint": [
+            "pint --test"
         ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",

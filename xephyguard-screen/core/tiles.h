@@ -15,7 +15,10 @@ public:
   const std::vector<uint32_t>& pending() const;
   void mark_sent();            // clears pending
   void force_all_pending();    // for keyframes
+  void add_pending(const std::vector<uint32_t>& indices);  // re-send these tiles (progressive refinement); ignores out-of-range, no duplicates
   int cols() const; int rows() const;
+  int width() const { return width_; }
+  int height() const { return height_; }
 
 private:
   int width_ = 0;

@@ -173,4 +173,17 @@ class AgentHealthClassifierTest extends TestCase
         $status = AgentHealthClassifier::classify($pc, [], $this->now);
         $this->assertSame(AgentHealthClassifier::STATUS_UNAVAILABLE, $status);
     }
+
+    public function test_assess_returns_the_same_status_with_reasons(): void
+    {
+        $pc = ['id' => 1, 'last_heartbeat_at' => $this->now - 400];
+        $lab = [['id' => 2, 'last_heartbeat_at' => $this->now - 5]];
+
+        $result = AgentHealthClassifier::assess($pc, $lab, $this->now);
+
+        $this->assertSame(AgentHealthClassifier::classify($pc, $lab, $this->now), $result['status']);
+        $this->assertSame(AgentHealthClassifier::STATUS_TAMPERING, $result['status']);
+        $this->assertSame('no heartbeat for 400s (limit 45s)', $result['reasons'][0]);
+        $this->assertNotEmpty($result['reasons']);
+    }
 }

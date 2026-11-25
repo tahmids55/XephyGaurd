@@ -149,19 +149,16 @@ bool TlsConnection::connect(const std::string& host, uint16_t port, const TlsOpt
     impl_->reset();
     impl_->ctx = SSL_CTX_new(TLS_client_method());
     if (!impl_->ctx) { if (err) *err = ssl_errors(); return false; }
-    SSL_CTX_set_min_proto_version(impl_->ctx, o.tls13_only ? TLS1_3_VERSION : TLS1_2_VERSION);
-    if (o.insecure_skip_verify) {
-        SSL_CTX_set_verify(impl_->ctx, SSL_VERIFY_NONE, nullptr);
-    } else {
-        SSL_CTX_set_verify(impl_->ctx, SSL_VERIFY_PEER, nullptr);
-        if (!o.ca_file.empty()) {
-            if (SSL_CTX_load_verify_locations(impl_->ctx, o.ca_file.c_str(), nullptr) != 1) {
-                if (err) *err = "cannot load CA " + o.ca_file + ": " + ssl_errors();
-                return false;
-            }
-        } else {
-            SSL_CTX_set_default_verify_paths(impl_->ctx);
+    // Invariant: TLS 1.3 only and the server certificate is always verified (no opt-out exists).
+    SSL_CTX_set_min_proto_version(impl_->ctx, TLS1_3_VERSION);
+    SSL_CTX_set_verify(impl_->ctx, SSL_VERIFY_PEER, nullptr);
+    if (!o.ca_file.empty()) {
+        if (SSL_CTX_load_verify_locations(impl_->ctx, o.ca_file.c_str(), nullptr) != 1) {
+            if (err) *err = "cannot load CA " + o.ca_file + ": " + ssl_errors();
+            return false;
         }
+    } else {
+        SSL_CTX_set_default_verify_paths(impl_->ctx);
     }
     if (!o.cert_file.empty()) {
         if (SSL_CTX_use_certificate_chain_file(impl_->ctx, o.cert_file.c_str()) != 1 ||
@@ -175,15 +172,13 @@ bool TlsConnection::connect(const std::string& host, uint16_t port, const TlsOpt
     impl_->ssl = SSL_new(impl_->ctx);
     SSL_set_fd(impl_->ssl, int(impl_->sock));
     const std::string& vhost = o.expected_host.empty() ? host : o.expected_host;
-    if (!o.insecure_skip_verify) {
-        X509_VERIFY_PARAM* param = SSL_get0_param(impl_->ssl);
-        in6_addr a6{};
-        in_addr a4{};
-        if (inet_pton(AF_INET, vhost.c_str(), &a4) == 1 || inet_pton(AF_INET6, vhost.c_str(), &a6) == 1)
-            X509_VERIFY_PARAM_set1_ip_asc(param, vhost.c_str());
-        else
-            X509_VERIFY_PARAM_set1_host(param, vhost.c_str(), 0);
-    }
+    X509_VERIFY_PARAM* param = SSL_get0_param(impl_->ssl);
+    in6_addr a6{};
+    in_addr a4{};
+    if (inet_pton(AF_INET, vhost.c_str(), &a4) == 1 || inet_pton(AF_INET6, vhost.c_str(), &a6) == 1)
+        X509_VERIFY_PARAM_set1_ip_asc(param, vhost.c_str());
+    else
+        X509_VERIFY_PARAM_set1_host(param, vhost.c_str(), 0);
     SSL_set_tlsext_host_name(impl_->ssl, vhost.c_str());
     if (SSL_connect(impl_->ssl) != 1) {
         long vr = SSL_get_verify_result(impl_->ssl);
@@ -191,18 +186,6 @@ bool TlsConnection::connect(const std::string& host, uint16_t port, const TlsOpt
                         (vr != X509_V_OK ? std::string(" (verify: ") + X509_verify_cert_error_string(vr) + ")" : "");
         impl_->reset();
         return false;
-    }
-    if (!o.pin_sha256.empty()) {
-        X509* peer = SSL_get1_peer_certificate(impl_->ssl);
-        unsigned char md[EVP_MAX_MD_SIZE];
-        unsigned int len = 0;
-        bool match = peer && X509_digest(peer, EVP_sha256(), md, &len) == 1 && to_lower(o.pin_sha256) == hex_encode(md, len);
-        if (peer) X509_free(peer);
-        if (!match) {
-            if (err) *err = "server certificate does not match pinned fingerprint";
-            impl_->reset();
-            return false;
-        }
     }
     return true;
 }

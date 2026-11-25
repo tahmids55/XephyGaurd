@@ -8,7 +8,7 @@
   'text' => $text ?? '',
   'last' => $updatedAt ?? 'Never',
   'hist' => $initialHist,
-  'userName' => auth()->user()?->name ?? 'Staff',
+  'userName' => auth()->user()->name,
 ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
 <div class="doc" x-data="sharePage">
   <div class="optbar"><span class="otitle">Shared clipboard</span><span class="osub">Send text, commands or links to every PC in one step.</span><span class="grow"></span></div><div class="canvas narrow">

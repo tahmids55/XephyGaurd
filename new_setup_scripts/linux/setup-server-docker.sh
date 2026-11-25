@@ -189,7 +189,6 @@ SCREEN_GATEWAY_PATH=/screen-gw
 SCREEN_GATEWAY_ISSUER=xephyguard-ccc
 SCREEN_GATEWAY_AUDIENCE=xephyguard-gateway
 SCREEN_GATEWAY_SECRET=$(xg_rand_hex 32)
-SCREEN_GATEWAY_AGENT_SECRET=$(xg_rand_hex 32)
 SCREEN_GATEWAY_URL=
 EOF
 else
@@ -215,7 +214,6 @@ else
     xg_set_env "$ENV_FILE" TZ "$TZ_NAME"
   fi
   [[ -z "$(xg_read_env "$ENV_FILE" SCREEN_GATEWAY_SECRET "")" ]] && xg_set_env "$ENV_FILE" SCREEN_GATEWAY_SECRET "$(xg_rand_hex 32)"
-  [[ -z "$(xg_read_env "$ENV_FILE" SCREEN_GATEWAY_AGENT_SECRET "")" ]] && xg_set_env "$ENV_FILE" SCREEN_GATEWAY_AGENT_SECRET "$(xg_rand_hex 32)"
 fi
 
 if (( REBUILD == 1 )) || ! docker image inspect xephyguard/ccc-app:local >/dev/null 2>&1 || ! docker image inspect xephyguard/ccc-screen-gateway:local >/dev/null 2>&1; then

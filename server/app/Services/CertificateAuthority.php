@@ -18,10 +18,25 @@ class CertificateAuthority
         return new self(config('xephyguard.ca_dir'));
     }
 
-    public function dir(): string { return $this->dir; }
-    public function certPath(): string { return $this->dir.'/ca.crt'; }
-    public function keyPath(): string { return $this->dir.'/ca.key'; }
-    public function exists(): bool { return is_file($this->certPath()) && is_file($this->keyPath()); }
+    public function dir(): string
+    {
+        return $this->dir;
+    }
+
+    public function certPath(): string
+    {
+        return $this->dir.'/ca.crt';
+    }
+
+    public function keyPath(): string
+    {
+        return $this->dir.'/ca.key';
+    }
+
+    public function exists(): bool
+    {
+        return is_file($this->certPath()) && is_file($this->keyPath());
+    }
 
     public function certPem(): string
     {

@@ -2,6 +2,8 @@
 
 #include <regex>
 
+#include "xg/json_read.hpp"
+
 namespace xg::protocol {
 
 json build_batch(const std::string& pc_id, const std::vector<Event>& events, const json& heartbeat, size_t* included) {
@@ -33,22 +35,22 @@ std::optional<BatchAck> parse_batch_ack(const std::string& body, std::string* er
     }
     BatchAck a;
     a.ack_seq = j["ack_seq"].get<int64_t>();
-    a.server_time_ms = j.value("server_time_ms", int64_t(0));
-    a.policy_version = j.value("policy_version", int64_t(0));
-    a.signatures_version = j.value("signatures_version", std::string{});
-    a.isolated = j.value("isolated", false);
+    a.server_time_ms = jr::i64(j, "server_time_ms");
+    a.policy_version = jr::i64(j, "policy_version");
+    a.signatures_version = jr::str(j, "signatures_version");
+    a.isolated = jr::boolean(j, "isolated");
     return a;
 }
 
 std::optional<Command> parse_command(const json& j, std::string* err) {
     static const std::regex id_re("^[A-Za-z0-9_-]{1,64}$");
     static const std::vector<std::string> known = {"policy_updated", "message", "kill", "isolate_notice",
-                                                   "rescan", "ping", "set_indicator", "flush"};
+                                                   "rescan", "ping", "flush"};
     if (!j.is_object()) { if (err) *err = "command not an object"; return std::nullopt; }
     Command c;
     c.id = j.contains("id") ? (j["id"].is_string() ? j["id"].get<std::string>() : j["id"].dump()) : "";
-    c.type = j.value("type", std::string{});
-    c.args = j.value("args", json::object());
+    c.type = jr::str(j, "type");
+    c.args = j.contains("args") ? j["args"] : json::object();
     if (!std::regex_match(c.id, id_re)) { if (err) *err = "bad command id"; return std::nullopt; }
     if (std::find(known.begin(), known.end(), c.type) == known.end()) {
         if (err) *err = "unknown command type: " + c.type;

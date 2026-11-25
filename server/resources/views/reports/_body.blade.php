@@ -7,11 +7,11 @@
 
 <h2>Scores</h2>
 <table class="tbl" width="100%" cellspacing="0" cellpadding="4" border="1" style="border-collapse:collapse">
-  <tr><th>PC</th><th>Student</th><th>Method</th><th>Score</th><th>Confidence</th><th>Main reasons</th><th>Not observable</th></tr>
-  @forelse ($scores as $s)
-    <tr><td>{{ $s->pc?->name }}</td><td>{{ $s->student?->name ?? $s->user }}</td><td>{{ $s->method }}</td><td><b>{{ $s->score }}</b>/100</td><td>{{ $s->confidence }}</td>
-      <td>@foreach (collect($s->reasons)->take(5) as $r)<div>+{{ $r['points'] ?? '' }} {{ $r['label'] ?? '' }} <small>({{ $r['signal'] ?? '' }})</small></div>@endforeach</td>
-      <td><small>{{ implode('; ', $s->not_observable ?? []) }}</small></td></tr>
+  <tr><th>PC</th><th>Student</th><th>Method</th><th>Score</th><th>Confidence</th><th>Reasons</th><th>Not observable</th></tr>
+  @forelse (\App\Services\ReportModel::scoreRows($scores) as $r)
+    <tr><td>{{ $r['pc'] }}</td><td>{{ $r['student_name'] !== '' ? $r['student_name'] : $r['user'] }}</td><td>{{ $r['method'] }}</td><td><b>{{ $r['score'] }}</b>/100</td><td>{{ $r['confidence'] }}</td>
+      <td>@foreach ($r['reasons'] as $x)<div>{{ $x['points'] !== null ? '+'.$x['points'].' ' : '' }}{{ $x['label'] }} @if ($x['signal'] !== '')<small>({{ $x['signal'] }})</small>@endif</div>@endforeach</td>
+      <td><small>{{ implode('; ', $r['not_observable']) }}</small></td></tr>
   @empty <tr><td colspan="7">No scores yet{{ isset($report) && $report?->status === 'failed' ? ' (scoring failed: '.($report->summary['error'] ?? '').')' : '' }}.</td></tr>
   @endforelse
 </table>

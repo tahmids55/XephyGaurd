@@ -35,10 +35,24 @@ std::string expand_path(std::string_view path, std::string_view home);
 std::string hex_encode(const unsigned char* data, size_t len);
 std::string random_hex(size_t bytes);
 std::string read_file(const std::string& path, bool* ok = nullptr);
-bool write_file_atomic(const std::string& path, const std::string& content);
+/// Who may read a file the agent writes. `secret`: owner only (0600 on POSIX); `shared`: world-readable 0644
+/// (CA cert, browser policies). The temp file is created with this mode from the start (never wider), fsynced,
+/// then renamed over `path`. On Windows `secret` means a protected SYSTEM + Administrators only DACL.
+enum class FileMode { shared, secret };
+bool write_file_atomic(const std::string& path, const std::string& content, FileMode mode = FileMode::shared);
+/// Re-applies owner-only access to an existing secret (0600 / SYSTEM+Administrators protected DACL), e.g. for
+/// files written by older versions. Returns false if it could not.
+bool protect_secret_file(const std::string& path);
+/// True if `url` is https://<ccc_host>[:port]/... (case-insensitive host, no userinfo, no other characters).
+bool trusted_pac_url(const std::string& url, const std::string& ccc_host);
+
+/// Creates a new, empty directory only the caller can use (mkdtemp 0700 on POSIX) under the system temp dir.
+/// Returns an empty string on failure. Never reuses an existing directory.
+std::string make_private_temp_dir(const std::string& prefix);
 /// Extracts the lowercase TLS ClientHello SNI hostname (extension 0x0000), or empty if absent.
 std::string parse_tls_sni(const uint8_t* data, size_t len);
-/// True for passive telemetry/experiment subdomains that must not raise AI alerts.
-bool is_ai_telemetry_domain(std::string_view domain);
+/// True for passive telemetry/experiment hosts that must not raise AI alerts: `domain` contains one of
+/// `patterns` (bundle web.telemetry_domains). An empty domain counts as telemetry.
+bool is_ai_telemetry_domain(std::string_view domain, const std::vector<std::string>& patterns);
 
 }  // namespace xg

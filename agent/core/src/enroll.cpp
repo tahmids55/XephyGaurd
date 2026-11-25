@@ -6,6 +6,7 @@
 #include "xg/crypto.hpp"
 #include "xg/discovery.hpp"
 #include "xg/http.hpp"
+#include "xg/json_read.hpp"
 #include "xg/log.hpp"
 #include "xg/util.hpp"
 
@@ -34,6 +35,14 @@ static std::string load_or_create_machine_uid(const std::string& data_dir) {
     return fresh;
 }
 
+void apply_discovery(Config& cfg, const net::DiscoveryResult& d) {
+    // The UDP reply is unauthenticated: any LAN host can answer first. It may say where the CCC is,
+    // never which CA to trust (I-AGENT-3). The fingerprint comes from --ca-fingerprint (installer, Add-a-PC
+    // page) or an explicit --trust-on-first-use.
+    cfg.ccc_host = d.host;
+    cfg.api_port = d.api_port;
+}
+
 int enroll(Config& cfg, const std::string& config_path, const EnrollOptions& o, ISystemInfo& sys) {
     if (o.key.empty()) {
         std::cerr << "enroll: --key is required (shown on the CCC 'Add a PC' page)\n";
@@ -50,9 +59,7 @@ int enroll(Config& cfg, const std::string& config_path, const EnrollOptions& o, 
             return 3;
         }
         std::cout << "Found CCC '" << d->lab_name << "' at " << d->host << "\n";
-        cfg.ccc_host = d->host;
-        cfg.api_port = d->api_port;
-        if (fp.empty()) fp = d->ca_fingerprint;
+        apply_discovery(cfg, *d);
     }
     std::error_code ec;
     fs::create_directories(fs::path(cfg.ca_file).parent_path(), ec);
@@ -117,20 +124,21 @@ int enroll(Config& cfg, const std::string& config_path, const EnrollOptions& o, 
         return 7;
     }
     auto j = json::parse(r.body, nullptr, false);
-    if (j.is_discarded() || !j.contains("enrollment_id")) {
+    const int64_t enrollment_id = jr::i64(j, "enrollment_id", 0, 1);
+    if (j.is_discarded() || enrollment_id <= 0) {
         std::cerr << "enroll: unexpected response: " << r.body << "\n";
         return 7;
     }
-    cfg.enrollment_id = std::to_string(j.value("enrollment_id", 0));
-    cfg.poll_token = j.value("poll_token", "");
+    cfg.enrollment_id = std::to_string(enrollment_id);
+    cfg.poll_token = jr::str(j, "poll_token");
     cfg.pc_id.clear();
     cfg.token.clear();
     if (!cfg.save(config_path)) {
         std::cerr << "enroll: cannot write " << config_path << " (run as root/administrator)\n";
         return 8;
     }
-    std::cout << "Registered with the CCC. Status: " << j.value("status", "pending") << "\n";
-    if (j.value("status", "") != "approved")
+    std::cout << "Registered with the CCC. Status: " << jr::str(j, "status", "pending") << "\n";
+    if (jr::str(j, "status") != "approved")
         std::cout << "Ask the lab assistant to approve '" << sys.hostname() << "' on the Enrollment page.\n";
     if (!o.wait) return 0;
 
@@ -141,15 +149,17 @@ int enroll(Config& cfg, const std::string& config_path, const EnrollOptions& o, 
                                          "?poll_token=" + cfg.poll_token);
         if (pr.ok()) {
             auto pj = json::parse(pr.body, nullptr, false);
-            const auto st = pj.is_discarded() ? "" : pj.value("status", "");
-            if (st == "approved") {
-                write_file_atomic(cfg.cert_file, pj.value("cert_pem", ""));
-                if (pj.contains("ca_pem")) write_file_atomic(cfg.ca_file, pj["ca_pem"].get<std::string>());
-                cfg.pc_id = std::to_string(pj.value("pc_id", 0));
-                cfg.token = pj.value("token", "");
+            const auto st = jr::str(pj, "status");
+            const std::string cert = jr::str(pj, "cert_pem"), token = jr::str(pj, "token");
+            const int64_t pc_id = jr::i64(pj, "pc_id", 0, 1);
+            if (st == "approved" && !cert.empty() && !token.empty() && pc_id > 0) {
+                write_file_atomic(cfg.cert_file, cert);
+                if (const auto ca_pem = jr::str(pj, "ca_pem"); !ca_pem.empty()) write_file_atomic(cfg.ca_file, ca_pem);
+                cfg.pc_id = std::to_string(pc_id);
+                cfg.token = token;
                 cfg.poll_token.clear();
                 cfg.save(config_path);
-                std::cout << "Approved. This PC is #" << cfg.pc_id << " (" << pj.value("name", "") << ").\n";
+                std::cout << "Approved. This PC is #" << cfg.pc_id << " (" << jr::str(pj, "name") << ").\n";
                 return 0;
             }
             if (st == "rejected") {

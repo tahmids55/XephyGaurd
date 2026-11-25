@@ -1,9 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Web;
 
+use App\Events\PcUpdated;
 use App\Http\Controllers\Controller;
 use App\Models\Alert;
+use App\Models\Lab;
 use App\Models\LabSession;
 use App\Models\Pc;
 use App\Models\SessionPc;
@@ -49,14 +53,15 @@ class AlertController extends Controller
     public function acknowledge(Request $request, Alert $alert, EventIngestor $ingestor)
     {
         $d = $request->validate(['comment' => 'nullable|string|max:2000']);
-        $alert->forceFill(['acknowledged_by' => $request->user()->id, 'acknowledged_at' => now(),
-            'comment' => $d['comment'] ?? $alert->comment])->save();
-        Audit::log('alert.ack', $alert, ['comment' => $d['comment'] ?? null]);
+        $done = $alert->acknowledgeBy($request->user()->id, $d['comment'] ?? null);
+        if ($done) {
+            Audit::log('alert.ack', $alert, ['comment' => $d['comment'] ?? null]);
+        }
         $tile = $alert->pc ? $this->syncPcLiveState($alert->pc, $ingestor) : null;
 
         return $request->expectsJson()
-            ? response()->json(['ok' => true, 'pc' => $tile])
-            : back()->with('status', 'Alert acknowledged.');
+            ? response()->json(['ok' => true, 'already' => ! $done, 'pc' => $tile])
+            : back()->with('status', $done ? 'Alert acknowledged.' : 'Alert was already acknowledged.');
     }
 
     public function acknowledgeBatch(Request $request, EventIngestor $ingestor)
@@ -66,17 +71,18 @@ class AlertController extends Controller
             'ids.*' => 'integer',
             'comment' => 'nullable|string|max:2000',
         ]);
-        $alerts = Alert::query()->whereIn('id', $d['ids'])->get();
-        $now = now();
+        $labId = Lab::current()->id;
+        $alerts = Alert::query()->whereIn('id', $d['ids'])->whereNull('acknowledged_at')
+            ->whereHas('pc', fn ($q) => $q->where('lab_id', $labId))->get();
         $userId = $request->user()->id;
-        foreach ($alerts as $alert) {
-            $alert->forceFill([
-                'acknowledged_by' => $userId,
-                'acknowledged_at' => $now,
-                'comment' => $d['comment'] ?? $alert->comment,
-            ])->save();
+        $alerts = $alerts->filter(function (Alert $alert) use ($userId, $d) {
+            if (! $alert->acknowledgeBy($userId, $d['comment'] ?? null)) {
+                return false;
+            }
             Audit::log('alert.ack', $alert, ['comment' => $d['comment'] ?? null]);
-        }
+
+            return true;
+        });
         $pcs = Pc::query()->whereIn('id', $alerts->pluck('pc_id')->unique()->filter())->get();
         $tiles = $pcs->map(fn (Pc $pc) => $this->syncPcLiveState($pc, $ingestor))->values()->all();
 
@@ -92,7 +98,7 @@ class AlertController extends Controller
             ->exists();
         $ingestor->refreshLiveScore($pc, $inSession ? $activeSession : null);
         $pc->save();
-        broadcast(new \App\Events\PcUpdated($pc));
+        broadcast(new PcUpdated($pc));
 
         return $pc->tile();
     }

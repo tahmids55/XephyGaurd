@@ -36,6 +36,6 @@ case "$1" in configure)
       done
     fi
   fi
-  echo "XephyGuard agent installed. Enroll with: sudo xephyguard-agent enroll --key <KEY>"
+  echo "XephyGuard agent installed. Enroll with: sudo xephyguard-agent enroll --key <KEY> --ca-fingerprint <SHA256 from the Add-a-PC page>"
 ;; esac
 exit 0

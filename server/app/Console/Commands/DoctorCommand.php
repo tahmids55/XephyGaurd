@@ -2,17 +2,13 @@
 
 namespace App\Console\Commands;
 
-use App\Models\Lab;
-use App\Services\Bootstrap;
-use App\Services\CertificateAuthority;
 use App\Services\Doctor;
-use App\Services\NetworkPolicyWriter;
-use App\Services\SignatureCompiler;
 use Illuminate\Console\Command;
 
 class DoctorCommand extends Command
 {
     protected $signature = 'xephyguard:doctor {--json}';
+
     protected $description = 'Check the CCC and explain problems in plain language';
 
     public function handle(Doctor $d): int

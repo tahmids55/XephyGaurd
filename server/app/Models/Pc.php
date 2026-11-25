@@ -20,15 +20,45 @@ class Pc extends Model
         'silent_alerted_at' => 'datetime',
     ];
 
-    public function lab(): BelongsTo { return $this->belongsTo(Lab::class); }
-    public function seat(): BelongsTo { return $this->belongsTo(Seat::class); }
-    public function agent(): HasOne { return $this->hasOne(Agent::class)->whereNull('revoked_at')->latestOfMany(); }
-    public function agents(): HasMany { return $this->hasMany(Agent::class); }
-    public function alerts(): HasMany { return $this->hasMany(Alert::class); }
-    public function events(): HasMany { return $this->hasMany(Event::class); }
-    public function evidenceCaptures(): HasMany { return $this->hasMany(EvidenceCapture::class); }
+    public function lab(): BelongsTo
+    {
+        return $this->belongsTo(Lab::class);
+    }
 
-    public function scopeActive(Builder $q): Builder { return $q->whereNull('retired_at'); }
+    public function seat(): BelongsTo
+    {
+        return $this->belongsTo(Seat::class);
+    }
+
+    public function agent(): HasOne
+    {
+        return $this->hasOne(Agent::class)->whereNull('revoked_at')->latestOfMany();
+    }
+
+    public function agents(): HasMany
+    {
+        return $this->hasMany(Agent::class);
+    }
+
+    public function alerts(): HasMany
+    {
+        return $this->hasMany(Alert::class);
+    }
+
+    public function events(): HasMany
+    {
+        return $this->hasMany(Event::class);
+    }
+
+    public function evidenceCaptures(): HasMany
+    {
+        return $this->hasMany(EvidenceCapture::class);
+    }
+
+    public function scopeActive(Builder $q): Builder
+    {
+        return $q->whereNull('retired_at');
+    }
 
     /** Maps DB tile status, risk score, and active user into Live lab seat state. */
     public static function resolveUiStatus(?string $status, int $score, ?string $user): string
@@ -57,6 +87,30 @@ class Pc extends Model
     }
 
     /** Data shown on a live-view tile (also the payload of the PcUpdated broadcast). */
+    /** "6.5 fps · 820 kbit/s · 5.9 % CPU · throttle 3" from the last heartbeat's usage.screen, null while not streaming. */
+    public function screenCostLabel(): ?string
+    {
+        $s = is_array($this->usage['screen'] ?? null) ? $this->usage['screen'] : null;
+        if (! $s) {
+            return null;
+        }
+        $parts = [];
+        if (isset($s['fps'])) {
+            $parts[] = round((float) $s['fps'], 1).' fps';
+        }
+        if (isset($s['kbps'])) {
+            $parts[] = (int) $s['kbps'].' kbit/s';
+        }
+        if (isset($s['cpu_pct'])) {
+            $parts[] = round((float) $s['cpu_pct'], 1).' % CPU';
+        }
+        if (isset($s['level'])) {
+            $parts[] = 'throttle '.(int) $s['level'];
+        }
+
+        return $parts ? implode(' · ', $parts) : null;
+    }
+
     public function tile(): array
     {
         return [

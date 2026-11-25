@@ -21,6 +21,10 @@ namespace {
 // ---------------------------------------------------------------------------------- system info
 class SystemInfo final : public ISystemInfo {
 public:
+    json fallback_screen_caps(const std::vector<UserSession>&, bool screen_enabled) override {
+        return {{"session_type", "win"}, {"snapshot", screen_enabled}, {"live", screen_enabled},
+                {"delta_tiles", screen_enabled}, {"monitors", 1}, {"secure_desktop", true}};
+    }
     std::string hostname() override {
         wchar_t buf[256];
         DWORD n = 256;
@@ -154,9 +158,48 @@ public:
         else log::info("browser policy: proxy PAC disabled");
     }
 
+    // Chromium list policy: HKLM\<browser key>\ExtensionInstallBlocklist with values "1".."N" (REG_SZ). Entries an
+    // administrator added are kept; ids this agent ever managed are replaced (plan alternative F80).
+    void set_browser_extension_blocklist(const std::vector<std::string>& ids) override {
+        if (ids == blocked_extensions_) return;
+        for (const auto& id : ids)
+            if (std::find(managed_extensions_.begin(), managed_extensions_.end(), id) == managed_extensions_.end())
+                managed_extensions_.push_back(id);
+        blocked_extensions_ = ids;
+        for (const auto* key_path : kChromiumPolicyKeys) {
+            const std::wstring sub = std::wstring(key_path) + L"\\ExtensionInstallBlocklist";
+            HKEY hk = nullptr;
+            if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, sub.c_str(), 0, nullptr, 0, KEY_READ | KEY_SET_VALUE, nullptr, &hk,
+                                nullptr) != ERROR_SUCCESS)
+                continue;
+            std::vector<std::wstring> keep;
+            std::vector<std::wstring> names;
+            for (DWORD i = 0;; ++i) {
+                wchar_t name[64];
+                wchar_t data[256];
+                DWORD name_len = 64, data_len = sizeof data, type = 0;
+                if (RegEnumValueW(hk, i, name, &name_len, nullptr, &type, reinterpret_cast<BYTE*>(data), &data_len) !=
+                    ERROR_SUCCESS)
+                    break;
+                names.emplace_back(name, name_len);
+                if (type != REG_SZ) continue;
+                std::wstring v(data, wcsnlen(data, data_len / sizeof(wchar_t)));
+                const std::string v8 = to_utf8(v);
+                if (std::find(managed_extensions_.begin(), managed_extensions_.end(), v8) == managed_extensions_.end())
+                    keep.push_back(v);
+            }
+            for (const auto& n : names) RegDeleteValueW(hk, n.c_str());
+            for (const auto& id : blocked_extensions_) keep.push_back(utf8_to_wide(id));
+            for (size_t i = 0; i < keep.size(); ++i) set_reg_sz(hk, std::to_wstring(i + 1).c_str(), keep[i].c_str());
+            RegCloseKey(hk);
+        }
+        log::info("browser policy: {} AI extension(s) blocked", blocked_extensions_.size());
+    }
+
 private:
     bool ai_overview_suppressed_ = false;
     bool proxy_pac_active_ = false;
+    std::vector<std::string> blocked_extensions_, managed_extensions_;
 
     static constexpr const wchar_t* kChromiumPolicyKeys[] = {
         L"SOFTWARE\\Policies\\Google\\Chrome",

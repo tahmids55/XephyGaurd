@@ -1,5 +1,7 @@
 #include "xg/event_queue.hpp"
 
+#include <algorithm>
+
 #include <sqlite3.h>
 
 #include <filesystem>
@@ -9,7 +11,8 @@
 
 namespace xg {
 
-EventQueue::EventQueue(const std::string& db_path, size_t max_rows) : max_rows_(max_rows) {
+EventQueue::EventQueue(const std::string& db_path, size_t max_rows, size_t max_bytes)
+    : max_rows_(max_rows), max_bytes_(max_bytes) {
     std::error_code ec;
     if (db_path != ":memory:") std::filesystem::create_directories(std::filesystem::path(db_path).parent_path(), ec);
     if (sqlite3_open(db_path.c_str(), &db_) != SQLITE_OK) {
@@ -63,7 +66,13 @@ int64_t EventQueue::push(const std::string& type, const json& data, int64_t ts_m
     sqlite3_finalize(st);
     if (!ok) return 0;
     ++next_seq_;
-    if (++pushes_since_cap_ >= 1000) { pushes_since_cap_ = 0; enforce_cap(); }
+    const size_t cap_every = std::clamp<size_t>(max_rows_ / 10, 1, 1000);
+    bytes_since_cap_ += payload.size();
+    if (++pushes_since_cap_ >= cap_every || bytes_since_cap_ >= std::max<size_t>(1, max_bytes_ / 10)) {
+        pushes_since_cap_ = 0;
+        bytes_since_cap_ = 0;
+        enforce_cap();
+    }
     return seq;
 }
 
@@ -119,22 +128,44 @@ int64_t EventQueue::last_seq() {
 }
 
 void EventQueue::enforce_cap() {
-    // Called with mu_ held. When the CCC has been unreachable for very long, drop the oldest
-    // low-value events first (heartbeat-like samples) and keep rule hits and tamper events.
-    sqlite3_stmt* st = nullptr;
-    sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM events", -1, &st, nullptr);
-    size_t n = sqlite3_step(st) == SQLITE_ROW ? size_t(sqlite3_column_int64(st, 0)) : 0;
-    sqlite3_finalize(st);
-    if (n <= max_rows_) return;
-    const auto excess = int64_t(n - max_rows_);
-    sqlite3_prepare_v2(db_,
-                       "DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE type IN "
-                       "('key_stats','gpu_sample','window_focus','file_activity','process_snapshot') ORDER BY seq LIMIT ?)",
-                       -1, &st, nullptr);
-    sqlite3_bind_int64(st, 1, excess);
-    sqlite3_step(st);
-    sqlite3_finalize(st);
-    log::warn("queue: cap reached, dropped up to {} low-value events", excess);
+    // Called with mu_ held. When the CCC has been unreachable for very long, drop the oldest low-value
+    // events first (heartbeat-like samples). If that is not enough (e.g. a flood of paste/window events
+    // injected over IPC, I-AGENT-16), drop the oldest events of any type except tamper evidence.
+    auto scalar = [&](const char* sql) -> int64_t {
+        sqlite3_stmt* st = nullptr;
+        int64_t v = 0;
+        if (sqlite3_prepare_v2(db_, sql, -1, &st, nullptr) == SQLITE_OK && sqlite3_step(st) == SQLITE_ROW)
+            v = sqlite3_column_int64(st, 0);
+        sqlite3_finalize(st);
+        return v;
+    };
+    auto excess = [&]() -> int64_t {
+        const int64_t n = scalar("SELECT COUNT(*) FROM events");
+        const int64_t bytes = scalar("SELECT COALESCE(SUM(LENGTH(data)),0) FROM events");
+        int64_t rows = std::max<int64_t>(0, n - int64_t(max_rows_));
+        if (bytes > int64_t(max_bytes_) && n > 0) {
+            const int64_t avg = std::max<int64_t>(1, bytes / n);
+            rows = std::max(rows, (bytes - int64_t(max_bytes_)) / avg + 1);
+        }
+        return rows;
+    };
+    auto drop = [&](const char* sql, int64_t limit) {
+        sqlite3_stmt* st = nullptr;
+        if (sqlite3_prepare_v2(db_, sql, -1, &st, nullptr) != SQLITE_OK) return;
+        sqlite3_bind_int64(st, 1, limit);
+        sqlite3_step(st);
+        sqlite3_finalize(st);
+    };
+    int64_t over = excess();
+    if (over <= 0) return;
+    drop("DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE type IN "
+         "('key_stats','gpu_sample','window_focus','file_activity','process_snapshot') ORDER BY seq LIMIT ?)",
+         over);
+    log::warn("queue: cap reached, dropped up to {} low-value events", over);
+    over = excess();
+    if (over <= 0) return;
+    drop("DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE type <> 'tamper' ORDER BY seq LIMIT ?)", over);
+    log::warn("queue: hard cap reached, dropped up to {} oldest non-tamper events", over);
 }
 
 void EventQueue::kv_set(const std::string& k, const std::string& v) {

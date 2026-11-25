@@ -34,6 +34,11 @@ target_include_directories(xxhash_lib PUBLIC third_party)
 # libjpeg-turbo
 find_package(TurboJPEG QUIET)
 if(NOT TurboJPEG_FOUND)
+  # libjpeg-turbo's GNUInstallDirs needs a cache entry (standalone build has none); the normal
+  # variable must stay set too, because a parent project may already hold an empty cache entry.
+  if(NOT DEFINED CACHE{CMAKE_INSTALL_DOCDIR})
+    set(CMAKE_INSTALL_DOCDIR "doc" CACHE PATH "Documentation directory")
+  endif()
   set(CMAKE_INSTALL_DOCDIR "doc")
   set(CMAKE_SKIP_INSTALL_RULES TRUE)
   set(ENABLE_SHARED OFF CACHE BOOL "" FORCE)
@@ -43,8 +48,8 @@ if(NOT TurboJPEG_FOUND)
   set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
   FetchContent_Declare(libjpeg_turbo
     GIT_REPOSITORY https://github.com/libjpeg-turbo/libjpeg-turbo.git
-    GIT_TAG 3.0.3
-    GIT_SHALLOW TRUE)
+    # Pinned by commit (tag 3.0.3, checked 2026-11-18): a moved tag cannot change what we build. Update with approval only.
+    GIT_TAG 7fa4b5b762c9a99b46b0b7838f5fd55071b92ea5)
   FetchContent_GetProperties(libjpeg_turbo)
   if(NOT libjpeg_turbo_POPULATED)
     FetchContent_Populate(libjpeg_turbo)
@@ -79,8 +84,8 @@ if(NOT WebP_FOUND)
   set(WEBP_BUILD_EXTRAS OFF CACHE BOOL "" FORCE)
   FetchContent_Declare(libwebp
     GIT_REPOSITORY https://github.com/webmproject/libwebp.git
-    GIT_TAG v1.4.0
-    GIT_SHALLOW TRUE)
+    # Pinned by commit (tag v1.4.0, checked 2026-11-18). Update with approval only.
+    GIT_TAG 845d5476a866141ba35ac133f856fa62f0b7445f)
   FetchContent_MakeAvailable(libwebp)
 endif()
 
@@ -88,9 +93,12 @@ endif()
 add_library(xgcore STATIC
   core/protocol.cpp
   core/tiles.cpp
+  capture/monitors.cpp
   core/encoder.cpp
   core/flow.cpp
   core/downscale.cpp
+  core/thread_priority.cpp
+  core/governor.cpp
   capture/fake_capture.cpp
   agent/agent_state.cpp
   agent/privacy.cpp
@@ -112,6 +120,7 @@ if(WIN32)
   target_sources(xgcore PRIVATE
     capture/win_gdi_capture.cpp
     capture/win_dxgi_capture.cpp
+    capture/win_multi_capture.cpp
   )
   target_link_libraries(xgcore PUBLIC d3d11 dxgi gdi32)
 else()
@@ -144,26 +153,34 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     tests/test_pipeline.cpp
     tests/test_agent_state.cpp
     tests/test_downscale.cpp
+    tests/test_thread_priority.cpp
+    tests/test_governor.cpp
     tests/test_capabilities.cpp
     tests/test_privacy.cpp
+    tests/test_x11_shm.cpp
+    tests/test_monitors.cpp
+    tests/test_x11_monitors.cpp
   )
   target_include_directories(xgtests PRIVATE core capture agent third_party)
   target_link_libraries(xgtests PRIVATE xgcore)
 
   add_test(NAME xgtests COMMAND xgtests)
 
-  add_executable(xgagent agent/agent_main.cpp)
-  target_include_directories(xgagent PRIVATE core capture agent third_party)
-  if(WIN32)
-    target_link_libraries(xgagent PRIVATE xgcore winhttp)
-    if(MINGW)
-      target_link_options(xgagent PRIVATE -static -static-libgcc -static-libstdc++)
-    endif()
-  else()
-    target_link_libraries(xgagent PRIVATE xgcore)
+  # The X11 capture tests draw on the root window: run them on a private Xvfb, only when xvfb-run exists.
+  find_program(XG_XVFB_RUN xvfb-run)
+  if(XG_XVFB_RUN)
+    add_test(NAME xgtests_x11 COMMAND ${XG_XVFB_RUN} -a -s "-screen 0 1920x1080x24" $<TARGET_FILE:xgtests> "-tc=X11 capture*")
+    set_tests_properties(xgtests_x11 PROPERTIES ENVIRONMENT "XG_TEST_DISPOSABLE_DISPLAY=1")
   endif()
 
   add_executable(xgbench bench/load_agents.cpp)
   target_include_directories(xgbench PRIVATE core capture agent third_party)
   target_link_libraries(xgbench PRIVATE xgcore)
+
+  add_executable(xgstreambench bench/stream_bench.cpp)
+  target_include_directories(xgstreambench PRIVATE core capture agent third_party)
+  target_link_libraries(xgstreambench PRIVATE xgcore)
+  # Smoke test only: one second per phase, checks that the bench runs and prints its rows.
+  add_test(NAME xgstreambench_smoke COMMAND xgstreambench --seconds 1 --workload idle --workload typing)
+  set_tests_properties(xgstreambench_smoke PROPERTIES PASS_REGULAR_EXPRESSION "idle .*typing .*fps")
 endif()

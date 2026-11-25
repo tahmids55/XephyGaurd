@@ -32,6 +32,7 @@ std::unique_ptr<IWindowMonitor> make_window_monitor();
 std::unique_ptr<IClipboardMonitor> make_clipboard_monitor();
 std::unique_ptr<IInputTimingMonitor> make_input_monitor();
 std::unique_ptr<IStudentUi> make_student_ui();
+std::unique_ptr<IHelperSystem> make_helper_system();
 bool probe_clipboard(PasteInfo& out);
 
 }  // namespace xg::win

@@ -162,7 +162,14 @@ func TestGatewayHealthEndpointAndZeroViewerIdleStatus(t *testing.T) {
 		t.Fatalf("dial viewer: %v", err)
 	}
 
-	// Viewer join must ask agent for a keyframe (MsgType 4)
+	// Viewer join tells the agent the viewer count and mode (Status, screen Step 13), then asks for a keyframe (4)
+	_, st1, err := agentConn.Read(ctx)
+	if err != nil {
+		t.Fatalf("agent read viewer status: %v", err)
+	}
+	if len(st1) < kHeaderSize || st1[3] != kMsgTypeStatus || st1[4] != 1 || st1[26] != byte(kModeLive) || st1[27] != 0 {
+		t.Fatalf("expected Status(1 viewer, live), got %v", st1)
+	}
 	_, msg1, err := agentConn.Read(ctx)
 	if err != nil {
 		t.Fatalf("agent read keyframe req: %v", err)
@@ -189,7 +196,62 @@ func TestGatewayHealthEndpointAndZeroViewerIdleStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agent read viewer=0 status: %v", err)
 	}
-	if len(msg2) < kHeaderSize || msg2[3] != kMsgTypeStatus || msg2[4] != 0 || msg2[5] != 0 {
+	if len(msg2) < kHeaderSize || msg2[3] != kMsgTypeStatus || msg2[4] != 0 || msg2[5] != 0 || msg2[26] != 0 || msg2[27] != 0 {
 		t.Fatalf("expected Status(0) after viewer disconnect, got len=%d type=%d flags=(%d,%d)", len(msg2), msg2[3], msg2[4], msg2[5])
+	}
+}
+
+func TestStatusCarriesTheViewerMode(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		code uint16
+	}{{"wall", kModeWall}, {"snapshot", kModeSnapshot}, {"live", kModeLive}} {
+		relay := NewRelayServer(&FakeAuth{mode: tc.mode})
+		srv := httptest.NewServer(relay.Routes())
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		agentConn, _, err := websocket.Dial(ctx, toWSURL(srv.URL, "/agent")+"?stream_id=78", nil)
+		if err != nil {
+			t.Fatalf("dial agent: %v", err)
+		}
+		viewerConn, _, err := websocket.Dial(ctx, toWSURL(srv.URL, "/view")+"?stream_id=78", nil)
+		if err != nil {
+			t.Fatalf("dial viewer: %v", err)
+		}
+		_, st, err := agentConn.Read(ctx)
+		if err != nil {
+			t.Fatalf("%s: read status: %v", tc.mode, err)
+		}
+		got := uint16(st[26]) | uint16(st[27])<<8
+		if st[3] != kMsgTypeStatus || got != tc.code {
+			t.Fatalf("%s: Status mode = %d, want %d (msg %v)", tc.mode, got, tc.code, st)
+		}
+		viewerConn.Close(websocket.StatusNormalClosure, "")
+		agentConn.Close(websocket.StatusNormalClosure, "")
+		cancel()
+		srv.Close()
+	}
+}
+
+func TestViewerModeLockedPicksTheMostDemandingMode(t *testing.T) {
+	s := newStream(1)
+	if got := s.viewerModeLocked(); got != kModeNone {
+		t.Fatalf("no viewers: %d", got)
+	}
+	s.viewers[1] = &Viewer{mode: "wall"}
+	if got := s.viewerModeLocked(); got != kModeWall {
+		t.Fatalf("wall only: %d", got)
+	}
+	s.viewers[2] = &Viewer{mode: "snapshot"}
+	if got := s.viewerModeLocked(); got != kModeSnapshot {
+		t.Fatalf("wall+snapshot: %d", got)
+	}
+	s.viewers[3] = &Viewer{mode: "live"}
+	if got := s.viewerModeLocked(); got != kModeLive {
+		t.Fatalf("with live: %d", got)
+	}
+	delete(s.viewers, 3)
+	delete(s.viewers, 2)
+	if got := s.viewerModeLocked(); got != kModeWall {
+		t.Fatalf("back to wall: %d", got)
 	}
 }

@@ -7,6 +7,7 @@ use App\Models\Lab;
 use App\Models\Profile;
 use App\Models\TimetableEntry;
 use App\Services\Audit;
+use App\Services\NetworkPolicyWriter;
 use Illuminate\Http\Request;
 
 /** Timetable (weekly recurrence) and profiles (reusable policy bundles). */
@@ -49,7 +50,7 @@ class ProfileController extends Controller
         ];
         $profile = $profile?->exists ? tap($profile)->update($data) : Profile::create($data);
         Audit::log('profile.save', $profile, ['name' => $profile->name]);
-        app(\App\Services\NetworkPolicyWriter::class)->write();
+        app(NetworkPolicyWriter::class)->write();
 
         return back()->with('status', 'Profile saved.');
     }

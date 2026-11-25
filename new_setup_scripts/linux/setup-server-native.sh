@@ -157,8 +157,6 @@ fi
 
 GW_SEC="$(xg_read_env "$ENV_FILE" SCREEN_GATEWAY_SECRET "")"
 [[ -z "$GW_SEC" || "$GW_SEC" == dev-secret* ]] && xg_set_env "$ENV_FILE" SCREEN_GATEWAY_SECRET "$(xg_rand_hex 32)"
-GW_ASEC="$(xg_read_env "$ENV_FILE" SCREEN_GATEWAY_AGENT_SECRET "")"
-[[ -z "$GW_ASEC" || "$GW_ASEC" == dev-secret* ]] && xg_set_env "$ENV_FILE" SCREEN_GATEWAY_AGENT_SECRET "$(xg_rand_hex 32)"
 
 xg_set_env "$ENV_FILE" APP_NAME "XephyGuard"
 xg_set_env "$ENV_FILE" APP_TIMEZONE "$TZ_NAME"

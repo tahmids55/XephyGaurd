@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include "xg/event.hpp"
+#include "xg/json_read.hpp"
 #include "xg/tls.hpp"
 #include "xg/util.hpp"
 
@@ -21,13 +22,13 @@ namespace xg::net {
 
 std::optional<DiscoveryResult> parse_discovery_reply(const std::string& payload, const std::string& from) {
     auto j = json::parse(payload, nullptr, false);
-    if (j.is_discarded() || !j.is_object() || j.value("service", "") != "xephyguard-ccc") return std::nullopt;
+    if (j.is_discarded() || !j.is_object() || jr::str(j, "service") != "xephyguard-ccc") return std::nullopt;
     DiscoveryResult r;
-    r.host = j.value("host", from);
+    r.host = jr::str(j, "host", from);
     if (r.host.empty()) r.host = from;
-    r.api_port = uint16_t(j.value("api_port", 8443));
-    r.ca_fingerprint = to_lower(j.value("ca_fingerprint", ""));
-    r.lab_name = j.value("lab", "");
+    r.api_port = uint16_t(jr::i64(j, "api_port", 8443, 1, 65535));
+    r.ca_fingerprint = to_lower(jr::str(j, "ca_fingerprint"));
+    r.lab_name = jr::str(j, "lab");
     return r;
 }
 

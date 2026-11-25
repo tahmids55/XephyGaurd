@@ -198,6 +198,8 @@ TEST_CASE("Linux systemd-resolved drop-in writes routable CCC IP and ignores loo
 
 TEST_CASE("Linux SOCK_DIAG delta tracker suppresses idle keep-alives and shared CDN false positives", "[linux][net]") {
     xg::lnx::SocketDeltaTracker tracker;
+    tracker.hints.process_domains["copilot-runtime"] = "api.githubcopilot.com";  // from the bundle's web section
+    tracker.hints.telemetry_domains = {"telemetry"};
     const std::vector<std::string> domains = {"chatgpt.com", "githubcopilot.com"};
 
     // Two connections to the SAME Cloudflare CDN IP: socket 101 is ChatGPT, socket 102 is non-AI Cloudflare docs
@@ -408,4 +410,107 @@ TEST_CASE("X11StudentUi maps indicator inside _NET_WORKAREA clear of top navbar"
 }
 #endif
 
-#endif  // !_WIN32
+TEST_CASE("Linux system info reports screen caps by session type until a helper reports its own", "[linux]") {
+    auto sys = xg::lnx::make_system_info();
+    using S = xg::UserSession;
+    auto caps = sys->fallback_screen_caps({S{"a", "/home/a", 1000, "wayland-0", "wayland", true}}, true);
+    CHECK(caps["session_type"] == "wayland");
+    CHECK(caps["live"] == false);
+    caps = sys->fallback_screen_caps({S{"a", "/home/a", 1000, ":0", "x11", true}}, true);
+    CHECK(caps["session_type"] == "x11");
+    CHECK(caps["live"] == true);
+    CHECK(sys->fallback_screen_caps({S{"a", "/home/a", 1000, ":0", "x11", true}}, false)["live"] == false);
+}
+
+TEST_CASE("ChildReaper reaps only its own children (I-AGENT-15)", "[linux]") {
+    xg::lnx::ChildReaper r;
+    const pid_t mine = ::fork();
+    if (mine == 0) _exit(0);
+    const pid_t other = ::fork();
+    if (other == 0) _exit(7);
+    r.add(mine);
+    for (int i = 0; i < 200 && r.reap() > 0; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    CHECK(r.reap() == 0);
+    // The child we did not register still has its exit status for its real owner.
+    int status = 0;
+    REQUIRE(::waitpid(other, &status, 0) == other);
+    CHECK(WEXITSTATUS(status) == 7);
+}
+
+TEST_CASE("run_program executes by absolute path without a shell and feeds stdin (I-AGENT-25)", "[linux]") {
+    using xg::lnx::run_program;
+    CHECK(run_program({"/bin/true"}) == 0);
+    CHECK(run_program({"/bin/false"}) == 1);
+    CHECK(run_program({"/nonexistent/prog"}) == 127);
+    CHECK(run_program({"true"}) == -1);  // no PATH lookup
+    // stdin reaches the child; shell metacharacters are plain argument bytes.
+    CHECK(run_program({"/usr/bin/grep", "-q", "table inet"}, "table inet x {}\n") == 0);
+    CHECK(run_program({"/usr/bin/grep", "-q", "; touch /tmp/xg-should-not-exist"}, "nothing\n") == 1);
+    CHECK_FALSE(std::filesystem::exists("/tmp/xg-should-not-exist"));
+    // A child that ignores a large stdin must not kill us with SIGPIPE.
+    CHECK(run_program({"/bin/true"}, std::string(1 << 20, 'x')) == 0);
+}
+
+TEST_CASE("isolation ruleset keeps IPv4 and IPv6 CCC addresses reachable (I-AGENT-26)", "[linux]") {
+    const auto r = xg::lnx::nft_isolation_rules({"203.0.113.5", "2001:db8::5", "bad;drop"});
+    CHECK(r.find("203.0.113.4") != std::string::npos);  // range split around the CCC
+    CHECK(r.find("ip6 daddr { 2001:db8::5 } accept") != std::string::npos);
+    CHECK(r.find("ip6 daddr { 2001:db8::5 } accept") < r.find("ip6 daddr 2000::/3 drop"));
+    CHECK(r.find("bad;drop") == std::string::npos);
+    CHECK(xg::lnx::nft_isolation_rules({"203.0.113.5"}).find("accept\n") == std::string::npos);
+}
+
+TEST_CASE("network lock rulesets: observe drops only QUIC, strict drops every public destination", "[linux]") {
+    using xg::NetworkLock;
+    CHECK(xg::lnx::nft_lock_rules(NetworkLock::off, {"203.0.113.5"}).empty());
+    const auto obs = xg::lnx::nft_lock_rules(NetworkLock::observe, {"203.0.113.5", "2001:db8::5"});
+    CHECK(obs.find("table inet xephyguard_lock") != std::string::npos);
+    CHECK(obs.find("xephyguard_isolate") == std::string::npos);  // never touches the isolation table
+    CHECK(obs.find("} udp dport 443 drop") != std::string::npos);
+    CHECK(obs.find("2000::/3 udp dport 443 drop") != std::string::npos);
+    CHECK(obs.find("203.0.113.4") != std::string::npos);  // the CCC stays reachable
+    CHECK(obs.find("ip6 daddr { 2001:db8::5 } accept") != std::string::npos);
+    const auto strict = xg::lnx::nft_lock_rules(NetworkLock::strict, {"203.0.113.5"});
+    CHECK(strict.find("udp dport") == std::string::npos);
+    CHECK(strict.find("} drop") != std::string::npos);
+    CHECK(strict.find("2000::/3 drop") != std::string::npos);
+    CHECK(strict.find("203.0.113.4") != std::string::npos);
+}
+
+TEST_CASE("Linux kill refuses a pid whose start time changed (F35)", "[linux]") {
+    auto pm = xg::lnx::make_process_monitor();
+    const pid_t child = ::fork();
+    if (child == 0) {
+        ::signal(SIGTERM, SIG_DFL);  // not Catch2's inherited fatal-signal reporter
+        ::pause();
+        _exit(0);
+    }
+    int64_t start = 0;
+    for (const auto& p : pm->snapshot())
+        if (p.pid == child) start = p.start_time;
+    REQUIRE(start != 0);
+    CHECK_FALSE(pm->kill(child, start + 1));  // wrong start: untouched
+    CHECK(::kill(child, 0) == 0);
+    CHECK(pm->kill(child, start));
+    int status = 0;
+    REQUIRE(::waitpid(child, &status, 0) == child);
+    CHECK(WIFSIGNALED(status));
+}
+
+TEST_CASE("Linux browser policy blocks AI extensions in Test mode and keeps admin entries (F80)", "[linux][policy]") {
+    const auto root = std::filesystem::temp_directory_path() / ("xg-ext-" + xg::random_hex(4));
+    const auto chrome = root / "etc/opt/chrome/policies/managed/xephyguard.json";
+    std::filesystem::create_directories(chrome.parent_path());
+    REQUIRE(xg::write_file_atomic(chrome.string(), R"({"ExtensionInstallBlocklist":["adminblockedextensionidaaaaaaaaa"]})"));
+    const std::vector<std::string> ai = {"jgjaeacdkonaoafenlfkkkmbaopkbilf"};
+    REQUIRE(xg::lnx::apply_linux_browser_policies(root.string(), false, "", "", ai, ai));
+    auto doc = xg::json::parse(xg::read_file(chrome.string()));
+    CHECK(doc["ExtensionInstallBlocklist"] ==
+          xg::json({"adminblockedextensionidaaaaaaaaa", "jgjaeacdkonaoafenlfkkkmbaopkbilf"}));
+    REQUIRE(xg::lnx::apply_linux_browser_policies(root.string(), false, "", "", {}, ai));  // Test over
+    doc = xg::json::parse(xg::read_file(chrome.string()));
+    CHECK(doc["ExtensionInstallBlocklist"] == xg::json({"adminblockedextensionidaaaaaaaaa"}));
+    std::filesystem::remove_all(root);
+}
+
+#endif  // _WIN32

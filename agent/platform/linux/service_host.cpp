@@ -89,16 +89,18 @@ public:
                 _exit(127);
             }
             if (pid > 0) {
+                children_.add(pid);
                 ++launched;
                 log::info("helper: (re)starting helper for {} ({})", s.user, s.session_type);
             }
         }
         // Reap finished children without blocking.
-        while (waitpid(-1, nullptr, WNOHANG) > 0) {}
+        children_.reap();
         return launched;
     }
 
 private:
+    ChildReaper children_;
     std::map<uint32_t, int64_t> last_attempt_;
 };
 

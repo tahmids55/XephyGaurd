@@ -27,7 +27,7 @@ jobs:
           mkdir -p hdr && cp -r /usr/include/openssl hdr/ && cp /usr/include/x86_64-linux-gnu/openssl/* hdr/openssl/ && cp /usr/include/sqlite3*.h hdr/
           curl -sL https://github.com/nlohmann/json/releases/download/v3.11.3/include.zip -o j.zip && unzip -q j.zip -d nl
           git clone -q --depth 1 -b v3.4.0 https://github.com/marzer/tomlplusplus.git toml
-          for f in agent/platform/windows/*.cpp agent/apps/*.cpp agent/core/src/*.cpp; do
+          for f in agent/platform/windows/*.cpp agent/apps/*.cpp agent/core/src/*.cpp xephyguard-screen/capture/win_*.cpp; do
             x86_64-w64-mingw32-g++-posix -std=c++20 -fsyntax-only -Wall -Wextra -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
               -D_WIN32_WINNT=0x0A00 -DXG_VERSION='"ci"' -Iagent/core/include -Iagent/platform/windows \
               -Ixephyguard-screen/agent -Ixephyguard-screen/capture -Ixephyguard-screen/core -Ixephyguard-screen/third_party \
@@ -74,6 +74,32 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: agent-windows, path: installers/windows/XephyGuard-Setup-*.exe }
 
+  screen-gateway:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: xephyguard-screen/gateway/go.mod, cache-dependency-path: xephyguard-screen/gateway/go.sum }
+      - run: cd xephyguard-screen/gateway && go vet ./... && go test -race ./...
+
+  screen-viewer:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: cd xephyguard-screen && node --test viewer
+
+  screen-core:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libx11-dev libxfixes-dev libxext-dev libxdamage-dev libxrandr-dev
+      # The build dir must sit inside xephyguard-screen/ (the fixture test writes ../tests/fixtures/*.bin).
+      - run: cmake -S xephyguard-screen -B xephyguard-screen/build -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build xephyguard-screen/build -j4
+      - run: ctest --test-dir xephyguard-screen/build --output-on-failure
+
   server:
     runs-on: ubuntu-24.04
     defaults: { run: { working-directory: server } }
@@ -88,7 +114,6 @@ jobs:
       - run: npm ci && npm run build
       - run: cp .env.example .env && php artisan key:generate
       - run: vendor/bin/pint --test
-        continue-on-error: true
       - run: php artisan test
 
   python:

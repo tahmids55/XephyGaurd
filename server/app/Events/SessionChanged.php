@@ -9,6 +9,7 @@ use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 class SessionChanged implements ShouldBroadcastNow
 {
     public array $payload;
+
     public int $labId;
 
     public function __construct(LabSession $s)
@@ -18,7 +19,18 @@ class SessionChanged implements ShouldBroadcastNow
             'profile' => $s->profile?->name];
     }
 
-    public function broadcastOn(): array { return [new PrivateChannel('lab.'.$this->labId)]; }
-    public function broadcastAs(): string { return 'session.changed'; }
-    public function broadcastWith(): array { return $this->payload; }
+    public function broadcastOn(): array
+    {
+        return [new PrivateChannel('lab.'.$this->labId)];
+    }
+
+    public function broadcastAs(): string
+    {
+        return 'session.changed';
+    }
+
+    public function broadcastWith(): array
+    {
+        return $this->payload;
+    }
 }

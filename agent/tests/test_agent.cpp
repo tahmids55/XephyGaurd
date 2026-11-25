@@ -20,7 +20,7 @@ struct Harness {
     VectorSink sink;
     std::unique_ptr<Agent> agent;
 
-    Harness() {
+    explicit Harness(const std::string& ccc_host = {}) {
         fs::create_directories(dir);
         auto iso_p = std::make_unique<test::FakeIsolator>();
         iso = iso_p.get();
@@ -40,6 +40,7 @@ struct Harness {
         plat.system = std::make_unique<test::FakeSystem>();
         Config cfg = Config::defaults();
         cfg.data_dir = dir.string();
+        cfg.ccc_host = ccc_host;
         agent = std::make_unique<Agent>(cfg, (dir / "agent.toml").string(), plat);
         agent->set_sink_for_tests(&sink);
         json env{{"version", "test-1"}, {"bundle", test::sample_signatures().dump()}};
@@ -263,6 +264,129 @@ TEST_CASE("common dev ports need a positive LLM-API probe") {
     CHECK(h.agent->rules().match_port(8000, true)->rule_id == "port.vllm");
 }
 
+TEST_CASE("network lock follows the session in proxy_only mode only") {
+    Harness h("ccc.lab");
+    auto pol = [](Mode m, const char* proxy_mode, const char* lock) {
+        auto p = Policy::default_for(m);
+        p.proxy_mode = proxy_mode;
+        p.network_lock = parse_network_lock(lock);
+        return p;
+    };
+    h.agent->apply_policy(pol(Mode::test, "proxy_only", "observe"));
+    CHECK(h.iso->lock == NetworkLock::observe);
+    CHECK(h.iso->lock_exempt == std::vector<std::string>{"ccc.lab"});
+    CHECK(h.agent->build_heartbeat()["network_lock"] == "observe");
+    CHECK_FALSE(h.iso->on);  // the lock is not isolation
+
+    h.agent->apply_policy(pol(Mode::test, "proxy_only", "strict"));
+    CHECK(h.iso->lock == NetworkLock::strict);
+    const int calls = h.iso->lock_calls;
+    h.agent->apply_policy(pol(Mode::test, "proxy_only", "strict"));
+    CHECK(h.iso->lock_calls == calls);  // unchanged policy: no rule churn
+
+    // Gateway mode (the gateway enforces) and Always-on never lock the PC.
+    h.agent->apply_policy(pol(Mode::test, "gateway", "strict"));
+    CHECK(h.iso->lock == NetworkLock::off);
+    h.agent->apply_policy(pol(Mode::always_on, "proxy_only", "strict"));
+    CHECK(h.iso->lock == NetworkLock::off);
+
+    // A failed install is reported truthfully in the heartbeat.
+    h.iso->lock_fails = true;
+    h.agent->apply_policy(pol(Mode::practice, "proxy_only", "observe"));
+    CHECK(h.agent->network_lock() == NetworkLock::off);
+    CHECK(h.agent->build_heartbeat()["network_lock"] == "off");
+}
+
+TEST_CASE("a tunnel to an outside host is flagged for review during a session, never closed") {
+    Harness h;
+    h.net->tunnels = {{77, "ssh", "198.51.100.7", 22}, {78, "ssh", "192.168.1.10", 22}};  // 2nd: LAN, ignored
+    h.agent->apply_policy(Policy::default_for(Mode::always_on));
+    h.agent->scan_tunnels();
+    CHECK(h.of(ev::rule_hit).empty());  // outside a session nothing is reported
+
+    h.agent->apply_policy(Policy::default_for(Mode::test));
+    h.agent->scan_tunnels();
+    auto hits = h.of(ev::rule_hit);
+    REQUIRE(hits.size() == 1);
+    CHECK(hits[0].data["rule_id"] == "net.tunnel_flow");
+    CHECK(hits[0].data["severity"] == "medium");
+    CHECK(hits[0].data["context"]["remote_ip"] == "198.51.100.7");
+    CHECK(hits[0].data["context"]["remote_port"] == 22);
+    CHECK(hits[0].data["context"]["process"] == "ssh");
+    CHECK(h.procs->killed.empty());
+    h.agent->scan_tunnels();
+    CHECK(h.of(ev::rule_hit).size() == 1);  // de-duplicated
+}
+
+TEST_CASE("screen_lease command: a positive ttl is accepted, a missing or zero ttl is ignored") {
+    Harness h;
+    h.agent->handle_command({"l1", "screen_lease", {{"ttl_s", 30}}});
+    h.agent->handle_command({"l2", "screen_lease", {{"ttl_s", 0}}});
+    h.agent->handle_command({"l3", "screen_lease", json::object()});
+    const auto r = h.of(ev::command_result);
+    REQUIRE(r.size() == 3);
+    CHECK(r[0].data.at("status") == "ok");
+    CHECK(r[1].data.at("status") == "ignored");
+    CHECK(r[2].data.at("status") == "ignored");
+}
+
+TEST_CASE("policy screen.privacy_rules parse, round-trip, and a malformed list rejects the policy") {
+    const json ok = {{"screen", {{"privacy_rules", json::array({{{"process", "keepassxc"}}, {{"title_regex", "bank|private"}}})}}}};
+    std::string err;
+    auto p = Policy::from_json(ok, &err);
+    REQUIRE(err.empty());
+    REQUIRE(p.screen_mask_rules.size() == 2);
+    CHECK(p.screen_mask_rules[0].process == "keepassxc");
+    CHECK(p.screen_mask_rules[1].title_regex == "bank|private");
+    CHECK(Policy::from_json(p.to_json()).screen_mask_rules.size() == 2);
+    CHECK(Policy::from_json(json::object()).screen_mask_rules.empty());
+
+    for (const json& bad : {json{{"screen", {{"privacy_rules", "x"}}}}, json{{"screen", {{"privacy_rules", json::array({json::object()})}}}},
+                            json{{"screen", {{"privacy_rules", json::array({{{"process", 5}}})}}}},
+                            json{{"screen", {{"privacy_rules", json::array({{{"title_regex", std::string(300, 'a')}}})}}}}}) {
+        std::string e;
+        auto q = Policy::from_json(bad, &e);
+        CHECK_FALSE(e.empty());
+        CHECK(q.screen_mask_rules.empty());
+    }
+}
+
+TEST_CASE("policy screen encoding: defaults to JPEG, takes valid values, ignores invalid ones") {
+    auto d = Policy::from_json(json::object());
+    CHECK(d.screen_codec == "jpeg");
+    CHECK(d.screen_quality == 85);
+    CHECK(d.screen_webp_method == 1);
+    std::string err;
+    auto p = Policy::from_json(json{{"screen", {{"codec", "webp"}, {"quality", 60}, {"webp_method", 0}}}}, &err);
+    CHECK(err.empty());
+    CHECK(p.screen_codec == "webp");
+    CHECK(p.screen_quality == 60);
+    CHECK(p.screen_webp_method == 0);
+    auto rt = Policy::from_json(p.to_json());
+    CHECK(rt.screen_codec == "webp");
+    CHECK(rt.screen_quality == 60);
+    auto bad = Policy::from_json(json{{"screen", {{"codec", "h264"}, {"quality", 1000}, {"webp_method", "x"}}}}, &err);
+    CHECK(bad.screen_codec == "jpeg");
+    CHECK(bad.screen_quality == 85);
+    CHECK(bad.screen_webp_method == 1);
+    CHECK(d.screen_cpu_budget_pct == 8.0);
+    CHECK(Policy::from_json(json{{"screen", {{"cpu_budget_pct", 15}}}}).screen_cpu_budget_pct == 15.0);
+    CHECK(Policy::from_json(json{{"screen", {{"cpu_budget_pct", 0.5}}}}).screen_cpu_budget_pct == 8.0);
+    CHECK(Policy::from_json(json{{"screen", {{"cpu_budget_pct", "9"}}}}).screen_cpu_budget_pct == 8.0);
+    CHECK(Policy::from_json(Policy::from_json(json{{"screen", {{"cpu_budget_pct", 12.5}}}}).to_json()).screen_cpu_budget_pct == 12.5);
+}
+
+TEST_CASE("policy network_lock parses known values and falls back to off") {
+    CHECK(Policy::from_json(json{{"network_lock", "strict"}}).network_lock == NetworkLock::strict);
+    CHECK(Policy::from_json(json{{"network_lock", "OBSERVE"}}).network_lock == NetworkLock::observe);
+    CHECK(Policy::from_json(json{{"network_lock", "bogus"}}).network_lock == NetworkLock::off);
+    CHECK(Policy::from_json(json{{"network_lock", 3}}).network_lock == NetworkLock::off);
+    CHECK(Policy::from_json(json::object()).network_lock == NetworkLock::off);
+    auto p = Policy::default_for(Mode::test);
+    p.network_lock = NetworkLock::observe;
+    CHECK(Policy::from_json(p.to_json()).network_lock == NetworkLock::observe);
+}
+
 TEST_CASE("isolate cuts the Internet (LAN + CCC kept) and closes AI apps even outside tests") {
     Harness h;
     h.agent->apply_policy(Policy::default_for(Mode::practice));  // practice: detect + alert only
@@ -351,12 +475,19 @@ TEST_CASE("agent emits fallback hit for unclaimed IDE extension-host AI flows an
 }
 
 TEST_CASE("agent pushes proxy_pac_url to helper in proxy_only mode") {
-    Harness h;
+    Harness h("192.168.0.100");
     auto p = Policy::default_for(Mode::practice);
     p.proxy_mode = "proxy_only";
+    // F97: only an HTTPS PAC on the CCC host is passed on; plain HTTP or another host is dropped.
     p.proxy_pac_url = "http://192.168.0.100/proxy.pac";
     h.agent->apply_policy(p);
-    CHECK(h.ipc->count_containing("http://192.168.0.100/proxy.pac") >= 1);
+    CHECK(h.ipc->count_containing("http://192.168.0.100/proxy.pac") == 0);
+    p.proxy_pac_url = "https://evil.example/proxy.pac";
+    h.agent->apply_policy(p);
+    CHECK(h.ipc->count_containing("evil.example") == 0);
+    p.proxy_pac_url = "https://192.168.0.100/proxy.pac";
+    h.agent->apply_policy(p);
+    CHECK(h.ipc->count_containing("https://192.168.0.100/proxy.pac") >= 1);
 
     p.proxy_mode = "gateway";
     h.agent->apply_policy(p);
@@ -394,4 +525,118 @@ TEST_CASE("agent heartbeat reports honest capabilities.gpu from IGpuMonitor::ava
     gpu_ptr->avail = true;
     CHECK(a.build_heartbeat()["capabilities"]["gpu"] == true);
     std::filesystem::remove_all(dir2);
+}
+
+TEST_CASE("web.ai_tab hits carry the filtered title, never the raw one (I-AGENT-8)") {
+    Harness h;
+    IIpcServer::Peer peer{7, 1000, 555, "alice"};
+    for (auto tc : {TitleCapture::off, TitleCapture::app_only}) {
+        auto p = Policy::default_for(Mode::practice);
+        p.collect.window = true;
+        p.title_capture = tc;
+        h.agent->apply_policy(p);
+        h.sink.events.clear();
+        h.agent->on_helper_message(peer, R"({"t":"window","app":"chrome","title":"ChatGPT - secret project plan"})");
+        auto hits = h.of(ev::rule_hit);
+        REQUIRE(hits.size() == 1);
+        CHECK(hits[0].data["context"]["ai_site"] == "ChatGPT");
+        CHECK(hits[0].data.dump().find("secret project plan") == std::string::npos);
+        h.agent->apply_signatures({{"version", "test-2"}, {"bundle", test::sample_signatures().dump()}}, false);  // reset dedup
+    }
+}
+
+TEST_CASE("helper key stats keep only allow-listed numeric fields, clamped (I-AGENT-10)") {
+    Harness h;
+    auto p = Policy::default_for(Mode::practice);
+    p.collect.keys = true;
+    h.agent->apply_policy(p);
+    IIpcServer::Peer peer{7, 1000, 555, "alice"};
+    h.agent->on_helper_message(peer, json({{"t", "keys"}, {"keys", 40}, {"backspaces", -5}, {"iki_mean", 110.5},
+                                           {"backspace_ratio", 7}, {"typed", "my password"}, {"bursts", "x"},
+                                           {"window_s", 5}}).dump());
+    auto ks = h.of(ev::key_stats);
+    REQUIRE(ks.size() == 1);
+    const auto& d = ks[0].data;
+    CHECK(d["keys"] == 40);
+    CHECK(d["backspaces"] == 0);
+    CHECK(d["backspace_ratio"] == 1.0);
+    CHECK(d["iki_mean"] == 110.5);
+    CHECK_FALSE(d.contains("typed"));
+    CHECK_FALSE(d.contains("bursts"));
+    CHECK(d["user"] == "alice");
+    CHECK(d.dump().find("password") == std::string::npos);
+}
+
+TEST_CASE("copy/paste targets keep file names only with title_capture=full (I-AGENT-9)") {
+    Harness h;
+    IIpcServer::Peer peer{7, 1000, 555, "alice"};
+    const std::string msg = R"j({"t":"paste","chars":10,"src":"/usr/bin/code (secret_plan.cpp)","dst":"chrome"})j";
+    for (auto [tc, want] : {std::pair{TitleCapture::app_only, std::string("code")},
+                            std::pair{TitleCapture::full, std::string("code (secret_plan.cpp)")}}) {
+        auto p = Policy::default_for(Mode::practice);
+        p.collect.clipboard = true;
+        p.title_capture = tc;
+        h.agent->apply_policy(p);
+        h.sink.events.clear();
+        h.agent->on_helper_message(peer, msg);
+        auto ev = h.of(ev::paste);
+        REQUIRE(ev.size() == 1);
+        CHECK(ev[0].data["src"] == want);
+    }
+}
+
+TEST_CASE("a flooding helper is rate limited per connection (I-AGENT-16)") {
+    Harness h;
+    auto p = Policy::default_for(Mode::practice);
+    p.collect.window = true;
+    h.agent->apply_policy(p);
+    IIpcServer::Peer flood{7, 1000, 555, "alice"}, other{8, 1001, 556, "bob"};
+    for (int i = 0; i < 2000; ++i)
+        h.agent->on_helper_message(flood, R"({"t":"window","app":"code","title":"x"})");
+    const size_t got = h.of(ev::window_focus).size();
+    CHECK(got >= 200);
+    CHECK(got < 260);  // burst 200 + refill while looping
+    h.agent->on_helper_message(other, R"({"t":"window","app":"code","title":"x"})");
+    CHECK(h.of(ev::window_focus).size() == got + 1);  // other peers are unaffected
+}
+
+TEST_CASE("kill by pid only hits the process the CCC saw, not a reused pid (F35)") {
+    Harness h;
+    h.agent->apply_policy(Policy::default_for(Mode::practice));
+    h.procs->procs = {{77, 1, "/usr/bin/cursor", "cursor", "", "alice", 1, 5000}};
+    h.agent->handle_command({"c_snap", "rescan", {{"what", "processes"}}});
+    REQUIRE(h.of(ev::process_snapshot).back().data["list"][0]["start"] == 5000);
+    // pid 77 now belongs to a new process (start 6000): a kill carrying the old start time must not hit it.
+    h.procs->procs = {{77, 1, "/usr/bin/bash", "bash", "", "alice", 1, 6000}};
+    h.agent->handle_command({"k1", "kill", {{"pid", 77}, {"start_time", 5000}}});
+    CHECK(h.procs->killed.empty());
+    CHECK(h.of(ev::command_result).back().data["detail"]["processes"][0]["killed"] == false);
+    h.agent->handle_command({"k2", "kill", {{"pid", 77}, {"start_time", 6000}}});
+    CHECK(h.procs->killed == std::vector<int64_t>{77});
+}
+
+TEST_CASE("title-only AI tab hits use the bundle severity and are marked as a title signal (F76)") {
+    Harness h;
+    auto p = Policy::default_for(Mode::test);
+    p.collect.window = true;
+    h.agent->apply_policy(p);
+    IIpcServer::Peer peer{7, 1000, 555, "alice"};
+    h.agent->on_helper_message(peer, R"({"t":"window","app":"chrome","title":"ChatGPT - Google Chrome"})");
+    auto hits = h.of(ev::rule_hit);
+    REQUIRE(hits.size() == 1);
+    CHECK(hits[0].data["severity"] == "medium");  // default when the bundle does not say otherwise
+    CHECK(hits[0].data["context"]["signal"] == "window_title");
+}
+
+TEST_CASE("AI browser extensions are blocked by policy only during a Test (F80)") {
+    Harness h;
+    auto* sys = static_cast<test::FakeSystem*>(h.plat.system.get());
+    json sig = test::sample_signatures();
+    sig["extensions"].push_back({{"id", "ext.browser.ai"}, {"ide", "browser"}, {"severity", "medium"},
+                                 {"ext_ids", {"jgjaeacdkonaoafenlfkkkmbaopkbilf", "not-a-store-id"}}});
+    REQUIRE(h.agent->apply_signatures({{"version", "t3"}, {"bundle", sig.dump()}}, false));
+    h.agent->apply_policy(Policy::default_for(Mode::test));
+    CHECK(sys->blocked_extensions == std::vector<std::string>{"jgjaeacdkonaoafenlfkkkmbaopkbilf"});
+    h.agent->apply_policy(Policy::default_for(Mode::practice));
+    CHECK(sys->blocked_extensions.empty());
 }

@@ -52,7 +52,8 @@ void reload_systemd_resolved() {
 }
 
 bool write_chromium_policy_file(const std::string& path, bool ai_suppressed, const std::string& effective_url,
-                                const std::string& pac_url) {
+                                const std::string& pac_url, const std::vector<std::string>& blocked,
+                                const std::vector<std::string>& ours) {
     const bool is_edge = path.find("/edge/") != std::string::npos;
     bool existed = false;
     const std::string existing_raw = read_file(path, &existed);
@@ -100,6 +101,15 @@ bool write_chromium_policy_file(const std::string& path, bool ai_suppressed, con
         doc.erase("ProxyMode");
         doc.erase("ProxyPacUrl");
     }
+
+    // Extension blocklist: keep an administrator's own entries, replace only ids this agent manages.
+    json list = json::array();
+    if (doc.contains("ExtensionInstallBlocklist") && doc["ExtensionInstallBlocklist"].is_array())
+        for (const auto& v : doc["ExtensionInstallBlocklist"])
+            if (v.is_string() && std::find(ours.begin(), ours.end(), v.get<std::string>()) == ours.end()) list.push_back(v);
+    for (const auto& id : blocked) list.push_back(id);
+    if (list.empty()) doc.erase("ExtensionInstallBlocklist");
+    else doc["ExtensionInstallBlocklist"] = list;
 
     if (existed && doc == orig) return true;
     std::error_code ec;
@@ -154,6 +164,19 @@ bool write_firefox_policy_file(const std::string& path, bool ai_suppressed, cons
 
 class SystemInfo final : public ISystemInfo {
 public:
+    json fallback_screen_caps(const std::vector<UserSession>& sessions, bool screen_enabled) override {
+        bool has_wayland = false, has_x11 = false;
+        for (const auto& s : sessions) {
+            if (s.session_type == "wayland") has_wayland = true;
+            else if (s.session_type == "x11") has_x11 = true;
+        }
+        if (has_wayland && !has_x11)
+            return {{"session_type", "wayland"}, {"snapshot", false}, {"live", false}, {"delta_tiles", false},
+                    {"monitors", 1}, {"secure_desktop", false}};
+        const bool x11_ok = has_x11 && screen_enabled;
+        return {{"session_type", "x11"}, {"snapshot", x11_ok}, {"live", x11_ok}, {"delta_tiles", x11_ok},
+                {"monitors", 1}, {"secure_desktop", false}};
+    }
     std::string hostname() override {
         char buf[256] = {0};
         ::gethostname(buf, sizeof buf - 1);
@@ -232,7 +255,7 @@ public:
 
     ~SystemInfo() override {
         if (ai_suppressed_ || !proxy_pac_url_.empty()) {
-            apply_linux_browser_policies("", false, {}, {});
+            apply_linux_browser_policies("", false, {}, {}, {}, managed_extensions_);
         }
         if (!lab_dns_ip_.empty()) {
             apply_linux_resolved_dns("", "", true);
@@ -243,13 +266,23 @@ public:
         if (suppressed == ai_suppressed_ && search_url == search_url_) return;
         ai_suppressed_ = suppressed;
         search_url_ = search_url;
-        apply_linux_browser_policies("", ai_suppressed_, search_url_, proxy_pac_url_);
+        reapply_browser_policies();
     }
 
     void set_browser_proxy_pac(const std::string& pac_url) override {
         if (pac_url == proxy_pac_url_) return;
         proxy_pac_url_ = pac_url;
-        apply_linux_browser_policies("", ai_suppressed_, search_url_, proxy_pac_url_);
+        reapply_browser_policies();
+    }
+
+    void set_browser_extension_blocklist(const std::vector<std::string>& ids) override {
+        if (ids == blocked_extensions_) return;
+        for (const auto& id : ids)  // remember every id we ever set, so it can be removed again later
+            if (std::find(managed_extensions_.begin(), managed_extensions_.end(), id) == managed_extensions_.end())
+                managed_extensions_.push_back(id);
+        blocked_extensions_ = ids;
+        reapply_browser_policies();
+        log::info("browser policy: {} AI extension(s) blocked", blocked_extensions_.size());
     }
 
     void set_lab_dns(const std::string& dns_ip) override {
@@ -259,9 +292,15 @@ public:
     }
 
 private:
+    void reapply_browser_policies() {
+        apply_linux_browser_policies("", ai_suppressed_, search_url_, proxy_pac_url_, blocked_extensions_,
+                                     managed_extensions_);
+    }
+
     bool ai_suppressed_ = false;
     std::string search_url_;
     std::string proxy_pac_url_;
+    std::vector<std::string> blocked_extensions_, managed_extensions_;
     std::string lab_dns_ip_;
 
     static std::string os_release(const std::string& key) {
@@ -278,12 +317,14 @@ private:
 }  // namespace
 
 bool apply_linux_browser_policies(const std::string& root_prefix, bool ai_suppressed, const std::string& search_url,
-                                  const std::string& pac_url) {
+                                  const std::string& pac_url, const std::vector<std::string>& blocked_extensions,
+                                  const std::vector<std::string>& managed_extensions) {
     const std::string effective_url =
         search_url.empty() ? "https://www.google.com/search?q={searchTerms}&udm=14" : search_url;
     bool all_ok = true;
     for (const char* rel : kChromiumPolicyPaths) {
-        if (!write_chromium_policy_file(root_prefix + rel, ai_suppressed, effective_url, pac_url)) {
+        if (!write_chromium_policy_file(root_prefix + rel, ai_suppressed, effective_url, pac_url, blocked_extensions,
+                                        managed_extensions)) {
             all_ok = false;
         }
     }

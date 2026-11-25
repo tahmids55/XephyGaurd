@@ -1,4 +1,4 @@
-"""Minimal DB access for MySQL (production) and SQLite (tests, offline exports)."""
+"""Minimal DB access for MySQL (production) and SQLite (tests, local dev)."""
 from __future__ import annotations
 
 import json

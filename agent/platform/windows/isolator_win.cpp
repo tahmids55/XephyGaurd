@@ -4,6 +4,7 @@
 // multicast ranges are simply not part of the rule, so the LAN keeps working; the CCC is carved out of the
 // blocked ranges (block rules beat allow rules in Windows Firewall, so an allow rule would not be enough).
 // Windows then reports "No Internet" (globe icon) because its connectivity probe is blocked.
+// The session network lock (proxy_only mode) is a second rule, "XephyGuard Lock", built the same way.
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
@@ -14,11 +15,13 @@
 #include "win_common.hpp"
 #include "xg/isolation.hpp"
 #include "xg/log.hpp"
+#include "xg/policy.hpp"
 
 namespace xg::win {
 namespace {
 
 constexpr const char* kRuleName = "XephyGuard Isolate";
+constexpr const char* kLockRule = "XephyGuard Lock";  // session network lock (proxy_only), separate from Isolate
 
 // Runs `netsh <args>` without a console window; returns the exit code (-1 if it could not be started).
 int run_netsh(const std::string& args) {
@@ -44,21 +47,8 @@ class NetworkIsolator final : public INetworkIsolator {
 public:
     bool isolate(const std::vector<std::string>& exempt_hosts) override {
         std::lock_guard lk(mu_);
-        // Resolve now (before the block exists). Resolution may fail later (DNS is blocked), so remember results.
-        for (const auto& h : exempt_hosts) {
-            auto ips = resolve(h);
-            if (!ips.empty()) known_ips_[h] = std::move(ips);
-        }
-        std::set<std::string> exempt;
-        for (const auto& h : exempt_hosts)
-            if (auto it = known_ips_.find(h); it != known_ips_.end()) exempt.insert(it->second.begin(), it->second.end());
-
-        std::string remote;
-        for (const auto& r : isolation::blocked_ipv4_ranges({exempt.begin(), exempt.end()})) {
-            if (!remote.empty()) remote += ",";
-            remote += r;
-        }
-        remote += std::string(",") + isolation::blocked_ipv6_prefix();
+        const auto exempt = exempt_ips(exempt_hosts);
+        const std::string remote = blocked_remote(exempt);
 
         run_netsh("advfirewall set allprofiles state on");  // a student cannot switch the firewall off (not admin)
         run_netsh(std::string("advfirewall firewall delete rule name=\"") + kRuleName + "\"");
@@ -82,7 +72,57 @@ public:
         return run_netsh(std::string("advfirewall firewall show rule name=\"") + kRuleName + "\"") == 0;
     }
 
+    bool set_network_lock(NetworkLock level, const std::vector<std::string>& exempt_hosts) override {
+        std::lock_guard lk(mu_);
+        run_netsh(std::string("advfirewall firewall delete rule name=\"") + kLockRule + "\"");
+        lock_ = NetworkLock::off;
+        if (level == NetworkLock::off) return true;
+        const auto exempt = exempt_ips(exempt_hosts);
+        // observe: QUIC only, so browsers fall back to TCP through the proxy; strict: everything public.
+        const std::string proto = level == NetworkLock::observe ? "protocol=UDP remoteport=443" : "protocol=any";
+        run_netsh("advfirewall set allprofiles state on");
+        const int rc = run_netsh(std::string("advfirewall firewall add rule name=\"") + kLockRule +
+                                 "\" dir=out action=block enable=yes profile=any " + proto +
+                                 " remoteip=" + blocked_remote(exempt));
+        if (rc != 0) {
+            log::error("network lock: netsh add rule failed (exit {})", rc);
+            return false;
+        }
+        lock_ = level;
+        log::info("network lock: {} ({} exempt address(es))", to_string(level), exempt.size());
+        return true;
+    }
+
+    NetworkLock network_lock() override {
+        std::lock_guard lk(mu_);
+        if (lock_ == NetworkLock::off) return NetworkLock::off;
+        return run_netsh(std::string("advfirewall firewall show rule name=\"") + kLockRule + "\"") == 0
+                   ? lock_ : NetworkLock::off;
+    }
+
 private:
+    // Resolved now (before a block exists); remembered because DNS may be unreachable later. Caller holds mu_.
+    std::vector<std::string> exempt_ips(const std::vector<std::string>& hosts) {
+        for (const auto& h : hosts) {
+            auto ips = resolve(h);
+            if (!ips.empty()) known_ips_[h] = std::move(ips);
+        }
+        std::set<std::string> out;
+        for (const auto& h : hosts)
+            if (auto it = known_ips_.find(h); it != known_ips_.end()) out.insert(it->second.begin(), it->second.end());
+        return {out.begin(), out.end()};
+    }
+
+    // Public IPv4 ranges minus the exempt addresses, plus IPv6 global unicast, as a netsh remoteip list.
+    static std::string blocked_remote(const std::vector<std::string>& exempt) {
+        std::string remote;
+        for (const auto& r : isolation::blocked_ipv4_ranges(exempt)) {
+            if (!remote.empty()) remote += ",";
+            remote += r;
+        }
+        return remote + "," + isolation::blocked_ipv6_prefix();
+    }
+
     static std::vector<std::string> resolve(const std::string& host) {
         std::vector<std::string> out;
         if (host.empty()) return out;
@@ -102,6 +142,7 @@ private:
 
     std::mutex mu_;
     std::map<std::string, std::vector<std::string>> known_ips_;
+    NetworkLock lock_ = NetworkLock::off;
 };
 
 }  // namespace

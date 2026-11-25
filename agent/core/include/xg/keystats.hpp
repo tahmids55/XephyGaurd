@@ -21,6 +21,10 @@ struct KeyStatsWindow {
     json to_json() const;
 };
 
+/// Copies only the KeyStatsWindow::to_json fields (plus paste_chords) from a helper message, numbers only,
+/// clamped to plausible ranges. Anything else the helper sent is dropped.
+json keystats_from_helper(const json& msg);
+
 /// Feeds key-down timestamps; emits one KeyStatsWindow per elapsed window.
 /// The caller passes only (timestamp, is_backspace): the key identity never enters this class.
 class KeyStatsAggregator {

@@ -17,6 +17,7 @@
 #include <thread>
 
 #include "linux_common.hpp"
+#include "xg/ipc_framing.hpp"
 #include "xg/ipc_messages.hpp"
 #include "xg/log.hpp"
 
@@ -71,6 +72,8 @@ public:
         for (auto& [id, c] : conns_) send_all(c.fd, line);
     }
 
+    void set_frame_handler(FrameHandler h) override { on_frame_ = std::move(h); }
+
     void stop() override {
         running_ = false;
         if (thread_.joinable()) thread_.join();
@@ -82,7 +85,7 @@ public:
     }
 
 private:
-    struct Conn { int fd; Peer peer; std::string buf; };
+    struct Conn { int fd; Peer peer; ipc::StreamReader reader; };
 
     void loop(const std::function<void(const Peer&, const std::string&)>& on_msg,
               const std::function<void(const Peer&, bool)>& on_peer) {
@@ -97,33 +100,29 @@ private:
             if (pfds[0].revents & POLLIN) accept_one(on_peer);
             for (size_t i = 1; i < pfds.size(); ++i) {
                 if (!(pfds[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
-                char buf[8192];
+                char buf[64 * 1024];
                 ssize_t n = ::recv(pfds[i].fd, buf, sizeof buf, 0);
                 Peer peer;
-                std::vector<std::string> lines;
+                std::vector<ipc::Record> records;
                 bool closed = false;
                 {
                     std::lock_guard lk(mu_);
                     auto it = conns_.find(ids[i - 1]);
                     if (it == conns_.end()) continue;
                     peer = it->second.peer;
-                    if (n <= 0) {
+                    const bool ok = n > 0 && it->second.reader.feed(buf, size_t(n), records);
+                    if (!ok) {
+                        if (n > 0) log::warn("ipc: protocol error from helper {} (pid {}), closing", peer.user, peer.pid);
                         ::close(it->second.fd);
                         conns_.erase(it);
                         closed = true;
-                    } else {
-                        auto& b = it->second.buf;
-                        b.append(buf, size_t(n));
-                        size_t pos;
-                        while ((pos = b.find('\n')) != std::string::npos) {
-                            lines.push_back(b.substr(0, pos));
-                            b.erase(0, pos + 1);
-                        }
-                        if (b.size() > ipc::kMaxLine) b.clear();  // oversized garbage
                     }
                 }
-                if (closed) { on_peer(peer, false); continue; }
-                for (const auto& l : lines) on_msg(peer, l);
+                for (auto& r : records) {
+                    if (r.kind == ipc::Record::Kind::line) on_msg(peer, r.data);
+                    else if (on_frame_) on_frame_(peer, std::move(r.data));
+                }
+                if (closed) on_peer(peer, false);
             }
         }
     }
@@ -156,6 +155,7 @@ private:
     }
 
     std::string allowed_exe_;
+    FrameHandler on_frame_;
     int lfd_ = -1;
     std::atomic<bool> running_{false};
     std::thread thread_;

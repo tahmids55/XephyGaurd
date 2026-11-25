@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
@@ -88,7 +90,7 @@ class SignatureController extends Controller
         ]);
         $rule = Rule::query()->updateOrCreate(['rule_id' => $d['rule_id']], [
             'kind' => $d['kind'], 'severity' => $d['severity'], 'description' => $d['description'],
-            'definition' => json_decode($d['definition'], true), 'enabled' => (bool) ($d['enabled'] ?? true),
+            'definition' => json_decode($d['definition'], true), 'enabled' => (bool) ($d['enabled'] ?? true), 'edited' => true,
             'actions' => ! empty($d['test_actions']) ? ['test' => array_values($d['test_actions'])] : null,
         ]);
         Audit::log('rule.save', $rule, ['rule_id' => $rule->rule_id]);
@@ -118,10 +120,13 @@ class SignatureController extends Controller
         return back()->with('status', "Published {$v->version}; $n agents notified.");
     }
 
-    public function activate(SignatureVersion $version, CommandBus $bus)
+    public function activate(SignatureVersion $version, SignatureCompiler $compiler, CommandBus $bus)
     {
-        SignatureVersion::query()->update(['active' => false]);
-        $version->update(['active' => true]);
+        try {
+            $compiler->activate($version);
+        } catch (\RuntimeException $e) {
+            return back()->with('error', $e->getMessage());
+        }
         $bus->sendMany(Pc::query()->active()->get(), 'policy_updated');
         Audit::log('signatures.rollback', $version, ['version' => $version->version]);
 

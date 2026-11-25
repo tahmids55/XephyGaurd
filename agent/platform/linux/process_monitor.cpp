@@ -5,6 +5,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -70,6 +71,8 @@ public:
     ~ProcessMonitor() override { stop(); }
 
     std::vector<ProcessInfo> snapshot() override {
+        // The agent core is the only caller (DECISIONS #22); the lock keeps the cache safe if that changes.
+        std::lock_guard lk(snap_mu_);
         std::vector<ProcessInfo> out;
         std::unordered_map<int64_t, ProcessInfo> next;
         std::unordered_map<int64_t, uint64_t> next_cpu;
@@ -145,10 +148,17 @@ public:
             while (running_) {
                 pollfd pfd{fd_, POLLIN, 0};
                 if (::poll(&pfd, 1, 500) <= 0) continue;
-                ssize_t n = ::recv(fd_, buf, sizeof buf, 0);
+                sockaddr_nl from{};
+                socklen_t from_len = sizeof from;
+                ssize_t n = ::recvfrom(fd_, buf, sizeof buf, 0, reinterpret_cast<sockaddr*>(&from), &from_len);
                 if (n <= 0) continue;
+                // Only the kernel (nl_pid 0) may speak on this socket (I-AGENT-27).
+                if (from_len < sizeof from || from.nl_family != AF_NETLINK || from.nl_pid != 0) continue;
                 for (auto* h = reinterpret_cast<nlmsghdr*>(buf); NLMSG_OK(h, size_t(n)); h = NLMSG_NEXT(h, n)) {
+                    // The payload must hold a whole cn_msg + proc_event before we read it.
+                    if (h->nlmsg_len < NLMSG_LENGTH(sizeof(cn_msg) + sizeof(proc_event))) continue;
                     auto* cn = reinterpret_cast<cn_msg*>(NLMSG_DATA(h));
+                    if (cn->id.idx != CN_IDX_PROC || cn->id.val != CN_VAL_PROC || cn->len < sizeof(proc_event)) continue;
                     auto* ev = reinterpret_cast<proc_event*>(cn->data);
                     if (ev->what != PROC_EVENT_EXEC) continue;
                     ProcessInfo p;
@@ -160,18 +170,37 @@ public:
         return true;
     }
 
-    bool kill(int64_t pid) override {
+    bool kill(int64_t pid, int64_t expected_start) override {
         if (pid <= 1) return false;
+#ifdef SYS_pidfd_open
+        // pidfd first, then check the start time: if it matches, the pidfd is that very process, and every
+        // signal below goes to it or fails; a reused pid can never be hit (F35).
+        if (const int pfd = int(::syscall(SYS_pidfd_open, pid_t(pid), 0)); pfd >= 0) {
+            ProcessInfo t;
+            if (!read_proc(pid, t, false) || (expected_start != 0 && t.start_time != expected_start) ||
+                ::syscall(SYS_pidfd_send_signal, pfd, SIGTERM, nullptr, 0) != 0) {
+                ::close(pfd);
+                return false;
+            }
+            std::thread([pfd] {
+                pollfd p{pfd, POLLIN, 0};  // readable once the process has exited
+                if (::poll(&p, 1, 1500) == 0) ::syscall(SYS_pidfd_send_signal, pfd, SIGKILL, nullptr, 0);
+                ::close(pfd);
+            }).detach();
+            return true;
+        }
+#endif
         ProcessInfo target;
         const bool had_info = read_proc(pid, target, false);
+        if (expected_start != 0 && (!had_info || target.start_time != expected_start)) return false;
         if (::kill(pid_t(pid), SIGTERM) != 0) return false;
         // Escalate if the same process (matching start_time) ignores SIGTERM.
-        const int64_t expected_start = target.start_time;
-        std::thread([pid, had_info, expected_start] {
+        const int64_t seen_start = target.start_time;
+        std::thread([pid, had_info, seen_start] {
             std::this_thread::sleep_for(std::chrono::milliseconds(1500));
             ProcessInfo check;
             if (!read_proc(pid, check, false)) return;
-            if (had_info && expected_start != 0 && check.start_time != expected_start) return;
+            if (had_info && seen_start != 0 && check.start_time != seen_start) return;
             ::kill(pid_t(pid), SIGKILL);
         }).detach();
         return true;
@@ -185,6 +214,7 @@ public:
     }
 
 private:
+    std::mutex snap_mu_;  // guards cache_, cpu_ticks_, last_sys_ticks_
     std::unordered_map<int64_t, ProcessInfo> cache_;
     std::unordered_map<int64_t, uint64_t> cpu_ticks_;
     uint64_t last_sys_ticks_ = 0;

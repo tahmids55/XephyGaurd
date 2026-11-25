@@ -179,6 +179,7 @@ bool WebSocketClient::connect(const std::string& host, uint16_t port, const std:
     use_tls_ = use_tls;
     buf_.clear();
     partial_.clear();
+    in_message_ = false;
     if (use_tls_) {
         if (!conn_.connect(host, port, opts, err)) return false;
     } else {
@@ -270,7 +271,19 @@ bool WebSocketClient::send_binary(const std::string& data) {
     return open_.load() && send_frame(WsOpcode::binary, data);
 }
 
-std::optional<std::string> WebSocketClient::receive(int timeout_ms) {
+void WebSocketClient::interrupt() {
+    std::lock_guard lk(io_mu_);
+    if (!open_.load()) return;
+    const long long fd = use_tls_ ? conn_.native_handle() : plain_sock_;
+    if (fd < 0) return;
+#ifdef _WIN32
+    ::shutdown(static_cast<SOCKET>(fd), SD_BOTH);
+#else
+    ::shutdown(int(fd), SHUT_RDWR);
+#endif
+}
+
+std::optional<std::string> WebSocketClient::receive(int timeout_ms, bool interruptible) {
     const int64_t deadline = steady_ms() + timeout_ms;
     char b[16384];
     while (open_.load()) {
@@ -293,15 +306,19 @@ std::optional<std::string> WebSocketClient::receive(int timeout_ms) {
                 }
                 case WsOpcode::text:
                 case WsOpcode::binary:
-                case WsOpcode::cont:
-                    partial_ += fr->payload;
-                    if (fr->fin) { std::string m = std::move(partial_); partial_.clear(); return m; }
-                    if (partial_.size() > 16 * 1024 * 1024) {
+                case WsOpcode::cont: {
+                    // RFC 6455 5.4: a continuation needs an open message, a new message needs none open.
+                    const bool bad_order = (fr->opcode == WsOpcode::cont) != in_message_;
+                    if (bad_order || partial_.size() + fr->payload.size() > max_message_) {
                         std::lock_guard lk(io_mu_);
                         raw_close_locked();
                         return std::nullopt;
                     }
+                    partial_ += fr->payload;
+                    in_message_ = !fr->fin;
+                    if (fr->fin) { std::string m = std::move(partial_); partial_.clear(); return m; }
                     continue;
+                }
                 default: continue;
             }
         }
@@ -312,7 +329,7 @@ std::optional<std::string> WebSocketClient::receive(int timeout_ms) {
         }
         const int64_t left = deadline - steady_ms();
         if (left <= 0) return std::nullopt;
-        const int slice = int(std::min<int64_t>(left, 50));
+        const int slice = interruptible ? int(left) : int(std::min<int64_t>(left, 50));
         if (!raw_wait_readable(slice)) continue;
         long n = 0;
         {

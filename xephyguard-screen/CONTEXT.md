@@ -4,7 +4,7 @@
 
 ### What exists now
 - **Fixed Contracts:**
-  - `core/protocol.h`: Little-endian binary wire protocol with 28-byte Message header and 10-byte tile header (`magic = 0x5847`, `version = 1`, `kTile = 64`).
+  - `core/protocol.h`: Little-endian binary wire protocol with 28-byte Message header and 10-byte tile header (`magic = 0x5847`, `version = 1`, `kTile = 64`). Version 2 (Frame only) uses 14-byte pixel-rectangle records (`x,y,w,h`, max 256x256); v1 decode kept (docs/PROTOCOL.md). `EncoderConfig.rectangles` (default off) makes the encoder merge dirty tiles into rectangles.
   - `capture/capture.h`: Abstract `ScreenCapture` interface and `Frame` struct with dirty rectangles.
   - `core/tiles.h`: `TileTracker` tracking changed 64x64 tiles with xxHash64 and pending tile accumulator.
   - `core/encoder.h`: `FrameEncoder` supporting WebP and JPEG tile encoding and adaptive full-frame fallback.
@@ -69,7 +69,7 @@
 ### What exists now
 - **Gateway (`gateway/`):**
   - `gateway/auth_iface.go`: Fixed contract defining `Authenticator` interface (`AuthViewer` and `AuthAgent`).
-  - `gateway/relay.go`: High-performance WebSocket relay using `github.com/coder/websocket`.
+  - `gateway/stream.go`, `agent_handler.go`, `viewer_handler.go`: High-performance WebSocket relay using `github.com/coder/websocket` (streams and routes, agent side, viewer side).
     - `/agent`: Authenticated with `AuthAgent`, bidirectional binary streaming and text control frame handling.
     - `/view`: Authenticated with `AuthViewer`, pairs by `stream_id`, enforces maximum 2 viewers per stream.
     - Bounded channels per viewer (capacity 8): on queue overflow, drops oldest message and issues `KEYFRAME_REQ` (msg type 4) to the agent.

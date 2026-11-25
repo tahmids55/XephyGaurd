@@ -1,12 +1,16 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Tests\Feature;
 
+use App\Models\Agent;
 use App\Models\Alert;
 use App\Models\Command;
 use App\Models\Event;
 use App\Models\KeyStat;
 use App\Models\PasteEvent;
+use App\Models\Setting;
 use App\Services\SessionManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
@@ -40,6 +44,50 @@ class AgentApiTest extends TestCase
         $this->withHeaders($this->agentHeaders($token, $otherCert))->getJson('/api/agent/v1/policy')->assertForbidden();
         $this->withHeaders($this->agentHeaders($token, $cert))->getJson('/api/agent/v1/policy')->assertOk()
             ->assertJsonStructure(['policy' => ['version', 'mode'], 'signatures' => ['version', 'bundle', 'signature'], 'realtime']);
+    }
+
+    public function test_mtls_cannot_be_switched_off(): void
+    {
+        $this->bootLab();
+        [, $token, $cert] = $this->enrolledPc();
+        config(['xephyguard.require_mtls' => false]); // old opt-out must have no effect
+
+        $this->withHeaders(['Authorization' => "Bearer $token"])->getJson('/api/agent/v1/policy')->assertForbidden();
+        $h = $this->agentHeaders($token, $cert);
+        $this->withHeaders(['X-SSL-Client-Verify' => 'FAILED:unknown ca'] + $h)->getJson('/api/agent/v1/policy')->assertForbidden();
+        $this->withHeaders(['X-SSL-Client-Verify' => 'NONE'] + $h)->getJson('/api/agent/v1/policy')->assertForbidden();
+        $this->withHeaders(['X-SSL-Client-Cert' => 'not-a-cert'] + $h)->getJson('/api/agent/v1/policy')->assertForbidden();
+    }
+
+    public function test_token_is_bound_to_its_cert(): void
+    {
+        $this->bootLab();
+        [$pc, $token, $cert] = $this->enrolledPc();
+        [, , $otherCert] = $this->enrolledPc('192.168.10.22', 'PC-02');
+        $agent = $pc->agents()->first();
+        $this->assertNotSame(hash('sha256', $token), $agent->token_hash);
+
+        // Re-pointing the row at another cert (e.g. a bad DB write) does not make the token work with it.
+        $realFp = $agent->cert_fingerprint;
+        $agent->update(['cert_fingerprint' => openssl_x509_fingerprint($otherCert, 'sha256')]);
+        $this->withHeaders($this->agentHeaders($token, $otherCert))->getJson('/api/agent/v1/policy')->assertForbidden();
+        $agent->update(['cert_fingerprint' => $realFp]);
+        $this->withHeaders($this->agentHeaders($token, $cert))->getJson('/api/agent/v1/policy')->assertOk();
+    }
+
+    public function test_legacy_token_hash_is_upgraded_only_with_its_own_cert(): void
+    {
+        $this->bootLab();
+        [$pc, $token, $cert] = $this->enrolledPc();
+        [, , $otherCert] = $this->enrolledPc('192.168.10.22', 'PC-02');
+        $agent = $pc->agents()->first();
+        $agent->update(['token_hash' => hash('sha256', $token)]); // enrolled before S-11
+
+        $this->withHeaders($this->agentHeaders($token, $otherCert))->getJson('/api/agent/v1/policy')->assertForbidden();
+        $this->assertSame(hash('sha256', $token), $agent->fresh()->token_hash);
+        $this->withHeaders($this->agentHeaders($token, $cert))->getJson('/api/agent/v1/policy')->assertOk();
+        $this->assertSame(Agent::tokenHash($token, $agent->cert_fingerprint), $agent->fresh()->token_hash);
+        $this->withHeaders($this->agentHeaders($token, $cert))->getJson('/api/agent/v1/policy')->assertOk();
     }
 
     public function test_batch_ingest_alerts_dedup_and_ack(): void
@@ -93,6 +141,25 @@ class AgentApiTest extends TestCase
             ->assertJsonPath('running_processes.1.exe', 'code');
     }
 
+    public function test_heartbeat_screen_cost_is_numbers_only_and_shown_in_the_pc_drawer(): void
+    {
+        Queue::fake();
+        $this->bootLab();
+        [$pc, $token, $cert] = $this->enrolledPc();
+        $h = $this->agentHeaders($token, $cert);
+        $usage = ['cpu_pct' => 0.4, 'screen' => ['fps' => 6.5, 'kbps' => 820, 'cpu_pct' => 5.9, 'level' => 3,
+            'title' => 'secret window', 'fps_x' => 'x']];
+        $this->withHeaders($h)->postJson('/api/agent/v1/events', $this->batch($pc->id, [], ['usage' => $usage]))->assertOk();
+        $pc->refresh();
+        $this->assertSame(['fps' => 6.5, 'kbps' => 820, 'cpu_pct' => 5.9, 'level' => 3], $pc->usage['screen']);
+        $this->actingAs($this->user('admin'))->getJson("/pcs/{$pc->id}")->assertOk()
+            ->assertJsonPath('pc.screen_cost', '6.5 fps · 820 kbit/s · 5.9 % CPU · throttle 3');
+
+        // Not streaming: no usage.screen, no label.
+        $this->withHeaders($h)->postJson('/api/agent/v1/events', $this->batch($pc->id, [], ['usage' => ['cpu_pct' => 0.4]]))->assertOk();
+        $this->getJson("/pcs/{$pc->id}")->assertOk()->assertJsonPath('pc.screen_cost', null);
+    }
+
     public function test_rejects_malformed_and_foreign_batches(): void
     {
         $this->bootLab();
@@ -117,6 +184,24 @@ class AgentApiTest extends TestCase
         $this->assertSame('ok', $cmd->fresh()->status);
     }
 
+    public function test_network_lock_tamper_and_tunnel_hits_become_alerts(): void
+    {
+        $this->bootLab();
+        [$pc, $token, $cert] = $this->enrolledPc();
+        $this->withHeaders($this->agentHeaders($token, $cert))->postJson('/api/agent/v1/events', $this->batch($pc->id, [
+            $this->ev(1, 'tamper', ['kind' => 'network_lock_removed', 'user' => 'alice']),
+            $this->ev(2, 'rule_hit', ['rule_id' => 'net.tunnel_flow', 'severity' => 'medium', 'category' => 'tunnel',
+                'description' => 'Connection to an outside host on a tunnel port', 'subject' => 'ssh:198.51.100.7:22',
+                'actions' => ['log', 'alert'], 'mode' => 'test', 'user' => 'alice',
+                'context' => ['process' => 'ssh', 'remote_ip' => '198.51.100.7', 'remote_port' => 22]]),
+        ], ['network_lock' => 'observe']))->assertOk();
+        $tamper = Alert::where('rule_id', 'tamper.network_lock_removed')->firstOrFail();
+        $this->assertSame('Session network lock was removed locally (re-applied)', $tamper->title);
+        $tunnel = Alert::where('rule_id', 'net.tunnel_flow')->firstOrFail();
+        $this->assertSame('medium', $tunnel->severity);
+        $this->assertStringContainsString('ssh:198.51.100.7:22', $tunnel->title);
+    }
+
     public function test_broadcast_auth_only_for_own_channel(): void
     {
         $this->bootLab();
@@ -125,7 +210,7 @@ class AgentApiTest extends TestCase
         $ok = $this->withHeaders($h)->postJson('/api/agent/v1/broadcasting/auth', ['socket_id' => '123.456', 'channel_name' => "private-pc.{$pc->id}"])
             ->assertOk()->json('auth');
         $key = config('reverb.apps.apps.0.key');
-        $this->assertSame("$key:".hash_hmac('sha256', "123.456:private-pc.{$pc->id}", config('reverb.apps.apps.0.secret')), $ok);
+        $this->assertSame("$key:".hash_hmac('sha256', "123.456:private-pc.{$pc->id}", (string) config('reverb.apps.apps.0.secret')), $ok);
         $this->withHeaders($h)->postJson('/api/agent/v1/broadcasting/auth', ['socket_id' => '123.456', 'channel_name' => 'private-pc.999'])->assertForbidden();
         $this->withHeaders($h)->postJson('/api/agent/v1/broadcasting/auth', ['socket_id' => '123.456', 'channel_name' => 'private-lab.1'])->assertForbidden();
     }
@@ -144,10 +229,15 @@ class AgentApiTest extends TestCase
         [$pc, $token, $cert] = $this->enrolledPc();
         $h = $this->agentHeaders($token, $cert);
 
-        // 1. Policy includes clipboard and keys collection
+        // 1. Always-on collects no clipboard/keys (ETHICS, S-21); a Practice session does.
+        $pol = $this->withHeaders($h)->getJson('/api/agent/v1/policy')->assertOk()->json('policy');
+        $this->assertFalse($pol['collect']['clipboard']);
+        $this->assertFalse($pol['collect']['keys']);
+        app(SessionManager::class)->start($lab, $this->profile('Practice: AI allowed, logged'), 'CS100');
         $pol = $this->withHeaders($h)->getJson('/api/agent/v1/policy')->assertOk()->json('policy');
         $this->assertTrue($pol['collect']['clipboard']);
         $this->assertTrue($pol['collect']['keys']);
+        $this->assertFalse($pol['collect']['files']);
 
         // 2. Student copies in Chrome
         $events = [
@@ -182,7 +272,12 @@ class AgentApiTest extends TestCase
         $this->assertSame('code', $pastesTab['target_app']);
         $this->assertSame(200, $pastesTab['chars']);
 
-        // 4. Student copies in a.cpp and pastes in b.cpp in the same VS Code
+        // 4. Student copies in a.cpp and pastes in b.cpp in the same VS Code. The agent sends the file part only
+        //    with title_capture=full (I-AGENT-9) and the server drops it otherwise (S-29), so turn full on here.
+        $practice = $this->profile('Practice: AI allowed, logged');
+        $practice->update(['agent' => ['title_capture' => 'full'] + ($practice->agent ?? [])]);
+        Setting::put('privacy.title_capture.practice', 'full');
+        $this->assertSame('full', $this->withHeaders($h)->getJson('/api/agent/v1/policy')->json('policy.title_capture'));
         $events3 = [
             $this->ev(5, 'window_focus', ['app' => 'code', 'title' => 'a.cpp - Project - Visual Studio Code', 'user' => 'student1']),
             $this->ev(6, 'copy', ['chars' => 85, 'lines' => 4, 'code' => true, 'score' => 0.9, 'src' => 'code (a.cpp)', 'dst' => '', 'user' => 'student1']),

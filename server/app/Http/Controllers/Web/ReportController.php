@@ -1,19 +1,17 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
 use App\Jobs\ScoreSession;
-use App\Models\Alert;
-use App\Models\EvidenceCapture;
 use App\Models\LabSession;
-use App\Models\NetEvent;
-use App\Models\PasteEvent;
 use App\Models\Report;
-use App\Models\Score;
-use App\Models\Setting;
 use App\Models\Student;
 use App\Services\Audit;
+use App\Services\ReportModel;
+use App\Services\ResearchExport;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -29,29 +27,9 @@ class ReportController extends Controller
         ]);
     }
 
-    private function data(LabSession $session): array
-    {
-        $scores = Score::query()->with(['pc:id,name', 'student'])->where('lab_session_id', $session->id)
-            ->orderByDesc('score')->get();
-
-        return [
-            'session' => $session->load('profile'),
-            'scores' => $scores,
-            'alerts' => Alert::query()->with('pc:id,name')->where('lab_session_id', $session->id)->orderBy('occurred_at')->get(),
-            'blocked' => NetEvent::query()->where('lab_session_id', $session->id)->where('action', 'blocked')
-                ->selectRaw('pc_id, host, category, count(*) as n, min(occurred_at) as first_at')
-                ->groupBy('pc_id', 'host', 'category')->orderByDesc('n')->with('pc:id,name')->get(),
-            'pastes' => PasteEvent::query()->where('lab_session_id', $session->id)->where('is_copy', false)
-                ->where('chars', '>=', 300)->orderBy('occurred_at')->get(),
-            'evidence' => EvidenceCapture::query()->with(['pc:id,name', 'capturer:id,name'])
-                ->where('lab_session_id', $session->id)->orderBy('occurred_at')->get(),
-            'report' => Report::query()->where('lab_session_id', $session->id)->where('kind', 'session')->first(),
-        ];
-    }
-
     public function show(LabSession $session)
     {
-        return view('reports.session', $this->data($session));
+        return view('reports.session', ReportModel::build($session));
     }
 
     public function showByNumber(int $num)
@@ -59,17 +37,18 @@ class ReportController extends Controller
         $session = LabSession::find($num);
 
         return $session
-            ? view('reports.session', $this->data($session))
+            ? view('reports.session', ReportModel::build($session))
             : view('reports.session');
     }
 
     public function student(LabSession $session, Student $student)
     {
-        $data = $this->data($session);
+        $data = ReportModel::build($session);
         $data['scores'] = $data['scores']->where('student_id', $student->id)->values();
         $data['student'] = $student;
-        $data['alerts'] = $data['alerts']->filter(fn ($a) => Student::forLogin($a->user)?->id === $student->id)->values();
-        $data['evidence'] = $data['evidence']->filter(fn ($e) => Student::forLogin($e->user)?->id === $student->id)->values();
+        $byLogin = Student::forLogins($data['alerts']->pluck('user')->merge($data['evidence']->pluck('user'))->unique());
+        $data['alerts'] = $data['alerts']->filter(fn ($a) => ($byLogin[$a->user] ?? null)?->id === $student->id)->values();
+        $data['evidence'] = $data['evidence']->filter(fn ($e) => ($byLogin[$e->user] ?? null)?->id === $student->id)->values();
 
         return view('reports.session', $data);
     }
@@ -86,47 +65,38 @@ class ReportController extends Controller
     {
         Audit::log('report.export_pdf', $session);
 
-        return Pdf::loadView('reports.pdf', $this->data($session))->setPaper('a4')
+        return Pdf::loadView('reports.pdf', ReportModel::build($session))->setPaper('a4')
             ->download("xephyguard-session-{$session->id}.pdf");
     }
 
     public function csv(LabSession $session): StreamedResponse
     {
         Audit::log('report.export_csv', $session);
-        $scores = Score::query()->with(['pc:id,name', 'student'])->where('lab_session_id', $session->id)->get();
+        $rows = ReportModel::scoreRows(ReportModel::scores($session));
 
-        return response()->streamDownload(function () use ($scores) {
+        return response()->streamDownload(function () use ($rows) {
             $out = fopen('php://output', 'w');
-            fputcsv($out, ['pc', 'user', 'student_number', 'student_name', 'method', 'score', 'confidence', 'top_reasons']);
-            foreach ($scores as $s) {
-                fputcsv($out, [$s->pc?->name, $s->user, $s->student?->student_number, $s->student?->name, $s->method, $s->score,
-                    $s->confidence, collect($s->reasons)->take(3)->pluck('label')->implode('; ')]);
+            fputcsv($out, ['pc', 'user', 'student_number', 'student_name', 'method', 'score', 'confidence', 'top_reasons', 'not_observable']);
+            foreach ($rows as $r) {
+                $reasons = array_map(fn ($x) => trim(($x['points'] !== null ? '+'.$x['points'].' ' : '').$x['label'].($x['signal'] !== '' ? ' ('.$x['signal'].')' : '')), $r['reasons']);
+                fputcsv($out, [$r['pc'], $r['user'], $r['student_number'], $r['student_name'], $r['method'], $r['score'],
+                    $r['confidence'], implode('; ', $reasons), implode('; ', $r['not_observable'])]);
             }
             fclose($out);
         }, "xephyguard-session-{$session->id}.csv");
     }
 
-    /** Research export: only consenting students, pseudonymized, no names/logins. */
+    /** Research export: only consenting students, always pseudonymised, no names/logins/student numbers. */
     public function research(Request $request): StreamedResponse
     {
         $d = $request->validate(['from' => 'nullable|date', 'until' => 'nullable|date']);
         Audit::log('report.research_export', null, $d);
-        $pseudo = (bool) Setting::get('pseudonymize_exports', true);
-        $rows = Score::query()->with(['student.latestConsent', 'pc:id,name'])
-            ->join('lab_sessions', 'lab_sessions.id', '=', 'scores.lab_session_id')
-            ->when($d['from'] ?? null, fn ($q, $v) => $q->where('lab_sessions.starts_at', '>=', $v))
-            ->when($d['until'] ?? null, fn ($q, $v) => $q->where('lab_sessions.starts_at', '<=', $v))
-            ->select('scores.*', 'lab_sessions.mode', 'lab_sessions.course', 'lab_sessions.experiment_condition',
-                'lab_sessions.experiment_group', 'lab_sessions.starts_at')->get()
-            ->filter(fn ($s) => $s->student && $s->student->consentsToResearch());
 
-        return response()->streamDownload(function () use ($rows, $pseudo) {
+        return response()->streamDownload(function () use ($d) {
             $out = fopen('php://output', 'w');
-            fputcsv($out, ['session_id', 'course', 'mode', 'condition', 'group', 'participant', 'method', 'score', 'confidence', 'features_json']);
-            foreach ($rows as $s) {
-                fputcsv($out, [$s->lab_session_id, $s->course, $s->mode, $s->experiment_condition, $s->experiment_group,
-                    $pseudo ? $s->student->pseudonym : $s->student->student_number, $s->method, $s->score, $s->confidence,
-                    json_encode($s->features)]);
+            fputcsv($out, ResearchExport::COLUMNS);
+            foreach (ResearchExport::rows($d['from'] ?? null, $d['until'] ?? null) as $row) {
+                fputcsv($out, $row);
             }
             fclose($out);
         }, 'xephyguard-research-export.csv');

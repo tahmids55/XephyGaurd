@@ -100,7 +100,6 @@ XG_NETWORK_MODE=proxy_only
 XG_ANALYSIS_URL=http://127.0.0.1:8090
 XG_INTERNAL_URL=http://127.0.0.1:8000
 XG_INTERNAL_TOKEN=change-me-to-a-long-random-string
-XG_REQUIRE_MTLS=true
 ```
 Change `REVERB_APP_KEY` and `REVERB_APP_SECRET` too (any random strings). Then:
 ```bash
@@ -363,7 +362,7 @@ Details: [`SETUP_LINUX_PC.md`](SETUP_LINUX_PC.md), [`SETUP_WINDOWS_PC.md`](SETUP
 | Browser certificate warning | expected until you trust the lab CA: download `http://<IP>/ca.crt`, compare the fingerprint, install it as a trusted root on admin machines |
 | Dashboard works but does not update live | Reverb is not running, or `REVERB_*` in `.env` does not match port 8081; restart `reverb:start` and reload the page |
 | Agent: `cannot download the CA certificate` | port 80 blocked (firewall) or nginx not running |
-| Agent: `403 client certificate missing` | the agent is talking to Laravel directly; it must use nginx on 8443. Check `XG_REQUIRE_MTLS=true` and that nginx forwards `X-SSL-Client-*` |
+| Agent: `403 client certificate missing` | the agent is talking to Laravel directly; it must use nginx on 8443. mTLS is always required (there is no opt-out); check that nginx forwards `X-SSL-Client-*` |
 | PC stays "Pending" | click **Approve** on the **Add a PC** page; check the enrollment key has not been rotated |
 | Report has no score | analysis service not running, or `XG_INTERNAL_TOKEN` differs between `.env` and the analysis service |
 | PC shows "Machine silent" | the scheduler (`schedule:work`) is running but the agent stopped sending heartbeats: check the PC and its network |

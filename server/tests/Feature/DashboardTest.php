@@ -1,9 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Tests\Feature;
 
 use App\Models\AuditLog;
-use App\Models\LabSession;
+use App\Models\SignatureVersion;
+use App\Services\CertificateAuthority;
 use App\Services\SessionManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
@@ -88,12 +91,12 @@ class DashboardTest extends TestCase
         $this->post('/rules', ['rule_id' => 'proc.newtool', 'kind' => 'process', 'severity' => 'high', 'description' => 'New tool',
             'definition' => json_encode(['match' => ['exe' => ['newtool']]])])->assertRedirect();
         $this->post('/signatures/publish', ['note' => 'add newtool'])->assertRedirect();
-        $active = \App\Models\SignatureVersion::active();
+        $active = SignatureVersion::active();
         $this->assertStringContainsString('proc.newtool', $active->bundle);
-        $this->assertTrue(app(\App\Services\CertificateAuthority::class)->verifyData($active->bundle, $active->signature));
-        $first = \App\Models\SignatureVersion::orderBy('id')->first();
+        $this->assertTrue(app(CertificateAuthority::class)->verifyData($active->bundle, $active->signature));
+        $first = SignatureVersion::orderBy('id')->first();
         $this->post("/signatures/{$first->id}/activate")->assertRedirect();
-        $this->assertSame($first->id, \App\Models\SignatureVersion::active()->id);
+        $this->assertSame($first->id, SignatureVersion::active()->id);
     }
 
     public function test_download_allows_bat_scripts(): void
@@ -117,7 +120,7 @@ class DashboardTest extends TestCase
         $dir = storage_path('app/public/downloads');
         @mkdir($dir, 0755, true);
         $deb = $dir.'/xephyguard-agent_test_amd64.deb';
-        file_put_contents($deb, "deb-stub");
+        file_put_contents($deb, 'deb-stub');
         try {
             $this->get('/downloads/xephyguard-agent_test_amd64.deb')->assertOk();
             $res = $this->actingAs($this->user('assistant'))
@@ -127,6 +130,9 @@ class DashboardTest extends TestCase
             preg_match('/<script type="application\/json" id="xg-page-data">(.*?)<\/script>/s', $res->getContent(), $m);
             $page = json_decode($m[1] ?? '{}', true, 512, JSON_THROW_ON_ERROR);
             $this->assertStringStartsWith('curl -fsSL http://192.168.10.2/install/linux.sh', $page['lin'] ?? '');
+            // S-15: the lab key never appears on /downloads, not even for logged-in staff.
+            $this->assertStringNotContainsString($lab->enrollKey(), $res->getContent());
+            $this->assertArrayNotHasKey('key', $page);
         } finally {
             @unlink($deb);
         }

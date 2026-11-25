@@ -21,7 +21,6 @@ std::pair<std::string, std::string> split_vsix_dir(const std::string& dir) {
 
 class ExtensionScanner final : public IExtensionScanner {
 public:
-    explicit ExtensionScanner(ISystemInfo* sys) : sys_(sys) {}
 
     std::vector<ExtensionInfo> scan() override {
         std::vector<ExtensionInfo> out;
@@ -76,13 +75,10 @@ private:
             out.push_back({ide, id, ver, user, dir});
         }
     }
-    ISystemInfo* sys_;
 };
 
 }  // namespace
 
-std::unique_ptr<IExtensionScanner> make_extension_scanner(ISystemInfo* sys) {
-    return std::make_unique<ExtensionScanner>(sys);
-}
+std::unique_ptr<IExtensionScanner> make_extension_scanner() { return std::make_unique<ExtensionScanner>(); }
 
 }  // namespace xg::lnx

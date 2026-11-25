@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services;
 
 use App\Events\AlertRaised;
@@ -17,9 +19,10 @@ use App\Models\Setting;
 use App\Models\SignatureVersion;
 use App\Models\Student;
 use App\Models\StudentPcAssignment;
+use App\Services\Ingest\BatchValidator;
+use App\Services\Ingest\TitleFilter;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
 
 /**
  * Ingests an agent batch (POST /api/agent/v1/events): validates it, de-duplicates by sequence,
@@ -28,11 +31,6 @@ use Illuminate\Validation\ValidationException;
  */
 class EventIngestor
 {
-    public const TYPES = ['heartbeat', 'agent_started', 'agent_stopping', 'process_start', 'process_stop',
-        'process_snapshot', 'rule_hit', 'listening_port', 'window_focus', 'paste', 'copy', 'key_stats', 'net_adapter',
-        'device', 'extension_scan', 'artifact_scan', 'file_activity', 'gpu_sample', 'tamper', 'capabilities',
-        'command_result', 'helper_status'];
-
     private const TAMPER_TITLES = [
         'binary_hash_mismatch' => 'Agent binary does not match the installed package',
         'binary_changed' => 'Agent binary was modified',
@@ -45,14 +43,21 @@ class EventIngestor
         'signature_invalid' => 'Agent received an invalid signature bundle',
         'helper_terminated' => 'Session helper was terminated by user (re-launched)',
         'isolation_rule_removed' => 'Network isolation rule was removed locally (re-applied)',
+        'network_lock_removed' => 'Session network lock was removed locally (re-applied)',
     ];
 
-    public function __construct(private readonly SessionManager $sessions, private readonly PolicyBuilder $policies) {}
+    public function __construct(private readonly SessionManager $sessions, private readonly PolicyService $policies,
+        private readonly BatchValidator $validator) {}
 
     public function ingest(Agent $agent, array $batch, string $ip): array
     {
-        $this->validate($agent, $batch);
+        $this->validator->validate($agent, $batch);
+        $batch = $this->validator->clean($batch);   // allow-listed fields only (S-28)
         $pc = $agent->pc;
+        // Titles the PC's effective title_capture does not allow are dropped here too, never stored (S-29).
+        $capture = (string) ($this->policies->forPc($pc)['title_capture'] ?? 'off');
+        $batch['events'] = array_map(fn (array $e) => ['data' => TitleFilter::apply($e['type'], $e['data'], $capture)] + $e,
+            $batch['events']);
         $session = LabSession::activeFor($pc->lab_id);
         $inSession = $session && SessionPc::query()->where('lab_session_id', $session->id)->where('pc_id', $pc->id)->exists();
         $session = $inSession ? $session : null;
@@ -138,33 +143,6 @@ class EventIngestor
         ];
     }
 
-    private function validate(Agent $agent, array $b): void
-    {
-        $fail = fn (string $m) => throw ValidationException::withMessages(['batch' => $m]);
-        if (($b['v'] ?? null) !== 1) {
-            $fail('unsupported protocol version');
-        }
-        if ((string) ($b['pc_id'] ?? '') !== (string) $agent->pc_id) {
-            $fail('pc_id does not match the authenticated agent');
-        }
-        $events = $b['events'] ?? [];
-        if (! is_array($events) || count($events) > config('xephyguard.max_events_per_batch')) {
-            $fail('events must be an array of at most '.config('xephyguard.max_events_per_batch'));
-        }
-        if (isset($b['heartbeat']) && ! is_array($b['heartbeat'])) {
-            $fail('heartbeat must be an object');
-        }
-        foreach ($events as $i => $e) {
-            if (! is_array($e) || ! is_int($e['seq'] ?? null) || $e['seq'] < 1 || ! is_int($e['ts'] ?? null)
-                || ! in_array($e['type'] ?? null, self::TYPES, true) || ! is_array($e['data'] ?? null)) {
-                $fail("event $i is malformed");
-            }
-            if (strlen(json_encode($e['data'])) > 64 * 1024) {
-                $fail("event $i is too large");
-            }
-        }
-    }
-
     private function applyHeartbeat(Agent $agent, Pc $pc, array $hb, string $ip, ?LabSession $session): void
     {
         $pc->last_seen_at = now();
@@ -179,6 +157,11 @@ class EventIngestor
         $pc->capabilities = is_array($hb['capabilities'] ?? null) ? $hb['capabilities'] : $pc->capabilities;
         $pc->usage = is_array($hb['usage'] ?? null) ? $hb['usage'] + ['helpers' => $hb['helpers'] ?? null,
             'queue_depth' => $hb['queue_depth'] ?? null, 'realtime' => $hb['realtime'] ?? null] : $pc->usage;
+        if (is_array($pc->usage) && array_key_exists('screen', $pc->usage)) {
+            $u = $pc->usage;
+            $u['screen'] = BatchValidator::screenCost($u['screen']);
+            $pc->usage = $u;
+        }
         if ($pc->status === 'offline') {
             $pc->status = 'clean';
             $this->refreshLiveScore($pc, $session);
@@ -296,14 +279,14 @@ class EventIngestor
                 $details = $lines > 1 ? "{$chars} ch, {$lines} ln" : "{$chars} ch";
 
                 if ($type === 'paste') {
-                    $pc->last_event = mb_substr("Paste: ".($src ?: '?')." → ".($dst ?: '?')." ({$details})", 0, 160);
+                    $pc->last_event = mb_substr('Paste: '.($src ?: '?').' → '.($dst ?: '?')." ({$details})", 0, 160);
                 } else {
-                    $pc->last_event = mb_substr("Copy: ".($src ?: '?')." ({$details})", 0, 160);
+                    $pc->last_event = mb_substr('Copy: '.($src ?: '?')." ({$details})", 0, 160);
                 }
 
                 $threshold = (int) Setting::get('paste_alert_chars', 800);
                 if ($type === 'paste' && $sid && $session->mode === 'test' && $chars >= $threshold) {
-                    $pc->last_event = mb_substr("Large paste: ".($src ?: '?')." → ".($dst ?: '?')." ({$chars} chars)", 0, 160);
+                    $pc->last_event = mb_substr('Large paste: '.($src ?: '?').' → '.($dst ?: '?')." ({$chars} chars)", 0, 160);
 
                     return $this->alert($pc, $sid, 'behavior.large_paste', 'medium', 'behavior',
                         sprintf('Large paste: %d characters, %d lines%s from %s to %s', $chars, $lines,

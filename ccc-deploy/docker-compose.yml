@@ -102,3 +102,19 @@ services:
     restart: unless-stopped
     env_file: .env
     volumes: [ "/var/lib/xephyguard/ca:/var/lib/xephyguard/ca:ro" ]
+
+  screen-gateway:  # screen WebSocket relay (127.0.0.1:8082 only; LAN reaches it through nginx /screen-gw/)
+    image: xephyguard/ccc-screen-gateway:${XG_VERSION:-latest}
+    build: { context: .., dockerfile: ccc-deploy/docker/screen-gateway.Dockerfile }
+    network_mode: host
+    restart: unless-stopped
+    # -addr is a flag so a .env SCREEN_GATEWAY_ADDR cannot widen the bind; no env_file, so it gets
+    # only its own settings and never SCREEN_GATEWAY_DEV_INSECURE. An empty secret or internal token makes it exit.
+    # The internal token lets it look up an agent cert's PC on nginx 127.0.0.1:8000 (default -server-url).
+    # -trusted-proxy: nginx (same host) passes the verified agent cert from :8443/screen-gw/agent.
+    command: ["/usr/local/bin/xephyguard-screen-gateway", "-addr", "127.0.0.1:8082", "-trusted-proxy", "127.0.0.1"]
+    environment:
+      SCREEN_GATEWAY_SECRET: ${SCREEN_GATEWAY_SECRET}
+      SCREEN_GATEWAY_INTERNAL_TOKEN: ${XG_INTERNAL_TOKEN}
+      SCREEN_GATEWAY_ISSUER: ${SCREEN_GATEWAY_ISSUER:-xephyguard-ccc}
+      SCREEN_GATEWAY_AUDIENCE: ${SCREEN_GATEWAY_AUDIENCE:-xephyguard-gateway}

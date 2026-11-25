@@ -18,7 +18,12 @@ class AgentCommand implements ShouldBroadcastNow
 
         return $channels;
     }
-    public function broadcastAs(): string { return 'command'; }
+
+    public function broadcastAs(): string
+    {
+        return 'command';
+    }
+
     public function broadcastWith(): array
     {
         return ['id' => (string) $this->command->id, 'type' => $this->command->type, 'args' => (object) ($this->command->args ?? [])];

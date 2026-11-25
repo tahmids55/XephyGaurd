@@ -1,11 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services;
 
 use App\Models\BlocklistEntry;
-use App\Models\LabSession;
 use App\Models\Pc;
 use App\Models\Setting;
+use RuntimeException;
 
 /**
  * Writes the network policy state document consumed by the DNS / nftables / proxy sidecars
@@ -17,7 +19,7 @@ class NetworkPolicyWriter
         'google.co.in', 'google.de', 'google.fr', 'bing.com', 'www.bing.com', 'huggingface.co', 'duckduckgo.com',
         'search.brave.com'];
 
-    public function __construct(private readonly PolicyBuilder $policies) {}
+    public function __construct(private readonly PolicyService $policies) {}
 
     public function build(): array
     {
@@ -25,12 +27,15 @@ class NetworkPolicyWriter
         $groupCats = ['test' => [], 'block_ai' => []];
         $udm14Clients = [];
         $udm14 = true;
-        foreach (Pc::query()->active()->whereNotNull('ip')->get() as $pc) {
+        $pcs = Pc::query()->active()->whereNotNull('ip')->get();
+        $effective = $this->policies->effectiveMany($pcs->reject(fn ($pc) => $pc->isolated));   // fixed query count (S-24)
+        foreach ($pcs as $pc) {
             if ($pc->isolated) {
                 $groups['isolated'][] = $pc->ip;
+
                 continue;
             }
-            ['profile' => $profile, 'session' => $session, 'override' => $override] = $this->policies->effective($pc);
+            ['profile' => $profile, 'session' => $session, 'override' => $override] = $effective[$pc->id];
             $net = $profile->network ?? [];
             $cats = array_values($net['block_categories'] ?? []);
             if ((bool) ($net['google_udm14'] ?? false)) {
@@ -41,6 +46,7 @@ class NetworkPolicyWriter
             }
             if ($override && ! $cats) {
                 $groups['exempt'][] = $pc->ip;          // accommodation: profile without blocking
+
                 continue;
             }
             if (! $cats) {
@@ -65,7 +71,7 @@ class NetworkPolicyWriter
             };
         }
         $version = (int) Setting::get('net_state_version', 0) + 1;
-        $logUrls = Setting::get('privacy.log_urls', ['enabled' => false, 'query' => false]);
+        $logUrls = PrivacySettings::logUrls();
 
         return [
             'version' => $version,
@@ -95,14 +101,32 @@ class NetworkPolicyWriter
         ];
     }
 
+    /**
+     * Atomic write, mode 0640: the file holds `events_token`, so only the owner (app) and its group may read
+     * it; the sidecars read it as root. A unique temp file in the same directory, then rename (S-24, I-SERVER-17).
+     */
     public function write(): array
     {
         $state = $this->build();
-        $path = config('xephyguard.net_state_path');
-        @mkdir(dirname($path), 0755, true);
-        $tmp = $path.'.tmp';
-        file_put_contents($tmp, json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-        rename($tmp, $path);
+        $path = (string) config('xephyguard.net_state_path');
+        $dir = dirname($path);
+        if (! is_dir($dir) && ! @mkdir($dir, 0755, true) && ! is_dir($dir)) {
+            throw new RuntimeException("cannot create $dir");
+        }
+        $tmp = tempnam($dir, '.state-');   // created 0600, unpredictable name
+        if ($tmp === false) {
+            throw new RuntimeException("cannot create a temp file in $dir");
+        }
+        try {
+            $json = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+            if (! chmod($tmp, 0640) || file_put_contents($tmp, $json) !== strlen($json) || ! rename($tmp, $path)) {
+                throw new RuntimeException("cannot write $path");
+            }
+        } finally {
+            if (is_file($tmp)) {
+                @unlink($tmp);
+            }
+        }
         Setting::put('net_state_version', $state['version']);
 
         return $state;

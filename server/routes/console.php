@@ -1,7 +1,10 @@
 <?php
 
 use App\Jobs\PurgeRetention;
+use App\Services\CertificateAuthority;
 use App\Services\SessionManager;
+use App\Services\SignatureCompiler;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schedule;
 
 // Timetable: start/stop sessions on schedule.
@@ -11,13 +14,13 @@ Schedule::call(fn () => app(SessionManager::class)->detectSilent())->everyFiveSe
 // Auto-publish signatures: any rule/blocklist change is compiled within a minute (debounced by the schedule
 // interval); publish() is a no-op when the content hash is unchanged and refuses bundles without AI/IDE domains.
 Schedule::call(function () {
-    if (! \App\Services\CertificateAuthority::fromConfig()->exists()) {
+    if (! CertificateAuthority::fromConfig()->exists()) {
         return;
     }
     try {
-        app(\App\Services\SignatureCompiler::class)->publish(null, 'auto');
-    } catch (\RuntimeException $e) {
-        \Illuminate\Support\Facades\Log::warning('signatures auto-publish skipped: '.$e->getMessage());
+        app(SignatureCompiler::class)->publish(null, 'auto');
+    } catch (RuntimeException $e) {
+        Log::warning('signatures auto-publish skipped: '.$e->getMessage());
     }
 })->everyMinute()->name('xg-signatures-autopublish')->withoutOverlapping();
 // Retention purge of raw events.

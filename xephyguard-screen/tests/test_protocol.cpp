@@ -157,3 +157,102 @@ TEST_CASE("Protocol: Mutation tests with truncation and bit flips") {
     (void)res;  // never crashes
   }
 }
+
+namespace {
+xg::Message make_v2() {
+  xg::Message m{};
+  m.version = xg::kVersion2;
+  m.type = xg::MsgType::Frame;
+  m.flags = xg::Flags::KEY;
+  m.stream_id = 7;
+  m.seq = 3;
+  m.width = 300;
+  m.height = 200;
+  xg::TileRec r;
+  r.x = 256; r.y = 100; r.w = 44; r.h = 100;
+  r.codec = xg::Codec::Jpeg;
+  r.payload = {0xAA, 0xBB};
+  m.tiles.push_back(r);
+  return m;
+}
+}  // namespace
+
+TEST_CASE("Protocol v2: golden bytes and round trip") {
+  const std::vector<uint8_t> golden = {
+      0x47, 0x58, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x03, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2C, 0x01, 0xC8, 0x00, 0x01, 0x00, 0x00, 0x00,
+      0x00, 0x01, 0x64, 0x00, 0x2C, 0x00, 0x64, 0x00, 0x02, 0x00, 0x02, 0x00, 0x00, 0x00, 0xAA, 0xBB};
+  CHECK(xg::encode(make_v2()) == golden);
+  auto d = xg::decode(golden.data(), golden.size());
+  REQUIRE(d.has_value());
+  CHECK(d->version == xg::kVersion2);
+  REQUIRE(d->tiles.size() == 1);
+  CHECK(d->tiles[0].x == 256);
+  CHECK(d->tiles[0].y == 100);
+  CHECK(d->tiles[0].w == 44);
+  CHECK(d->tiles[0].h == 100);
+  CHECK(d->tiles[0].codec == xg::Codec::Jpeg);
+  CHECK(d->tiles[0].payload == std::vector<uint8_t>{0xAA, 0xBB});
+}
+
+TEST_CASE("Protocol v2: v1 still decodes and keeps version 1") {
+  xg::Message m{};
+  m.type = xg::MsgType::Frame;
+  m.width = 128; m.height = 64;
+  xg::TileRec t{1, 0, xg::Codec::Webp, {1, 2, 3}};
+  m.tiles.push_back(t);
+  auto e = xg::encode(m);
+  CHECK(e[2] == 1);
+  auto d = xg::decode(e.data(), e.size());
+  REQUIRE(d.has_value());
+  CHECK(d->version == xg::kVersion);
+  CHECK(d->tiles[0].w == 0);
+}
+
+TEST_CASE("Protocol v2: malformed rectangles are rejected") {
+  auto reject = [](const std::vector<uint8_t>& b) { return !xg::decode(b.data(), b.size()).has_value(); };
+  const auto ok = xg::encode(make_v2());
+  REQUIRE_FALSE(reject(ok));
+  const size_t r = xg::kHeaderSize;
+  auto with = [&](size_t off, uint8_t val) { auto b = ok; b[off] = val; return b; };
+
+  CHECK(reject(with(r + 4, 0)));                            // w = 0
+  CHECK(reject(with(r + 6, 0)));                            // h = 0
+  { auto b = with(r + 5, 1); CHECK(reject(b)); }            // w = 300 > 256
+  CHECK(reject(with(r + 4, 45)));                           // x + w = 301 > width
+  CHECK(reject(with(r + 6, 101)));                          // y + h = 201 > height
+  CHECK(reject(with(r + 8, 3)));                            // unknown codec
+  CHECK(reject(with(r + 10, 3)));                           // payload longer than the message
+  CHECK(reject(std::vector<uint8_t>(ok.begin(), ok.end() - 1)));          // truncated payload
+  CHECK(reject(std::vector<uint8_t>(ok.begin(), ok.begin() + r + 10)));   // truncated record header
+  CHECK(reject(with(3, 2)));                                // Cursor with rectangles in v2
+
+  // Raw payload must be exactly w*h*4
+  auto raw = make_v2();
+  raw.tiles[0].codec = xg::Codec::Raw;
+  raw.tiles[0].payload.assign(44 * 100 * 4, 7);
+  auto rb = xg::encode(raw);
+  CHECK_FALSE(reject(rb));
+  raw.tiles[0].payload.pop_back();
+  CHECK(reject(xg::encode(raw)));
+}
+
+TEST_CASE("Protocol v2: mutated and random buffers never crash") {
+  std::mt19937 rng(4242);
+  const auto base = xg::encode(make_v2());
+  for (int i = 0; i < 20000; ++i) {
+    auto b = base;
+    const int flips = 1 + static_cast<int>(rng() % 4);
+    for (int f = 0; f < flips; ++f) b[rng() % b.size()] = static_cast<uint8_t>(rng());
+    if (rng() % 4 == 0) b.resize(rng() % (b.size() + 1));
+    auto d = xg::decode(b.data(), b.size());
+    if (d && d->version == xg::kVersion2) {
+      for (const auto& t : d->tiles) {
+        CHECK(t.w >= 1);
+        CHECK(t.w <= xg::kMaxRectSide);
+        CHECK(t.x + t.w <= d->width);
+        CHECK(t.y + t.h <= d->height);
+      }
+    }
+  }
+}

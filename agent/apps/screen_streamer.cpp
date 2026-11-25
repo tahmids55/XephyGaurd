@@ -1,426 +1,227 @@
 #include "screen_streamer.hpp"
 
-#include <atomic>
+#include <algorithm>
 #include <chrono>
-#include <iostream>
-#include <memory>
-#include <string>
-#include <thread>
+#include <mutex>
+#include <stdexcept>
 #include <vector>
 
 #include "agent_state.h"
-#include "fake_capture.h"
 
 #if defined(_WIN32)
 #include "win_dxgi_capture.h"
 #include "win_gdi_capture.h"
-#include <windows.h>
-#include <winhttp.h>
+#include "win_multi_capture.h"
 #else
 #include "x11_capture.h"
 #ifdef Status
 #undef Status
 #endif
-#include "xg/websocket.hpp"
 #endif
 
 namespace xg {
+namespace {
 
+std::shared_ptr<ScreenCapture> platform_capture() {
 #if defined(_WIN32)
-class HelperWsClient {
-public:
-    HelperWsClient() = default;
-    ~HelperWsClient() { close(); }
-
-    bool connect(const std::wstring& host,
-                 INTERNET_PORT port,
-                 const std::wstring& path,
-                 bool use_tls = false,
-                 const std::wstring& agent_token = {}) {
-        close();
-        host_ = host;
-        port_ = port;
-        path_ = path;
-        use_tls_ = use_tls;
-        agent_token_ = agent_token;
-
-        session_ = WinHttpOpen(L"XephyGuardHelper/1.0",
-                               WINHTTP_ACCESS_TYPE_NO_PROXY,
-                               WINHTTP_NO_PROXY_NAME,
-                               WINHTTP_NO_PROXY_BYPASS, 0);
-        if (!session_) return false;
-
-        conn_ = WinHttpConnect(session_, host.c_str(), port, 0);
-        if (!conn_) { close(); return false; }
-
-        DWORD flags = use_tls ? WINHTTP_FLAG_SECURE : 0;
-        request_ = WinHttpOpenRequest(conn_, L"GET", path.c_str(), NULL,
-                                     WINHTTP_NO_REFERER,
-                                     WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
-        if (!request_) { close(); return false; }
-
-        if (!WinHttpSetOption(request_, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, NULL, 0)) {
-            close(); return false;
-        }
-
-        std::wstring headers;
-        if (!agent_token.empty()) {
-            headers = L"X-Agent-Token: " + agent_token + L"\r\n";
-        }
-        LPCWSTR hdr_ptr = headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str();
-        DWORD hdr_len = headers.empty() ? 0 : static_cast<DWORD>(headers.size());
-        if (!WinHttpSendRequest(request_, hdr_ptr, hdr_len, NULL, 0, 0, 0)) {
-            close(); return false;
-        }
-
-        if (!WinHttpReceiveResponse(request_, NULL)) {
-            close(); return false;
-        }
-
-        ws_ = WinHttpWebSocketCompleteUpgrade(request_, 0);
-        WinHttpCloseHandle(request_);
-        request_ = NULL;
-
-        return ws_ != NULL;
-    }
-
-    bool reconnect() {
-        if (host_.empty()) return false;
-        return connect(host_, port_, path_, use_tls_, agent_token_);
-    }
-
-    bool send_binary(const uint8_t* data, size_t len) {
-        if (!ws_) return false;
-        DWORD res = WinHttpWebSocketSend(ws_, WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE,
-                                         const_cast<uint8_t*>(data), static_cast<DWORD>(len));
-        if (res != ERROR_SUCCESS) {
-            close();
-            return false;
-        }
-        return true;
-    }
-
-    bool receive(std::vector<uint8_t>& out) {
-        if (!ws_) return false;
-        out.resize(4096);
-        DWORD bytes_read = 0;
-        WINHTTP_WEB_SOCKET_BUFFER_TYPE buf_type;
-        DWORD res = WinHttpWebSocketReceive(ws_, out.data(), static_cast<DWORD>(out.size()),
-                                           &bytes_read, &buf_type);
-        if (res == ERROR_SUCCESS && bytes_read > 0) {
-            out.resize(bytes_read);
-            return true;
-        }
-        if (res != ERROR_SUCCESS) {
-            close();
-        }
-        return false;
-    }
-
-    void close() {
-        if (ws_) {
-            WinHttpWebSocketClose(ws_, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, NULL, 0);
-            WinHttpCloseHandle(ws_);
-            ws_ = NULL;
-        }
-        if (request_) {
-            WinHttpCloseHandle(request_);
-            request_ = NULL;
-        }
-        if (conn_) {
-            WinHttpCloseHandle(conn_);
-            conn_ = NULL;
-        }
-        if (session_) {
-            WinHttpCloseHandle(session_);
-            session_ = NULL;
-        }
-    }
-
-    bool is_connected() const { return ws_ != NULL; }
-
-private:
-    HINTERNET session_ = NULL;
-    HINTERNET conn_ = NULL;
-    HINTERNET request_ = NULL;
-    HINTERNET ws_ = NULL;
-    std::wstring host_;
-    INTERNET_PORT port_ = 0;
-    std::wstring path_;
-    bool use_tls_ = false;
-    std::wstring agent_token_;
-};
-#endif
-
-struct ScreenStreamer::Impl {
-    std::string host;
-    uint32_t stream_id = 0;
-    uint16_t port = 8082;
-    std::string path = "/agent";
-    bool use_tls = false;
-    std::string agent_token;
-    std::string ca_file;
-    std::function<void(bool)> on_viewing_changed;
-    std::atomic<bool> running{false};
-
-    std::thread worker_thread;
-    std::thread rx_thread;
-
-#if defined(_WIN32)
-    std::shared_ptr<HelperWsClient> ws_client;
+    auto dxgi = std::make_shared<WinMultiOutputCapture>();  // every output, one at a time (screen Step 36)
+    if (dxgi->initialize()) return dxgi;
+    return std::make_shared<WinGdiCapture>();
 #else
-    std::shared_ptr<xg::net::WebSocketClient> ws_client;
+    return std::make_shared<X11Capture>();
 #endif
-
-    void set_viewing(bool& state, bool active) const {
-        if (state == active) return;
-        state = active;
-        if (on_viewing_changed) on_viewing_changed(active);
-    }
-
-    void run() {
-        bool viewing = false;
-        std::shared_ptr<xg::ScreenCapture> capture;
-#if defined(_WIN32)
-        auto dxgi = std::make_shared<xg::WinDxgiCapture>();
-        if (dxgi->initialize()) {
-            capture = dxgi;
-        } else {
-            capture = std::make_shared<xg::WinGdiCapture>();
-        }
-#else
-        capture = std::make_shared<xg::X11Capture>();
-#endif
-
-        xg::EncoderConfig cfg{};
-        cfg.quality_text = 85;
-        cfg.codec = xg::Codec::Webp;
-
-        std::string base_path = path.empty() ? "/agent" : path;
-        if (base_path.front() != '/') base_path.insert(base_path.begin(), '/');
-        const std::string full_path = base_path + (base_path.find('?') == std::string::npos ? '?' : '&') +
-                                      "stream_id=" + std::to_string(stream_id);
-
-#if defined(_WIN32)
-        std::wstring w_host(host.begin(), host.end());
-        std::wstring w_path(full_path.begin(), full_path.end());
-        std::wstring w_tok(agent_token.begin(), agent_token.end());
-        ws_client->connect(w_host, port, w_path, use_tls, w_tok);
-        auto last_reconnect = std::chrono::steady_clock::now();
-
-        xg::AgentStateMachine state_machine(
-            capture, cfg,
-            [&](const std::vector<uint8_t>& data) {
-                if (ws_client) {
-                    if (!ws_client->is_connected()) {
-                        auto now = std::chrono::steady_clock::now();
-                        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_reconnect).count() >= 2) {
-                            last_reconnect = now;
-                            ws_client->reconnect();
-                        }
-                    }
-                    if (ws_client->is_connected()) {
-                        ws_client->send_binary(data.data(), data.size());
-                    }
-                }
-            });
-
-        rx_thread = std::thread([this, &state_machine, &viewing]() {
-            auto last_rx_reconnect = std::chrono::steady_clock::now();
-            while (running.load()) {
-                if (ws_client && ws_client->is_connected()) {
-                    std::vector<uint8_t> rx_data;
-                    if (ws_client->receive(rx_data)) {
-                        if (auto msg = xg::decode(rx_data.data(), rx_data.size())) {
-                            if (msg->type == xg::MsgType::Status && msg->flags == 0) {
-                                state_machine.on_view_stop();
-                                set_viewing(viewing, false);
-                                continue;
-                            }
-                            if (msg->type == xg::MsgType::KeyframeReq ||
-                                (msg->type == xg::MsgType::Status && msg->flags > 0)) {
-                                if (!state_machine.is_thread_running()) {
-                                    state_machine.on_view_stop();
-                                    state_machine.on_view_start(stream_id, "live");
-                                }
-                                set_viewing(viewing, true);
-                            }
-                        }
-                        state_machine.on_incoming_message(rx_data.data(), rx_data.size());
-                    } else {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                    }
-                } else if (running.load()) {
-                    if (state_machine.is_thread_running()) {
-                        state_machine.on_view_stop();
-                        set_viewing(viewing, false);
-                    }
-                    auto now = std::chrono::steady_clock::now();
-                    if (std::chrono::duration_cast<std::chrono::seconds>(now - last_rx_reconnect).count() >= 2) {
-                        last_rx_reconnect = now;
-                        ws_client && ws_client->reconnect();
-                    }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-                }
-            }
-        });
-
-        while (running.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-
-        if (ws_client) {
-            ws_client->close();
-        }
-        if (rx_thread.joinable()) {
-            rx_thread.join();
-        }
-        state_machine.on_view_stop();
-        set_viewing(viewing, false);
-#else
-        xg::net::TlsOptions tls_opts;
-        tls_opts.ca_file = ca_file;
-        tls_opts.timeout_ms = 5000;
-        std::vector<std::pair<std::string, std::string>> headers;
-        if (!agent_token.empty()) headers.emplace_back("X-Agent-Token", agent_token);
-
-        auto try_connect = [&]() -> bool {
-            std::string err;
-            return ws_client && ws_client->connect(host, port, full_path, tls_opts, &err, headers, use_tls);
-        };
-        try_connect();
-        auto last_rx_reconnect = std::chrono::steady_clock::now();
-
-        xg::AgentStateMachine state_machine(
-            capture, cfg,
-            [&](const std::vector<uint8_t>& data) {
-                if (ws_client && ws_client->open()) {
-                    ws_client->send_binary(data.data(), data.size());
-                }
-            });
-
-        // Keep capture completely stopped when 0 instructors are viewing so idle helper CPU stays ~0%.
-        rx_thread = std::thread([this, &state_machine, &viewing, &try_connect, &last_rx_reconnect]() {
-            while (running.load()) {
-                if (ws_client && ws_client->open()) {
-                    if (auto rx = ws_client->receive(250)) {
-                        const auto* bytes = reinterpret_cast<const uint8_t*>(rx->data());
-                        if (auto msg = xg::decode(bytes, rx->size())) {
-                            if (msg->type == xg::MsgType::Status && msg->flags == 0) {
-                                if (state_machine.is_thread_running()) state_machine.on_view_stop();
-                                set_viewing(viewing, false);
-                                continue;
-                            }
-                            if (msg->type == xg::MsgType::KeyframeReq ||
-                                (msg->type == xg::MsgType::Status && msg->flags > 0)) {
-                                if (!state_machine.is_thread_running()) {
-                                    state_machine.on_view_stop();
-                                    state_machine.on_view_start(stream_id, "live");
-                                }
-                                set_viewing(viewing, true);
-                            }
-                        }
-                        state_machine.on_incoming_message(bytes, rx->size());
-                    } else if (!ws_client->open() && state_machine.is_thread_running()) {
-                        state_machine.on_view_stop();
-                        set_viewing(viewing, false);
-                    }
-                } else if (running.load()) {
-                    if (state_machine.is_thread_running()) {
-                        state_machine.on_view_stop();
-                        set_viewing(viewing, false);
-                    }
-                    auto now = std::chrono::steady_clock::now();
-                    if (std::chrono::duration_cast<std::chrono::seconds>(now - last_rx_reconnect).count() >= 2) {
-                        last_rx_reconnect = now;
-                        try_connect();
-                    } else {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(150));
-                    }
-                }
-            }
-        });
-
-        while (running.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-
-        if (ws_client) {
-            ws_client->close();
-        }
-        if (rx_thread.joinable()) {
-            rx_thread.join();
-        }
-        if (state_machine.is_thread_running()) {
-            state_machine.on_view_stop();
-        }
-        set_viewing(viewing, false);
-#endif
-    }
-};
-
-ScreenStreamer::ScreenStreamer() : impl_(std::make_unique<Impl>()) {}
-
-ScreenStreamer::~ScreenStreamer() {
-    stop();
 }
 
-bool ScreenStreamer::start(const std::string& ccc_host,
-                           uint32_t stream_id,
-                           uint16_t gateway_port,
-                           const std::string& gateway_path,
-                           bool use_tls,
-                           const std::string& agent_token,
-                           const std::string& ca_file,
-                           std::function<void(bool)> on_viewing_changed) {
-    if (ccc_host.empty() || stream_id == 0) return false;
-    const std::string norm_path = gateway_path.empty() ? std::string("/agent") : gateway_path;
+// The gateway's Status message carries the viewers' mode in the reserved header field (bytes 26-27, u16 LE,
+// docs/PROTOCOL.md): 2 snapshot, 3 wall, anything else (0 not stated, 1 live) is live.
+const char* mode_from_status(std::string_view msg) {
+    if (msg.size() < kHeaderSize) return "live";
+    const uint16_t code = static_cast<uint8_t>(msg[26]) | (static_cast<uint16_t>(static_cast<uint8_t>(msg[27])) << 8);
+    return code == 2 ? "snapshot" : code == 3 ? "wall" : "live";
+}
 
-    if (impl_->running.load()) {
-        if (impl_->host == ccc_host && impl_->stream_id == stream_id && impl_->port == gateway_port &&
-            impl_->path == norm_path && impl_->use_tls == use_tls && impl_->agent_token == agent_token &&
-            impl_->ca_file == ca_file) {
-            return true; // Already streaming with identical parameters
-        }
-        stop();
+constexpr size_t kMaxTitleBytes = 512;  // bounds the regex work on a title the student controls
+
+std::shared_ptr<PrivacyFilter> make_filter(const WindowSource& src, const std::vector<MaskRule>& rules) {
+    auto f = std::make_shared<PrivacyFilter>();
+    std::vector<PrivacyRule> pr;
+    for (const auto& r : rules) {
+        PrivacyRule x;
+        if (!r.app.empty()) x.process_name = r.app;
+        if (!r.title_regex.empty()) x.title_regex = r.title_regex;
+        pr.push_back(std::move(x));
+    }
+    f->set_rules(std::move(pr));
+    f->set_window_provider([src]() -> xg::WindowInfo {
+        auto w = src ? src() : std::nullopt;
+        if (!w) throw std::runtime_error("foreground window unknown");  // PrivacyFilter turns this into MASKED
+        if (w->title.size() > kMaxTitleBytes) w->title.resize(kMaxTitleBytes);
+        return {w->app, {}, w->title};
+    });
+    return f;
+}
+
+}  // namespace
+
+struct ScreenStreamer::Impl {
+    CaptureFactory factory;
+    mutable std::mutex mu;
+    std::unique_ptr<AgentStateMachine> sm;
+    uint32_t stream_id = 0;
+    std::chrono::steady_clock::time_point lease_until{};  // default (epoch): no lease
+    bool lease_active_locked() const { return std::chrono::steady_clock::now() < lease_until; }
+    std::string mode = "live";  // what the gateway last asked for: wall, snapshot or live
+    bool viewing = false;
+    std::function<void(bool)> on_viewing_changed;
+    WindowSource window_source;
+    std::vector<MaskRule> mask_rules;
+    ScreenEncoding encoding;
+    double cpu_budget_pct = 8.0;
+    std::shared_ptr<FrameOut> out;  // kept so a settings change can rebuild the state machine
+    void make_sm_locked(std::shared_ptr<ScreenCapture> capture) {
+        EncoderConfig cfg{};
+        cfg.codec = encoding.webp ? Codec::Webp : Codec::Jpeg;
+        cfg.quality_text = std::clamp(encoding.quality, 10, 100);
+        cfg.webp_method = std::clamp(encoding.webp_method, 0, 6);
+        // Called on the capture thread; the IPC client serialises writes with the helper's other messages.
+        sm = std::make_unique<AgentStateMachine>(std::move(capture), cfg, [o = out](const std::vector<uint8_t>& d) {
+            (*o)(std::string_view(reinterpret_cast<const char*>(d.data()), d.size()));
+        });
+        sm->set_cpu_budget_pct(cpu_budget_pct);
+        install_filter_locked();  // always: with no window source the filter masks everything
+    }
+    // The filter is rebuilt (not mutated) when the rules change; the state machine swaps it under its own lock.
+    void install_filter_locked() {
+        if (sm) sm->set_privacy_filter(make_filter(window_source, mask_rules));
     }
 
-    impl_->host = ccc_host;
+    void set_viewing(bool v) {
+        if (viewing == v) return;
+        viewing = v;
+        if (on_viewing_changed) on_viewing_changed(v);
+    }
+    void stop_capture_locked() {
+        if (sm && sm->is_thread_running()) sm->on_view_stop();
+        set_viewing(false);
+    }
+};
+
+ScreenStreamer::ScreenStreamer(CaptureFactory factory) : impl_(std::make_unique<Impl>()) {
+    impl_->factory = factory ? std::move(factory) : CaptureFactory(platform_capture);
+}
+
+ScreenStreamer::~ScreenStreamer() { stop(); }
+
+void ScreenStreamer::set_window_source(WindowSource src) {
+    std::lock_guard lk(impl_->mu);
+    impl_->window_source = std::move(src);
+    impl_->install_filter_locked();
+}
+
+void ScreenStreamer::set_mask_rules(std::vector<MaskRule> rules) {
+    std::lock_guard lk(impl_->mu);
+    impl_->mask_rules = std::move(rules);
+    impl_->install_filter_locked();
+}
+
+void ScreenStreamer::set_encoding(const ScreenEncoding& enc) {
+    std::lock_guard lk(impl_->mu);
+    if (impl_->encoding == enc) return;
+    impl_->encoding = enc;
+    if (impl_->sm && !impl_->sm->is_thread_running()) {  // armed, not capturing: rebuild now
+        auto capture = impl_->factory();
+        if (capture) impl_->make_sm_locked(std::move(capture));
+    }
+}
+
+void ScreenStreamer::set_cpu_budget_pct(double pct) {
+    std::lock_guard lk(impl_->mu);
+    impl_->cpu_budget_pct = std::clamp(pct, 1.0, 100.0);
+    if (impl_->sm) impl_->sm->set_cpu_budget_pct(impl_->cpu_budget_pct);
+}
+
+StreamStats ScreenStreamer::stream_stats() const {
+    std::lock_guard lk(impl_->mu);
+    return impl_->sm ? impl_->sm->stream_stats() : StreamStats{};
+}
+
+ScreenCost ScreenStreamer::cost() const {
+    const StreamStats s = stream_stats();
+    return ScreenCost{s.cpu_pct, s.level};
+}
+
+bool ScreenStreamer::start(uint32_t stream_id, FrameOut out, std::function<void(bool)> on_viewing_changed) {
+    if (stream_id == 0 || !out) return false;
+    std::lock_guard lk(impl_->mu);
+    if (impl_->sm && impl_->stream_id == stream_id) return true;
+    impl_->stop_capture_locked();
+    impl_->sm.reset();
+    auto capture = impl_->factory();
+    if (!capture) return false;
+    impl_->out = std::make_shared<FrameOut>(std::move(out));
+    impl_->make_sm_locked(std::move(capture));
     impl_->stream_id = stream_id;
-    impl_->port = gateway_port;
-    impl_->path = norm_path;
-    impl_->use_tls = use_tls;
-    impl_->agent_token = agent_token;
-    impl_->ca_file = ca_file;
     impl_->on_viewing_changed = std::move(on_viewing_changed);
-#if defined(_WIN32)
-    impl_->ws_client = std::make_shared<HelperWsClient>();
-#else
-    impl_->ws_client = std::make_shared<xg::net::WebSocketClient>();
-#endif
-    impl_->running.store(true);
-
-    impl_->worker_thread = std::thread([this]() {
-        impl_->run();
-    });
-
     return true;
 }
 
-void ScreenStreamer::stop() {
-    if (!impl_ || !impl_->running.load()) return;
+void ScreenStreamer::grant_lease(int ttl_s) {
+    std::lock_guard lk(impl_->mu);
+    impl_->lease_until = std::chrono::steady_clock::now() + std::chrono::seconds(std::clamp(ttl_s, 1, 120));
+}
 
-    impl_->running.store(false);
-    if (impl_->ws_client) {
-        impl_->ws_client->close();
+void ScreenStreamer::tick() {
+    std::lock_guard lk(impl_->mu);
+    if (impl_->sm && impl_->sm->is_thread_running() && !impl_->lease_active_locked()) impl_->stop_capture_locked();
+}
+
+void ScreenStreamer::on_gateway_message(std::string_view msg) {
+    std::lock_guard lk(impl_->mu);
+    if (!impl_->sm) return;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(msg.data());
+    if (auto m = decode(bytes, msg.size())) {
+        if (m->type == MsgType::Status && m->flags == 0) {  // no viewer left
+            impl_->stop_capture_locked();
+            impl_->mode = "live";
+            return;
+        }
+        if (m->type == MsgType::Status) impl_->mode = mode_from_status(msg);
+        if (m->type == MsgType::KeyframeReq || (m->type == MsgType::Status && m->flags > 0)) {
+            if (!impl_->lease_active_locked()) return;  // no CCC lease: a gateway request alone never starts capture
+            // A different mode (a wall viewer became a live one, or the reverse) restarts capture with it.
+            if (impl_->sm->is_thread_running() && impl_->sm->mode() != impl_->mode) impl_->sm->on_view_stop();
+            if (!impl_->sm->is_thread_running()) {
+                impl_->sm->on_view_stop();
+                impl_->sm->on_view_start(impl_->stream_id, impl_->mode);
+            }
+            impl_->set_viewing(true);
+        }
     }
-    if (impl_->worker_thread.joinable()) {
-        impl_->worker_thread.join();
-    }
+    impl_->sm->on_incoming_message(bytes, msg.size());
+}
+
+void ScreenStreamer::on_link_lost() {
+    std::lock_guard lk(impl_->mu);
+    impl_->lease_until = {};  // the service grants it again when it reconnects
+    impl_->stop_capture_locked();
+}
+
+void ScreenStreamer::stop() {
+    if (!impl_) return;
+    std::lock_guard lk(impl_->mu);
+    impl_->stop_capture_locked();
+    impl_->sm.reset();
+    impl_->stream_id = 0;
 }
 
 bool ScreenStreamer::is_running() const {
-    return impl_ && impl_->running.load();
+    std::lock_guard lk(impl_->mu);
+    return impl_->sm != nullptr;
 }
 
-} // namespace xg
+bool ScreenStreamer::is_capturing() const {
+    std::lock_guard lk(impl_->mu);
+    return impl_->sm && impl_->sm->is_thread_running();
+}
+
+}  // namespace xg

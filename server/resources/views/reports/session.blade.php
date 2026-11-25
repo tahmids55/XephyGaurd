@@ -25,42 +25,42 @@
   <p class="meta">{{ ($session->starts_at ?? now())->format('j F Y · H:i') }}{{ $session->ended_at ? ' – ' . $session->ended_at->format('H:i') : '' }} · Profile “{{ $session->profile?->name ?? ucfirst($session->mode) }}” · {{ isset($scores) ? $scores->count() : 0 }} scores</p>
   <p class="disclaimer"><b>Read this first.</b> Scores summarise signals the system could observe. They are not proof of anything, and some things cannot be observed at all. A flag is a reason to talk to the student.</p>
   <h2>1. Scores</h2>
-  <table class="tbl"><thead><tr><th>PC</th><th>Student</th><th>Method</th><th>Score</th><th>Confidence</th><th>What was observed</th></tr></thead><tbody>
-    @forelse($scores ?? [] as $s)
+  <table class="tbl"><thead><tr><th>PC</th><th>Student</th><th>Method</th><th>Score</th><th>Confidence</th><th>Reasons</th><th>Not observable</th></tr></thead><tbody>
+    @forelse(\App\Services\ReportModel::scoreRows($scores ?? collect()) as $i => $r)
       @php
-        $integrity = max(0, min(100, 100 - (int) $s->score));
-        $barClass = $integrity < 70 ? 'low' : ($integrity < 90 ? 'mid' : '');
-        $reasons = is_array($s->reasons) ? $s->reasons : [];
+        $s = $scores[$i];
+        $barClass = $r['score'] >= 70 ? 'low' : ($r['score'] >= 40 ? 'mid' : '');
       @endphp
       <tr>
-        <td class="name">{{ $s->pc?->name ?? ('PC-' . $s->pc_id) }}</td>
+        <td class="name">{{ $r['pc'] }}</td>
         <td class="mono">
           @if($s->student)
-            <a href="{{ route('reports.student', [$session, $s->student]) }}">{{ $s->student->name }} ({{ $s->user ?: $s->student->login }})</a>
+            <a href="{{ route('reports.student', [$session, $s->student]) }}">{{ $s->student->name }} ({{ $r['user'] ?: $s->student->login }})</a>
           @else
-            {{ $s->user ?: '—' }}
+            {{ $r['user'] ?: '—' }}
           @endif
         </td>
-        <td class="muted small">{{ $s->method }}</td>
-        <td><div class="scorebar {{ $barClass }}"><i><b style="width:{{ $integrity }}%"></b></i><span>{{ $integrity }}/100</span></div></td>
-        <td>{{ ucfirst($s->confidence ?? 'Medium') }}</td>
+        <td class="muted small">{{ $r['method'] }}</td>
+        <td><div class="scorebar {{ $barClass }}"><i><b style="width:{{ min(100, max(0, $r['score'])) }}%"></b></i><span>{{ $r['score'] }}/100</span></div></td>
+        <td>{{ ucfirst($r['confidence'] ?: 'medium') }}</td>
         <td>
-          @if(count($reasons))
+          @if(count($r['reasons']))
             <div class="signals">
-              @foreach($reasons as $r)
-                <span><b>+{{ $r['points'] ?? $r['weight'] ?? 5 }}</b>{{ $r['label'] ?? $r['reason'] ?? '' }}</span>
+              @foreach($r['reasons'] as $x)
+                <span>@if($x['points'] !== null)<b>+{{ $x['points'] }}</b>@endif{{ $x['label'] }}@if($x['signal'] !== '') <small class="muted">({{ $x['signal'] }})</small>@endif</span>
               @endforeach
             </div>
           @else
-            <span class="muted">Normal activity</span>
+            <span class="muted">No reasons recorded</span>
           @endif
         </td>
+        <td class="small muted">{{ implode('; ', $r['not_observable']) ?: '—' }}</td>
       </tr>
     @empty
-      <tr><td colspan="6" class="muted">No scores recorded yet. Use Re-score to compute session scores.</td></tr>
+      <tr><td colspan="7" class="muted">No scores recorded yet. Use Re-score to compute session scores.</td></tr>
     @endforelse
   </tbody></table>
-  <p class="small muted" style="margin-top:8px">Lowest integrity scores first. The CSV has every PC.</p>
+  <p class="small muted" style="margin-top:8px">Highest score first. A higher score means more signals to review, not proof. The CSV has every PC.</p>
   <h2>2. Alerts ({{ isset($alerts) ? $alerts->count() : 0 }})</h2>
   <table class="tbl"><thead><tr><th>Time</th><th>PC</th><th>Severity</th><th>What happened</th><th>Review</th></tr></thead><tbody>
     @forelse($alerts ?? [] as $a)

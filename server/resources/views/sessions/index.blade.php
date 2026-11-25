@@ -31,6 +31,17 @@
         <button type="submit" class="btn btn-sm">Switch profile</button>
       </form>
       @endif
+      @if(!empty($proxyOnly))
+      <form method="post" action="{{ route('sessions.network_lock', $active) }}" class="row" style="--gap:6px">
+        @csrf
+        <select name="network_lock" class="select select-sm" style="width:190px" aria-label="Network lock">
+          <option value="observe" @selected($active->network_lock === 'observe')>Network: observe</option>
+          <option value="strict" @selected($active->network_lock === 'strict')>Network: strict (proxy only)</option>
+          <option value="off" @selected($active->network_lock === 'off')>Network: no lock</option>
+        </select>
+        <button type="submit" class="btn btn-sm">Set network</button>
+      </form>
+      @endif
       <form method="post" action="{{ route('sessions.stop', $active) }}" @submit="confirmStop($event)">
         @csrf
         <button type="submit" class="btn btn-danger">End session</button>
@@ -181,6 +192,15 @@
             </label>
             <label class="field"><span>Cohort / group (optional)</span><input name="experiment_group" class="input" placeholder="e.g. Group A"></label>
           </div>
+          @if(!empty($proxyOnly))
+          <label class="field"><span>Network lock</span>
+            <select name="network_lock" class="select">
+              <option value="observe" selected>Observe: everything allowed, QUIC off so browsers use the proxy; tunnels are flagged</option>
+              <option value="strict">Strict: Internet only through the lab proxy</option>
+              <option value="off">No lock</option>
+            </select>
+          </label>
+          @endif
         </div>
         <div class="modal-foot"><button type="button" class="btn" @click="startOpen = false">Cancel</button><button type="submit" class="btn btn-solid">Start session</button></div>
       </form>

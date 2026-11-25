@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services;
 
 use App\Events\AlertRaised;
@@ -48,6 +50,7 @@ class SessionManager
         });
         Audit::log('session.start', $session, ['course' => $course, 'profile' => $profile->name, 'mode' => $profile->mode]);
         $this->propagate($session);
+        $this->reconcileScores($lab->id, $session);
 
         return $session;
     }
@@ -55,6 +58,14 @@ class SessionManager
     public function stop(LabSession $session, ?User $by = null): void
     {
         $this->finish($session, $by, true);
+        $this->reconcileScores($session->lab_id, null);
+    }
+
+    /** The live score counts only the session's alerts while one runs, so it changes when a session starts or ends. */
+    private function reconcileScores(int $labId, ?LabSession $session): void
+    {
+        $pcs = Pc::query()->active()->where('lab_id', $labId)->get();
+        app(EventIngestor::class)->reconcileLiveScores($pcs, $session);
     }
 
     private function finish(LabSession $session, ?User $by, bool $propagate): void
@@ -64,6 +75,7 @@ class SessionManager
         }
         $session->forceFill(['status' => 'ended', 'ended_at' => now()])->save();
         Audit::log('session.stop', $session, ['by' => $by?->email ?? 'timetable']);
+        app(ScreenGatewayRevoker::class)->session($session->id);
         try {
             ScoreSession::dispatch($session->id);   // scoring + report generation start automatically
         } catch (\Throwable $e) {
@@ -77,15 +89,33 @@ class SessionManager
 
     public function switchProfile(LabSession $session, Profile $profile, ?User $by = null): void
     {
+        $this->requireActive($session);
         $from = $session->profile?->name;
         $session->forceFill(['profile_id' => $profile->id, 'mode' => $profile->mode])->save();
         Audit::log('session.switch_mode', $session, ['from' => $from, 'to' => $profile->name, 'mode' => $profile->mode]);
         $this->propagate($session->fresh());
     }
 
+    /** Changes the proxy-only network lock of a running session (off / observe / strict). Audited. */
+    public function setNetworkLock(LabSession $session, string $lock, ?User $by = null): void
+    {
+        if (! in_array($lock, LabSession::NETWORK_LOCKS, true)) {
+            throw new \InvalidArgumentException("unknown network lock $lock");
+        }
+        $this->requireActive($session);
+        $from = $session->network_lock;
+        $session->forceFill(['network_lock' => $lock])->save();
+        Audit::log('session.network_lock', $session, ['from' => $from, 'to' => $lock, 'by' => $by?->email]);
+        $this->propagate($session->fresh());
+    }
+
     /** Per-PC override (e.g. an approved accommodation). Always audited with a reason. */
     public function setOverride(LabSession $session, Pc $pc, ?Profile $profile, string $reason, ?User $by = null): void
     {
+        $this->requireActive($session);
+        if ((int) $pc->lab_id !== (int) $session->lab_id) {
+            throw new SessionNotActive('That PC is not in this session\'s lab.');
+        }
         SessionPc::query()->updateOrCreate(['lab_session_id' => $session->id, 'pc_id' => $pc->id],
             ['override_profile_id' => $profile?->id, 'override_reason' => $profile ? $reason : null]);
         Audit::log('session.override', $pc, ['session_id' => $session->id, 'profile' => $profile?->name, 'reason' => $reason]);
@@ -100,6 +130,14 @@ class SessionManager
         $this->network()->write();
         $this->commands->send($pc, 'isolate_notice', ['isolated' => $isolated], $by);
         broadcast(new PcUpdated($pc));
+    }
+
+    /** Mode switches, locks and overrides only change a running session; ended/scheduled ones are history (S-22). */
+    private function requireActive(LabSession $session): void
+    {
+        if ($session->fresh()?->status !== 'active') {
+            throw new SessionNotActive('This session is not running.');
+        }
     }
 
     /** Pushes a session change everywhere: network layers, agents, dashboards. */
@@ -149,12 +187,14 @@ class SessionManager
         $defaultTimeout = max(10, (int) config('xephyguard.heartbeat_timeout_s', 45));
         $sessions = [];
         $cutoffs = [];
+        $timeouts = [];
         foreach (Lab::all() as $lab) {
             $session = LabSession::activeFor($lab->id);
             $sessions[$lab->id] = $session;
             $customHb = (int) data_get($session?->profile?->agent, 'intervals.heartbeat_s', 0);
             $timeout = $customHb > 0 ? max(10, $customHb * 3) : $defaultTimeout;
             $cutoffs[$lab->id] = now()->subSeconds($timeout);
+            $timeouts[$lab->id] = $timeout;
         }
         $n = 0;
         $silent = Pc::query()->active()->whereNotNull('last_seen_at')
@@ -164,7 +204,16 @@ class SessionManager
 
                 return $pc->last_seen_at->lt($cutoff);
             });
+        // Lab snapshot for the health classifier: one query, only when something is silent.
+        $neighbours = $silent->isEmpty() ? collect() : Pc::query()->active()->whereNotNull('last_seen_at')
+            ->get(['id', 'lab_id', 'last_seen_at', 'clean_shutdown'])->groupBy('lab_id');
         foreach ($silent as $pc) {
+            $health = AgentHealthClassifier::assess(
+                ['id' => $pc->id, 'last_seen_at' => $pc->last_seen_at, 'sleep_or_shutdown' => $pc->clean_shutdown],
+                ($neighbours[$pc->lab_id] ?? collect())->map(fn (Pc $o) => ['id' => $o->id, 'last_seen_at' => $o->last_seen_at])->all(),
+                now(),
+                $timeouts[$pc->lab_id] ?? $defaultTimeout,
+            );
             $pc->silent_alerted_at = now();
             $was = $pc->status;
             $pc->status = 'offline';
@@ -178,10 +227,17 @@ class SessionManager
                 'pc_id' => $pc->id, 'lab_session_id' => $session?->id, 'rule_id' => 'tamper.machine_silent',
                 'severity' => $session ? 'high' : 'low', 'category' => 'tamper',
                 'title' => 'Machine silent: no heartbeat since '.$pc->last_seen_at->format('H:i:s').' (agent killed, network cut or power off)',
-                'details' => ['last_seen' => $pc->last_seen_at->toIso8601String()], 'user' => $pc->current_user,
+                'details' => [
+                    'last_seen' => $pc->last_seen_at->toIso8601String(),
+                    'health' => $health['status'],
+                    'reasons' => $health['reasons'],
+                ], 'user' => $pc->current_user,
                 'occurred_at' => now(),
             ]);
             broadcast(new AlertRaised($alert));
+            $inSession = $session && SessionPc::query()->where('lab_session_id', $session->id)->where('pc_id', $pc->id)->exists();
+            app(EventIngestor::class)->refreshLiveScore($pc, $inSession ? $session : null);
+            $pc->save();
             $n++;
         }
 

@@ -1,7 +1,9 @@
 #include "xg/policy.hpp"
 
 #include <algorithm>
+#include <stdexcept>
 
+#include "xg/json_read.hpp"
 #include "xg/util.hpp"
 
 namespace xg {
@@ -33,6 +35,20 @@ const char* to_string(TitleCapture t) {
         case TitleCapture::full: return "full";
     }
     return "app_only";
+}
+NetworkLock parse_network_lock(const std::string& s) {
+    const auto l = to_lower(s);
+    if (l == "observe") return NetworkLock::observe;
+    if (l == "strict") return NetworkLock::strict;
+    return NetworkLock::off;
+}
+const char* to_string(NetworkLock l) {
+    switch (l) {
+        case NetworkLock::off: return "off";
+        case NetworkLock::observe: return "observe";
+        case NetworkLock::strict: return "strict";
+    }
+    return "off";
 }
 Action parse_action(const std::string& s) {
     auto l = to_lower(s);
@@ -99,12 +115,15 @@ Policy Policy::default_for(Mode m) {
     // System-critical processes are never killed regardless of rules.
     p.kill_exempt = {"systemd", "init", "explorer", "winlogon", "csrss", "lsass", "services", "smss", "wininit",
                      "xephyguard-agent", "xephyguard-helper", "sshd", "xorg", "gnome-shell", "plasmashell", "dwm"};
-    p.notice_text = "This computer is monitored by XephyGuard. No keystrokes, clipboard text or screen content is recorded.";
+    // Fallback until the CCC sends its notice; must stay truthful (ETHICS.md, I-AGENT-21).
+    p.notice_text = "This computer is monitored by XephyGuard. Programs, websites and typing/paste statistics are "
+                    "recorded, never what you type, your clipboard text or your passwords. Lab staff can view this "
+                    "screen live and may save a screenshot as evidence; every view is logged.";
     return p;
 }
 
 Policy Policy::from_json(const json& j, std::string* err) {
-    Mode m = parse_mode(j.value("mode", std::string("always_on")));
+    Mode m = parse_mode(jr::str(j, "mode", "always_on"));
     Policy p = default_for(m);
     try {
         p.version = j.value("version", int64_t(0));
@@ -169,6 +188,47 @@ Policy Policy::from_json(const json& j, std::string* err) {
         if (j.contains("proxy_pac_url") && j["proxy_pac_url"].is_string()) {
             p.proxy_pac_url = j["proxy_pac_url"].get<std::string>();
         }
+        if (j.contains("network_lock") && j["network_lock"].is_string())
+            p.network_lock = parse_network_lock(j["network_lock"].get<std::string>());
+        if (j.contains("screen") && j["screen"].is_object() && j["screen"].contains("privacy_rules")) {
+            // A malformed list rejects the whole policy: a half-read mask list would silently show windows.
+            const auto& arr = j["screen"]["privacy_rules"];
+            if (!arr.is_array() || arr.size() > 128) throw std::runtime_error("screen.privacy_rules must be an array of at most 128 rules");
+            std::vector<Policy::MaskRule> rules;
+            for (const auto& r : arr) {
+                if (!r.is_object()) throw std::runtime_error("screen.privacy_rules entry must be an object");
+                Policy::MaskRule m;
+                for (const char* k : {"process", "title_regex"}) {
+                    if (!r.contains(k)) continue;
+                    if (!r[k].is_string() || r[k].get<std::string>().size() > 256)
+                        throw std::runtime_error(std::string("screen.privacy_rules.") + k + " must be a string of at most 256 bytes");
+                }
+                m.process = r.value("process", std::string{});
+                m.title_regex = r.value("title_regex", std::string{});
+                if (m.process.empty() && m.title_regex.empty()) throw std::runtime_error("screen.privacy_rules entry has no process or title_regex");
+                rules.push_back(std::move(m));
+            }
+            p.screen_mask_rules = std::move(rules);
+        }
+        if (j.contains("screen") && j["screen"].is_object()) {
+            const auto& s = j["screen"];
+            if (s.contains("codec") && s["codec"].is_string()) {
+                const auto c = s["codec"].get<std::string>();
+                if (c == "jpeg" || c == "webp") p.screen_codec = c;
+            }
+            auto int_in = [&](const char* k, int lo, int hi, int& out) {
+                if (s.contains(k) && s[k].is_number_integer()) {
+                    const auto v = s[k].get<int64_t>();
+                    if (v >= lo && v <= hi) out = static_cast<int>(v);
+                }
+            };
+            int_in("quality", 10, 100, p.screen_quality);
+            int_in("webp_method", 0, 6, p.screen_webp_method);
+            if (s.contains("cpu_budget_pct") && s["cpu_budget_pct"].is_number()) {
+                const double v = s["cpu_budget_pct"].get<double>();
+                if (v >= 1.0 && v <= 100.0) p.screen_cpu_budget_pct = v;
+            }
+        }
     } catch (const std::exception& e) {
         if (err) *err = e.what();
     }
@@ -213,6 +273,13 @@ json Policy::to_json() const {
         {"google_search_url", google_search_url},
         {"proxy_mode", proxy_mode},
         {"proxy_pac_url", proxy_pac_url},
+        {"network_lock", to_string(network_lock)},
+        {"screen", {{"privacy_rules", [&] {
+            json a = json::array();
+            for (const auto& m : screen_mask_rules) a.push_back({{"process", m.process}, {"title_regex", m.title_regex}});
+            return a;
+        }()}, {"codec", screen_codec}, {"quality", screen_quality}, {"webp_method", screen_webp_method},
+                    {"cpu_budget_pct", screen_cpu_budget_pct}}},
     };
 }
 

@@ -5,9 +5,10 @@ namespace App\Http\Controllers\Agent;
 use App\Http\Controllers\Controller;
 use App\Models\Agent;
 use App\Services\EventIngestor;
-use App\Services\PolicyBuilder;
+use App\Services\PolicyService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class AgentController extends Controller
 {
@@ -16,7 +17,7 @@ class AgentController extends Controller
         return $r->attributes->get('agent');
     }
 
-    public function policy(Request $request, PolicyBuilder $policies): JsonResponse
+    public function policy(Request $request, PolicyService $policies): JsonResponse
     {
         return response()->json($policies->response($this->agent($request)->pc));
     }
@@ -36,7 +37,8 @@ class AgentController extends Controller
         $agent = $this->agent($request);
 
         if ($data['channel_name'] !== "private-pc.{$agent->pc_id}") {
-            \Illuminate\Support\Facades\Log::warning("AgentController broadcastAuth 403: requested={$data['channel_name']}, expected=private-pc.{$agent->pc_id}");
+            Log::warning("AgentController broadcastAuth 403: requested={$data['channel_name']}, expected=private-pc.{$agent->pc_id}");
+
             return response()->json(['error' => 'agents may only subscribe to their own channel'], 403);
         }
 

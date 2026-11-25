@@ -215,6 +215,66 @@ std::vector<std::string> RuleEngine::extension_ids() const {
     return out;
 }
 
+bool RuleEngine::is_browser(const std::string& exe) const {
+    std::shared_lock lk(mu_);
+    const auto e = normalize_exe(exe);
+    return std::find(set_.web.browsers.begin(), set_.web.browsers.end(), e) != set_.web.browsers.end();
+}
+
+std::optional<std::string> RuleEngine::match_ai_site(const std::string& app, const std::string& title) const {
+    if (title.empty() || !is_browser(app)) return std::nullopt;
+    std::shared_lock lk(mu_);
+    std::string page = to_lower(title);
+    for (const auto& sfx : set_.web.browser_title_suffixes)
+        if (!sfx.empty() && page.size() > sfx.size() && page.ends_with(sfx)) {
+            page.resize(page.size() - sfx.size());
+            break;
+        }
+    while (!page.empty() && page.back() == ' ') page.pop_back();
+    for (const auto& s : set_.web.ai_sites) {
+        auto any = [&](const std::vector<std::string>& pats, auto pred) {
+            return std::any_of(pats.begin(), pats.end(), [&](const std::string& p) { return !p.empty() && pred(p); });
+        };
+        if (any(s.equals, [&](const std::string& p) { return page == p; }) ||
+            any(s.prefix, [&](const std::string& p) { return page.starts_with(p); }) ||
+            any(s.suffix, [&](const std::string& p) { return page.ends_with(p); }) ||
+            any(s.contains, [&](const std::string& p) { return page.find(p) != std::string::npos; }))
+            return s.site;
+    }
+    return std::nullopt;
+}
+
+std::vector<std::string> RuleEngine::extension_domains(const ExtensionInfo& e, const std::string& rule_id) const {
+    std::shared_lock lk(mu_);
+    for (const auto& r : set_.extensions) {
+        if (r.id != rule_id) continue;
+        // Same id rule as match_extension: exact, or prefix for JetBrains plugin directories.
+        const auto id = to_lower(e.id);
+        for (const auto& [key, doms] : r.id_domains)
+            if (id == key || (r.ide == "jetbrains" && istarts_with(id, key))) return doms;
+        return r.domains;
+    }
+    return {};
+}
+
+std::vector<std::string> RuleEngine::browser_extension_ids() const {
+    std::shared_lock lk(mu_);
+    std::vector<std::string> out;
+    for (const auto& r : set_.extensions) {
+        if (r.ide != "browser" || !enabled(r.id)) continue;
+        for (const auto& id : r.ext_ids)
+            if (id.size() == 32 && std::all_of(id.begin(), id.end(), [](char c) { return c >= 'a' && c <= 'p'; }) &&
+                std::find(out.begin(), out.end(), id) == out.end())
+                out.push_back(id);
+    }
+    return out;
+}
+
+WebHints RuleEngine::web() const {
+    std::shared_lock lk(mu_);
+    return set_.web;
+}
+
 PortProbe RuleEngine::probe() const { std::shared_lock lk(mu_); return set_.probe; }
 ArtifactScanSpec RuleEngine::artifact_scan() const { std::shared_lock lk(mu_); return set_.artifact_scan; }
 std::vector<ArtifactRule> RuleEngine::artifact_rules() const { std::shared_lock lk(mu_); return set_.artifacts; }

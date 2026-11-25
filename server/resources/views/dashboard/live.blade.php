@@ -235,7 +235,7 @@
               <div class="scorering" style="width:40px;height:40px" :style="'--v:'+(typeof active.score === 'number' ? active.score : 0)+';--c:'+ringColor(active)"><b x-text="active.score" style="font-size:12px"></b></div>
               <div style="min-width:0"><div style="font-weight:600;font-size:14px" x-text="active.name"></div><div class="small muted" x-text="statusText(active) + ' · ' + active.user"></div></div>
             </div>
-            <dl class="prop"><dt>Computer</dt><dd class="mono" x-text="active.host"></dd><dt>Address</dt><dd class="mono" x-text="active.ip"></dd><dt>System</dt><dd x-text="active.os"></dd><dt>Agent</dt><dd x-text="'v' + active.agent"></dd><dt>Last event</dt><dd x-text="active.last"></dd></dl>
+            <dl class="prop"><dt>Computer</dt><dd class="mono" x-text="active.host"></dd><dt>Address</dt><dd class="mono" x-text="active.ip"></dd><dt>System</dt><dd x-text="active.os"></dd><dt>Agent</dt><dd x-text="'v' + active.agent"></dd><dt x-show="active.streamCost">Streaming</dt><dd class="mono" x-show="active.streamCost" x-text="active.streamCost"></dd><dt>Last event</dt><dd x-text="active.last"></dd></dl>
             <div class="row" style="padding:0 16px 16px">
               <button class="btn btn-sm btn-solid" @click="openInspector(activePcId)">Open inspector</button>
               <button class="btn btn-sm" @click="message(activePcId)">Message</button>
@@ -282,7 +282,8 @@
           <div class="row" style="margin-bottom:14px;--gap:10px">
             <div class="seg"><button :aria-pressed="screenMode === 'snapshot'" @click="screenMode = 'snapshot'">Snapshot</button><button :aria-pressed="screenMode === 'live'" @click="goLive()" :disabled="!active.caps || !active.caps.live">Live</button></div>
             <button class="btn" @click="snapshot()" :disabled="!screenOk"><svg class="i i-sm" aria-hidden="true"><use href="#i-camera"/></svg> Take snapshot</button>
-            <div class="seg" x-show="(active.monitors || 1) > 1"><template x-for="m in (active.monitors || 1)" :key="m"><button :aria-pressed="monitor === m - 1" @click="monitor = m - 1" x-text="'Monitor ' + m"></button></template></div>
+            <div class="seg" x-show="screenMonitors.length > 1"><button x-show="screenAllScreens" :aria-pressed="screenMonitorActive === 0" @click="pickMonitor(0xFFFF)">All screens</button><template x-for="m in screenMonitors" :key="m.id"><button :aria-pressed="screenMonitorActive === m.id" @click="pickMonitor(m.id)" x-text="'Monitor ' + m.id"></button></template></div>
+            <div class="seg" x-show="screenMonitors.length < 2 && (active.monitors || 1) > 1"><template x-for="m in (active.monitors || 1)" :key="m"><button :aria-pressed="monitor === m - 1" @click="monitor = m - 1" x-text="'Monitor ' + m"></button></template></div>
             <span class="grow"></span>
             <button class="btn" @click="evidence()" :disabled="!screenOk">Save as evidence</button>
           </div>
@@ -339,7 +340,7 @@
             <template x-for="(p, idx) in (det ? det.processes : [])" :key="(p.pid || idx) + '-' + p.name"><tr>
               <td><div style="font-weight:500" :style="p.threat && 'color:var(--alert)'" x-text="p.name"></div><div class="tiny muted cut" x-text="p.title"></div></td>
               <td class="right num" x-text="p.cpu.toFixed(1) + '%'"></td><td class="right num" x-text="p.mem + ' MB'"></td><td class="right num" x-text="p.net.toFixed(1) + ' Mb/s'"></td>
-              <td class="right nw"><span class="chip alert" x-show="p.threat" x-text="p.threat" style="margin-right:6px"></span><button class="btn btn-sm" @click="promptCloseProgram(p.name, p.pid || null)">Close</button></td></tr></template>
+              <td class="right nw"><span class="chip alert" x-show="p.threat" x-text="p.threat" style="margin-right:6px"></span><button class="btn btn-sm" @click="promptCloseProgram(p.name, p.pid || null, p.start || null)">Close</button></td></tr></template>
           </tbody></table>
         </section>
 

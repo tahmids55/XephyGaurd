@@ -42,6 +42,46 @@ def validate(bundle: dict) -> list[str]:
         if r["id"] in seen:
             errors.append(f"duplicate rule id {r['id']}")
         seen.add(r["id"])
+    for r in bundle.get("extensions", []):
+        for key in ("domains",):
+            if key in r and not all(isinstance(d, str) and "." in d for d in r[key]):
+                errors.append(f"{r.get('id')}: {key} must be host names")
+        for ext, doms in (r.get("id_domains") or {}).items():
+            if not isinstance(doms, list) or not all(isinstance(d, str) and "." in d for d in doms):
+                errors.append(f"{r.get('id')}: id_domains.{ext} must be a list of host names")
+    errors += validate_web(bundle.get("web", {}))
+    return errors
+
+
+def validate_web(web: dict) -> list[str]:
+    errors = []
+    patterns = ("equals", "prefix", "suffix", "contains")
+    for s in web.get("ai_sites", []):
+        if not s.get("site"):
+            errors.append("web.ai_sites: entry without site")
+        if not any(s.get(k) for k in patterns):
+            errors.append(f"web.ai_sites.{s.get('site')}: needs equals/prefix/suffix/contains")
+        for k in patterns:
+            if any(not isinstance(v, str) or not v.strip() for v in s.get(k, [])):
+                errors.append(f"web.ai_sites.{s.get('site')}.{k}: empty or non-string pattern")
+    for key in ("browsers", "browser_title_suffixes", "telemetry_domains"):
+        if not all(isinstance(v, str) and v for v in web.get(key, [])):
+            errors.append(f"web.{key}: must be non-empty strings")
+    if web.get("ai_tab_severity", "medium") not in ("info", "low", "medium", "high", "critical"):
+        errors.append("web.ai_tab_severity: bad severity")
+    for proc, dom in (web.get("process_domains") or {}).items():
+        if not isinstance(dom, str) or "." not in dom:
+            errors.append(f"web.process_domains.{proc}: must be a host name")
+    tunnel = web.get("tunnel")
+    if tunnel is not None:
+        if not isinstance(tunnel, dict) or not str(tunnel.get("id", "")).startswith("net."):
+            errors.append("web.tunnel: needs an id starting with 'net.'")
+        elif tunnel.get("severity", "medium") not in ("info", "low", "medium", "high", "critical"):
+            errors.append("web.tunnel.severity: bad severity")
+        else:
+            ports = tunnel.get("tcp_ports", [])
+            if not ports or not all(isinstance(x, int) and 0 < x < 65536 and x not in (80, 443) for x in ports):
+                errors.append("web.tunnel.tcp_ports: 1-65535, never 80/443 (normal web traffic)")
     return errors
 
 
@@ -77,6 +117,7 @@ def compile_bundle(src: pathlib.Path, version: str | None = None) -> dict:
         "artifacts": {"rules": arts.get("rules", []), "scan": arts.get("scan", {})},
         "adapters": load(src, "adapters").get("rules", []),
         "devices": load(src, "devices").get("rules", []),
+        "web": {k: v for k, v in load(src, "web").items() if k != "version"},
         "domains": {
             "ai": load_domain_list(blocklists / "ai_domains.txt"),
             "ide": load_domain_list(blocklists / "ide_ai_backends.txt"),

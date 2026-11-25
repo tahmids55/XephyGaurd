@@ -82,6 +82,7 @@
         <div id="status" class="status">Status: Disconnected</div>
       </div>
       <div class="controls">
+        <select id="monitorSelect" hidden title="Monitor"></select>
         <button id="btnConnect">Connect (Live)</button>
         <button id="btnDisconnect" class="stop" disabled>Disconnect</button>
       </div>
@@ -89,11 +90,13 @@
 
     <div class="canvas-wrap">
       <canvas id="screenCanvas"></canvas>
+      <pre id="stats" hidden style="position:absolute;top:8px;left:8px;margin:0;padding:6px 8px;background:#000a;color:#8f8;font:12px monospace;pointer-events:none"></pre>
     </div>
   </div>
 
   <script type="module">
-    import { ScreenViewer } from './viewer.js';
+    import { ScreenViewer, ALL_SCREENS } from './viewer.js';
+    import { ViewerStats } from './stats.js';
 
     const canvas = document.getElementById('screenCanvas');
     const statusEl = document.getElementById('status');
@@ -101,6 +104,7 @@
     const btnDisconnect = document.getElementById('btnDisconnect');
 
     let viewer = null;
+    let statsTimer = null;
 
     btnConnect.addEventListener('click', () => {
       const params = new URLSearchParams(window.location.search);
@@ -110,16 +114,38 @@
     const baseGw = explicitGw || (window.location.port ? `${wsProto}//${defaultHost}/screen-gw` : `${wsProto}//${defaultHost}:8082`);
     const token = params.get('token') || '';
     const streamId = params.get('stream_id') || '';
-    const qs = token ? `token=${encodeURIComponent(token)}` : (streamId ? `stream_id=${encodeURIComponent(streamId)}` : '');
-    if (!qs) {
+    // A lease token is sent as the first WebSocket message, not in the gateway URL (Step 40); stream_id is dev-insecure only.
+    const qs = token ? '' : (streamId ? `stream_id=${encodeURIComponent(streamId)}` : '');
+    if (!token && !qs) {
       statusEl.textContent = 'Error: pass ?token=<JWT> or ?stream_id=<ID>&gateway=ws://host:port in URL';
       return;
     }
-    const wsUrl = `${baseGw}/view?${qs}`;
+    const wsUrl = qs ? `${baseGw}/view?${qs}` : `${baseGw}/view`;
       statusEl.textContent = 'Connecting to ' + wsUrl + '...';
 
-      viewer = new ScreenViewer(wsUrl, canvas);
-      viewer.connect();
+      // ?debug=1 shows fps, kbit/s and paint lag (numbers only).
+      const stats = params.get('debug') === '1' ? new ViewerStats() : null;
+      const monitorSelect = document.getElementById('monitorSelect');
+      monitorSelect.hidden = true;
+      viewer = new ScreenViewer(wsUrl, canvas, {
+        stats,
+        // The agent lists its monitors (geometry only); the picker asks it to show one of them or all screens.
+        onMonitors: ({ monitors, active, allScreens }) => {
+          monitorSelect.replaceChildren();
+          if (allScreens) monitorSelect.add(new Option('All screens', String(ALL_SCREENS)));
+          monitors.forEach((m) => monitorSelect.add(new Option(`Monitor ${m.id} (${m.w}x${m.h})`, String(m.id))));
+          monitorSelect.value = String(active === 0 ? (allScreens ? ALL_SCREENS : 1) : active);
+          monitorSelect.hidden = false;
+        }
+      });
+      monitorSelect.onchange = () => viewer && viewer.selectMonitor(Number(monitorSelect.value));
+      viewer.connect(undefined, token);
+      if (stats) {
+        const statsEl = document.getElementById('stats');
+        statsEl.hidden = false;
+        clearInterval(statsTimer);
+        statsTimer = setInterval(() => { statsEl.textContent = stats.format(viewer ? viewer.frameQueue.length : 0); }, 500);
+      }
 
       viewer.ws.addEventListener('open', () => {
         statusEl.textContent = 'Connected. Waiting for agent frames...';
@@ -139,6 +165,8 @@
     });
 
     btnDisconnect.addEventListener('click', () => {
+      clearInterval(statsTimer);
+      document.getElementById('stats').hidden = true;
       if (viewer) {
         viewer.disconnect();
         viewer = null;

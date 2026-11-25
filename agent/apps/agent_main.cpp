@@ -120,7 +120,19 @@ int main(int argc, char** argv) {
 
     if (cmd == "scan") {
         log::init("", log::Level::warn, true);
-        cfg.data_dir = (std::filesystem::temp_directory_path() / "xephyguard-scan").string();
+        // Fresh private dir: never open a pre-planted queue.db or load its unverified cached bundle (I-AGENT-24).
+        cfg.data_dir = make_private_temp_dir("xephyguard-scan");
+        if (cfg.data_dir.empty()) {
+            std::cerr << "scan: cannot create a private temp directory\n";
+            return 1;
+        }
+        struct Cleanup {
+            std::string dir;
+            ~Cleanup() {
+                std::error_code ec;
+                std::filesystem::remove_all(dir, ec);
+            }
+        } cleanup{cfg.data_dir};
         auto plat = make_service_platform(cfg);
         plat->ipc.reset();
         Agent agent(cfg, config_path, *plat);

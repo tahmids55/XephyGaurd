@@ -6,22 +6,20 @@
   $portSuffix = request()->getPort() && !in_array(request()->getPort(), [80, 443], true) ? ':' . request()->getPort() : '';
   $baseUrl = (request()->isSecure() ? 'https://' : 'http://') . $cccHost . $portSuffix;
   $httpBaseUrl = 'http://' . $cccHost . $portSuffix;
-  $enrollKey = $key ?? '';
   $caFp = $fingerprint ?? '';
   $exeName = $setupFile ?? '';
   $exeMeta = $exeName ? collect($files ?? [])->firstWhere('name', $exeName) : null;
   $exeSize = $exeMeta ? (($exeMeta['size_label'] ?? ($exeMeta['size_mb'] . ' MB')) . ' · ') : '';
   $extraFiles = collect($files ?? [])->filter(fn ($f) => ($f['name'] ?? '') !== $exeName)->values()->all();
   $winCmd = ($exeName ?: 'XephyGuard-Setup.exe')
-      . ' /S /KEY=' . ($enrollKey ?: '<ROTATE_KEY_FIRST>')
+      . ' /S /KEY=<ENROLL_KEY>'
       . ' /CCC=' . $cccHost
       . ($caFp !== '' ? ' /CAFP=' . $caFp : '');
-  $linCmd = 'curl -fsSL ' . $httpBaseUrl . '/install/linux.sh | sudo bash -s -- --key ' . ($enrollKey ?: '<ROTATE_KEY_FIRST>');
+  $linCmd = 'curl -fsSL ' . $httpBaseUrl . '/install/linux.sh | sudo bash -s -- --key <ENROLL_KEY>';
 @endphp
 <script type="application/json" id="xg-page-data">{!! json_encode([
   'cccHost' => $cccHost,
   'baseUrl' => $baseUrl,
-  'key' => $enrollKey,
   'fp' => $caFp,
   'win' => $winCmd,
   'lin' => $linCmd,
@@ -49,15 +47,13 @@
         </div>
       </div>
       <div>
-        <div class="cmd-label">Lab enrollment key</div>
-        <div class="key">
-          <code x-text="key || 'Not set'"></code>
-          <button type="button" class="btn btn-sm" x-show="key" @click="xgCopy(key, 'Enrollment key copied')"><svg class="i i-sm" aria-hidden="true"><use href="#i-copy"/></svg> Copy</button>
-        </div>
+        <div class="cmd-label">Enrollment key or one-time PC token</div>
+        <p class="help">Not shown on this public page. Staff get them on <a href="{{ route('enroll.index') }}">Add a PC</a> after logging in.</p>
       </div>
     </div>
     <div>
       <div class="cmd-label">Server CA SHA-256 fingerprint</div>
+      <p class="help">Before trusting a downloaded <code>ca.crt</code>, check it on the PC: <code>openssl x509 -in ca.crt -noout -fingerprint -sha256</code> (Windows: <code>certutil -hashfile ca.crt SHA256</code> on the DER file). It must match this value, which staff should also compare with the one on the CCC console.</p>
       <div class="key">
         <code x-text="fp || 'Not available yet'"></code>
         <button type="button" class="btn btn-sm" x-show="fp" @click="xgCopy(fp, 'CA fingerprint copied')"><svg class="i i-sm" aria-hidden="true"><use href="#i-copy"/></svg> Copy</button>

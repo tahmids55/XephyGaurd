@@ -5,6 +5,11 @@
 
 namespace xg {
 
+/// Session egress lock in proxy_only mode (DECISIONS #23). observe: only QUIC (UDP 443) to public
+/// addresses is dropped, so browsers fall back to TCP through the proxy; strict: every public destination
+/// except the CCC (which runs the proxy) is dropped.
+enum class NetworkLock { off, observe, strict };
+
 enum class Severity { info = 0, low = 1, medium = 2, high = 3, critical = 4 };
 Severity parse_severity(const std::string& s);
 const char* to_string(Severity s);
@@ -92,6 +97,15 @@ struct FileActivity {
     std::string action;       // modified / created / deleted
     int64_t size_delta = 0;
     uint64_t total_bytes = 0;
+};
+
+/// An established TCP connection to a public address on a tunnel port (web.yaml `tunnel`). Only the
+/// destination and the owning process are known; the traffic itself is never read.
+struct OutboundTunnel {
+    int64_t pid = 0;
+    std::string process;  // normalized exe name, e.g. "ssh"
+    std::string remote_ip;
+    uint16_t remote_port = 0;
 };
 
 struct OutboundAiFlow {

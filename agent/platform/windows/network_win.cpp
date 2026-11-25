@@ -88,7 +88,6 @@ void ensure_browser_os_dns() {
 }
 
 // Returns true for passive telemetry domains that must not raise AI alerts.
-bool is_ignored_ai_telemetry_domain(const std::string& d) { return is_ai_telemetry_domain(d); }
 
 class NetworkMonitor final : public INetworkMonitor {
 public:
@@ -116,9 +115,14 @@ public:
         }
     }
 
-    bool is_ai_prompt_domain(const std::string& d) const {
-        if (is_ignored_ai_telemetry_domain(d)) return false;
+    void set_web_hints(const WebHints& hints) override {
         std::lock_guard lk(domains_mu_);
+        hints_ = hints;
+    }
+
+    bool is_ai_prompt_domain(const std::string& d) const {
+        std::lock_guard lk(domains_mu_);
+        if (is_ai_telemetry_domain(d, hints_.telemetry_domains)) return false;
         for (const auto& pat : ai_domains_) {
             if (d == pat || iends_with(d, "." + pat)) return true;
         }
@@ -231,6 +235,43 @@ public:
             }
             s.process = it->second.first;
             s.rss_bytes = it->second.second;
+        }
+        return out;
+    }
+
+    std::vector<OutboundTunnel> active_tunnels() override {
+        WebHints hints;
+        {
+            std::lock_guard lk(domains_mu_);
+            hints = hints_;
+        }
+        if (hints.tunnel.id.empty()) return {};
+        std::vector<OutboundTunnel> out;
+        auto add = [&](DWORD pid, const std::string& rip, uint16_t rport) {
+            if (out.size() >= 64 || pid <= 4 || !hints.is_tunnel(rip, rport)) return;  // bounded
+            out.push_back({int64_t(pid), normalize_exe(process_image(pid)), rip, rport});
+        };
+        for (ULONG af : {ULONG(AF_INET), ULONG(AF_INET6)}) {
+            DWORD sz = 0;
+            GetExtendedTcpTable(nullptr, &sz, FALSE, af, TCP_TABLE_OWNER_PID_CONNECTIONS, 0);
+            if (sz == 0 || sz >= 16 * 1024 * 1024) continue;
+            std::vector<BYTE> buf(sz);
+            if (GetExtendedTcpTable(buf.data(), &sz, FALSE, af, TCP_TABLE_OWNER_PID_CONNECTIONS, 0) != NO_ERROR) continue;
+            if (af == AF_INET) {
+                const auto* tbl = reinterpret_cast<const MIB_TCPTABLE_OWNER_PID*>(buf.data());
+                for (DWORD i = 0; i < tbl->dwNumEntries; ++i) {
+                    const auto& r = tbl->table[i];
+                    if (r.dwState == MIB_TCP_STATE_ESTAB)
+                        add(r.dwOwningPid, ipv4_str(r.dwRemoteAddr), ntohs(u_short(r.dwRemotePort)));
+                }
+            } else {
+                const auto* tbl = reinterpret_cast<const MIB_TCP6TABLE_OWNER_PID*>(buf.data());
+                for (DWORD i = 0; i < tbl->dwNumEntries; ++i) {
+                    const auto& r = tbl->table[i];
+                    if (r.dwState == MIB_TCP_STATE_ESTAB)
+                        add(r.dwOwningPid, ipv6_str(r.ucRemoteAddr), ntohs(u_short(r.dwRemotePort)));
+                }
+            }
         }
         return out;
     }
@@ -400,11 +441,9 @@ public:
             }
             // Fallback for dedicated AI binaries whose keep-alive socket opened before agent start
             if (matched_domain.empty()) {
-                if (proc == "copilot-runtime" || proc == "copilot-language-server" || proc == "copilot") {
-                    matched_domain = "api.githubcopilot.com";
-                } else if (proc == "claude") {
-                    matched_domain = "api.anthropic.com";
-                }
+                std::lock_guard lk(domains_mu_);
+                if (auto it = hints_.process_domains.find(normalize_exe(proc)); it != hints_.process_domains.end())
+                    matched_domain = it->second;
             }
             if (matched_domain.empty()) continue;
 
@@ -621,6 +660,7 @@ private:
     DnsGetCacheDataTableFn dns_cache_fn_ = nullptr;
     mutable std::mutex domains_mu_;
     std::vector<std::string> ai_domains_;
+    WebHints hints_;  // guarded by domains_mu_
     std::mutex dns_mu_;
     std::map<std::string, std::set<std::string>> ip_to_domains_;
     std::map<std::string, int64_t> last_dns_query_;

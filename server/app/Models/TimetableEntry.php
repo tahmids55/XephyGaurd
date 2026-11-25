@@ -9,10 +9,18 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class TimetableEntry extends Model
 {
     protected $fillable = ['lab_id', 'profile_id', 'course', 'weekday', 'start_time', 'end_time', 'valid_from', 'valid_until', 'enabled'];
+
     protected $casts = ['enabled' => 'boolean', 'valid_from' => 'date', 'valid_until' => 'date'];
 
-    public function profile(): BelongsTo { return $this->belongsTo(Profile::class); }
-    public function lab(): BelongsTo { return $this->belongsTo(Lab::class); }
+    public function profile(): BelongsTo
+    {
+        return $this->belongsTo(Profile::class);
+    }
+
+    public function lab(): BelongsTo
+    {
+        return $this->belongsTo(Lab::class);
+    }
 
     /** True if this weekly slot covers the given moment. */
     public function covers(CarbonInterface $t): bool

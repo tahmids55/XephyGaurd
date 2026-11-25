@@ -39,6 +39,22 @@ class SignaturePublishValidationTest extends TestCase
         $this->assertSame($before, SignatureVersion::active()->version);
     }
 
+    public function test_bundle_carries_web_hints_and_extension_domains_from_data(): void
+    {
+        $this->bootLab();
+        $bundle = json_decode(SignatureVersion::active()->bundle, true);
+
+        $sites = array_column($bundle['web']['ai_sites'] ?? [], 'site');
+        $this->assertContains('ChatGPT', $sites);
+        $this->assertContains('chrome', $bundle['web']['browsers']);
+        $this->assertSame('api.githubcopilot.com', $bundle['web']['process_domains']['copilot-language-server']);
+        $this->assertNotEmpty($bundle['web']['telemetry_domains']);
+        $copilot = collect($bundle['extensions'])->firstWhere('id', 'ext.copilot');
+        $this->assertContains('githubcopilot.com', $copilot['domains']);
+        $misc = collect($bundle['extensions'])->firstWhere('id', 'ext.jb.misc');
+        $this->assertSame(['tabnine.com'], $misc['id_domains']['tabnine']);
+    }
+
     public function test_publish_is_noop_when_nothing_changed(): void
     {
         $this->bootLab();

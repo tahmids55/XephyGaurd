@@ -1,13 +1,16 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\LabSession;
 use App\Models\Pc;
 use App\Models\ScreenViewAudit;
 use App\Models\SessionPc;
 use App\Models\Student;
+use App\Services\CommandBus;
+use App\Services\ScreenGatewayRevoker;
 use Firebase\JWT\JWT;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -22,7 +25,7 @@ class ViewTokenController extends Controller
     public function issueToken(Request $request, Student $student): JsonResponse
     {
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             abort(Response::HTTP_UNAUTHORIZED, 'Authentication required');
         }
 
@@ -36,25 +39,14 @@ class ViewTokenController extends Controller
 
         $session = $sessionPc?->session;
 
-        // Fallback: check if student belongs to an active lab session directly
-        if (!$session) {
-            $session = LabSession::active()
-                ->where(function ($q) use ($student) {
-                    $q->whereHas('sessionPcs', function ($sq) use ($student) {
-                        $sq->where('student_id', $student->id);
-                    });
-                })
-                ->first();
-        }
-
-        if (!$session) {
+        if (! $session || ! $sessionPc->pc_id) {
             return response()->json([
                 'message' => 'No active lab session found for this student',
             ], Response::HTTP_NOT_FOUND);
         }
 
         // Verify the instructor owns the session (admins are allowed)
-        if ($session->started_by !== $user->id && !$user->hasRole('admin')) {
+        if ($session->started_by !== $user->id && ! $user->hasRole('admin')) {
             return response()->json([
                 'message' => 'Forbidden: You do not own this lab session',
             ], Response::HTTP_FORBIDDEN);
@@ -62,42 +54,25 @@ class ViewTokenController extends Controller
 
         $validated = $request->validate([
             'mode' => 'nullable|string|in:live,snapshot,wall',
-            'stream_id' => 'nullable|integer',
         ]);
 
         $mode = $validated['mode'] ?? 'live';
-        $streamId = (int) ($validated['stream_id'] ?? ($student->id * 1000 + $session->id));
+        // The stream is the PC's id (the agent streams as its PC). Never taken from the request.
+        $pcId = (int) $sessionPc->pc_id;
+        $streamId = $pcId;
 
-        $cfg = config('services.screen_gateway');
-        $now = time();
-        $ttl = max(5, (int) ($cfg['ttl'] ?? 30));
-        $exp = $now + $ttl; // 30 second lease
-        $jti = bin2hex(random_bytes(16));
-
-        $payload = [
-            'iss' => $cfg['issuer'],
-            'aud' => $cfg['audience'],
-            'sub' => (string) $user->id,
-            'student_id' => (int) $student->id,
-            'lab_session_id' => (int) $session->id,
-            'stream_id' => $streamId,
-            'mode' => $mode,
-            'iat' => $now,
-            'nbf' => $now,
-            'exp' => $exp,
-            'jti' => $jti,
-        ];
-
-        $token = $this->encodeJwt($payload, $cfg);
-
+        $this->requireSecret();
         $audit = ScreenViewAudit::create([
             'instructor_id' => $user->id,
             'student_id' => $student->id,
+            'pc_id' => $pcId,
             'lab_session_id' => $session->id,
             'stream_id' => $streamId,
             'mode' => $mode,
             'started_at' => now(),
         ]);
+        [$token, $exp] = $this->leaseToken($audit);
+        $cfg = config('services.screen_gateway');
 
         return response()->json([
             'token' => $token,
@@ -116,7 +91,7 @@ class ViewTokenController extends Controller
     public function issuePcToken(Request $request, Pc $pc): JsonResponse
     {
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             abort(Response::HTTP_UNAUTHORIZED, 'Authentication required');
         }
 
@@ -132,7 +107,7 @@ class ViewTokenController extends Controller
         $student = $sessionPc?->student;
 
         // If in an active session, verify instructor owns the session or is admin
-        if ($session && $session->started_by !== $user->id && !$user->hasRole('admin')) {
+        if ($session && $session->started_by !== $user->id && ! $user->hasRole('admin')) {
             return response()->json([
                 'message' => 'Forbidden: You do not own this lab session',
             ], Response::HTTP_FORBIDDEN);
@@ -140,35 +115,13 @@ class ViewTokenController extends Controller
 
         $validated = $request->validate([
             'mode' => 'nullable|string|in:live,snapshot,wall',
-            'stream_id' => 'nullable|integer',
         ]);
 
         $mode = $validated['mode'] ?? 'live';
-        $streamId = (int) ($validated['stream_id'] ?? $pc->id);
+        // The stream is the PC's id. Never taken from the request.
+        $streamId = (int) $pc->id;
 
-        $cfg = config('services.screen_gateway');
-        $now = time();
-        $ttl = max(5, (int) ($cfg['ttl'] ?? 30));
-        $exp = $now + $ttl; // 30 second lease
-        $jti = bin2hex(random_bytes(16));
-
-        $payload = [
-            'iss' => $cfg['issuer'],
-            'aud' => $cfg['audience'],
-            'sub' => (string) $user->id,
-            'student_id' => (int) ($student?->id ?? 0),
-            'lab_session_id' => (int) ($session?->id ?? 0),
-            'pc_id' => (int) $pc->id,
-            'stream_id' => $streamId,
-            'mode' => $mode,
-            'iat' => $now,
-            'nbf' => $now,
-            'exp' => $exp,
-            'jti' => $jti,
-        ];
-
-        $token = $this->encodeJwt($payload, $cfg);
-
+        $this->requireSecret();
         $audit = ScreenViewAudit::create([
             'instructor_id' => $user->id,
             'student_id' => $student?->id,
@@ -178,6 +131,8 @@ class ViewTokenController extends Controller
             'mode' => $mode,
             'started_at' => now(),
         ]);
+        [$token, $exp] = $this->leaseToken($audit);
+        $cfg = config('services.screen_gateway');
 
         return response()->json([
             'token' => $token,
@@ -195,11 +150,11 @@ class ViewTokenController extends Controller
     public function renewToken(Request $request, ScreenViewAudit $audit): JsonResponse
     {
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             abort(Response::HTTP_UNAUTHORIZED);
         }
 
-        if ($audit->instructor_id !== $user->id && !$user->hasRole('admin')) {
+        if ($audit->instructor_id !== $user->id && ! $user->hasRole('admin')) {
             abort(Response::HTTP_FORBIDDEN, 'Unauthorized access to this stream audit');
         }
 
@@ -212,32 +167,21 @@ class ViewTokenController extends Controller
         $session = $audit->labSession;
         if ($session && $session->status !== 'active') {
             $audit->update(['ended_at' => now()]);
+
             return response()->json([
                 'message' => 'Lab session has ended',
             ], Response::HTTP_GONE);
         }
 
-        $cfg = config('services.screen_gateway');
-        $now = time();
-        $ttl = max(5, (int) ($cfg['ttl'] ?? 30));
-        $exp = $now + $ttl;
-        $jti = bin2hex(random_bytes(16));
+        // Every lease names its PC; audits from before pc_id was recorded cannot be renewed.
+        if (! $audit->pc_id) {
+            return response()->json([
+                'message' => 'Stream has no PC; open the view again',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
 
-        $payload = [
-            'iss' => $cfg['issuer'],
-            'aud' => $cfg['audience'],
-            'sub' => (string) $user->id,
-            'student_id' => (int) ($audit->student_id ?? 0),
-            'lab_session_id' => (int) ($audit->lab_session_id ?? 0),
-            'stream_id' => (int) $audit->stream_id,
-            'mode' => $audit->mode,
-            'iat' => $now,
-            'nbf' => $now,
-            'exp' => $exp,
-            'jti' => $jti,
-        ];
-
-        $token = $this->encodeJwt($payload, $cfg);
+        $audit->touch(); // marks the view as still open (evidence needs an open view, S-12)
+        [$token, $exp] = $this->leaseToken($audit);
 
         return response()->json([
             'token' => $token,
@@ -251,31 +195,74 @@ class ViewTokenController extends Controller
     public function stopView(Request $request, ScreenViewAudit $audit): JsonResponse
     {
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             abort(Response::HTTP_UNAUTHORIZED);
         }
 
-        if ($audit->instructor_id !== $user->id && !$user->hasRole('admin')) {
+        if ($audit->instructor_id !== $user->id && ! $user->hasRole('admin')) {
             abort(Response::HTTP_FORBIDDEN);
         }
 
         if ($audit->ended_at === null) {
             $audit->update(['ended_at' => now()]);
         }
+        app(ScreenGatewayRevoker::class)->audit($audit->id);
 
         return response()->json([
             'status' => 'stopped',
             'audit_id' => $audit->id,
-            'duration_s' => $audit->ended_at->diffInSeconds($audit->started_at),
+            'duration_s' => (int) $audit->started_at->diffInSeconds($audit->ended_at),
         ]);
+    }
+
+    /**
+     * Signs a lease for the audited view (docs/PROTOCOL.md "Screen view lease"). `audit_id`, `sub` (the
+     * user who opened the view) and `lab_session_id` let the gateway revoke it; a renewal keeps all three.
+     *
+     * @return array{0: string, 1: int} token and expiry (unix time)
+     */
+    private function leaseToken(ScreenViewAudit $audit): array
+    {
+        $cfg = config('services.screen_gateway');
+        $now = time();
+        $exp = $now + max(5, (int) ($cfg['ttl'] ?? 30));
+
+        // The agent captures the screen only while the CCC has granted a lease (docs/PROTOCOL.md "screen_lease");
+        // every token and every renewal extends it by the same time as the viewer's own lease.
+        if ($pc = Pc::find($audit->pc_id)) {
+            app(CommandBus::class)->send($pc, 'screen_lease', ['ttl_s' => $exp - $now]);
+        }
+
+        $token = $this->encodeJwt([
+            'iss' => $cfg['issuer'],
+            'aud' => $cfg['audience'],
+            'sub' => (string) $audit->instructor_id,
+            'audit_id' => (int) $audit->id,
+            'student_id' => (int) ($audit->student_id ?? 0),
+            'lab_session_id' => (int) ($audit->lab_session_id ?? 0),
+            'pc_id' => (int) $audit->pc_id,
+            'stream_id' => (int) $audit->stream_id,
+            'mode' => $audit->mode,
+            'iat' => $now,
+            'nbf' => $now,
+            'exp' => $exp,
+            'jti' => bin2hex(random_bytes(16)),
+        ], $cfg);
+
+        return [$token, $exp];
+    }
+
+    private function requireSecret(): void
+    {
+        abort_if((string) config('services.screen_gateway.secret', '') === '', Response::HTTP_INTERNAL_SERVER_ERROR,
+            'Screen gateway secret is not configured');
     }
 
     private function encodeJwt(array $payload, array $cfg): string
     {
-        $secret = (string) ($cfg['secret'] ?? '');
-        abort_if($secret === '', Response::HTTP_INTERNAL_SERVER_ERROR, 'Screen gateway secret is not configured');
+        $this->requireSecret();
 
-        return JWT::encode($payload, $secret, 'HS256');
+        return JWT::encode($payload, (string) $cfg['secret'], 'HS256');
     }
 
     private function resolveGatewayUrl(Request $request, array $cfg): string

@@ -1,5 +1,10 @@
 <?php
 
+use App\Http\Middleware\AuthenticateAgent;
+use App\Http\Middleware\EnsureSetupComplete;
+use App\Http\Middleware\InternalToken;
+use App\Http\Middleware\RequireRole;
+use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -15,14 +20,14 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withBroadcasting(__DIR__.'/../routes/channels.php', ['middleware' => ['web', 'auth']])
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
-            'agent' => \App\Http\Middleware\AuthenticateAgent::class,
-            'internal' => \App\Http\Middleware\InternalToken::class,
-            'role' => \App\Http\Middleware\RequireRole::class,
+            'agent' => AuthenticateAgent::class,
+            'internal' => InternalToken::class,
+            'role' => RequireRole::class,
         ]);
         // Runs before route middleware (auth), so a fresh install always lands on the wizard.
-        $middleware->appendToGroup('web', \App\Http\Middleware\EnsureSetupComplete::class);
-        $middleware->prependToPriorityList(\Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests::class,
-            \App\Http\Middleware\EnsureSetupComplete::class);
+        $middleware->appendToGroup('web', EnsureSetupComplete::class);
+        $middleware->prependToPriorityList(AuthenticatesRequests::class,
+            EnsureSetupComplete::class);
         // nginx (same Docker network) terminates TLS and forwards the client address.
         $middleware->trustProxies(at: ['127.0.0.1', '172.16.0.0/12', '10.0.0.0/8'], headers: Request::HEADER_X_FORWARDED_FOR | Request::HEADER_X_FORWARDED_PROTO);
         $middleware->redirectGuestsTo(fn () => route('login'));

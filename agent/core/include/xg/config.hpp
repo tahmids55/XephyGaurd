@@ -11,17 +11,13 @@ struct Config {
     std::string ccc_host;
     uint16_t api_port = 8443;          // mTLS agent endpoint (HTTPS + WSS)
     uint16_t http_port = 80;           // plain HTTP endpoint for /ca.crt download
-    uint16_t screen_port = 8082;       // screen gateway port (or 443 over TLS reverse proxy)
-    std::string screen_path = "/agent";
-    bool screen_tls = false;
-    std::string screen_token;
 #ifdef _WIN32
     bool screen_enabled = true;
 #else
     bool screen_enabled = true;        // Linux Xorg live stream (idle ~0% CPU until viewer attaches)
 #endif
     uint16_t discovery_port = 47474;   // UDP broadcast discovery
-    std::string ca_fingerprint;        // optional SHA-256 pin of the CCC CA (hex, no colons)
+    std::string ca_fingerprint;        // SHA-256 of the CA pinned at enrollment (hex); checked by the integrity scan
 
     // Identity (filled by enrollment)
     std::string pc_id;

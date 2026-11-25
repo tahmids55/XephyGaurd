@@ -26,6 +26,7 @@ std::unique_ptr<HelperPlatform> make_helper_platform() {
     p->input = win::make_input_monitor();
     p->ui = win::make_student_ui();
     p->ipc = win::make_ipc_client();
+    p->system = win::make_helper_system();
     p->probe_clipboard = [](PasteInfo& out) { return win::probe_clipboard(out); };
     return p;
 }

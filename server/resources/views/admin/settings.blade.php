@@ -5,7 +5,7 @@
   $netMode = ($v['network_mode'] ?? 'proxy_only') === 'gateway' ? 'gateway' : 'proxy_only';
   $tAlwaysRaw = $v['title_capture_always_on'] ?? 'off';
   $tPracticeRaw = $v['title_capture_practice'] ?? 'app_only';
-  $tTestRaw = $v['title_capture_test'] ?? 'full';
+  $tTestRaw = $v['title_capture_test'] ?? 'app_only';
   $tAlways = $tAlwaysRaw === 'app_only' ? 'app' : $tAlwaysRaw;
   $tPractice = $tPracticeRaw === 'app_only' ? 'app' : $tPracticeRaw;
   $tTest = $tTestRaw === 'app_only' ? 'app' : $tTestRaw;
@@ -59,6 +59,7 @@
         </div></section>
       <section class="section" id="search"><div class="panel-head"><h2 class="h2">Search AI summaries</h2></div>
         <div class="panel-body stack" style="max-width:760px;--gap:18px">
+          <label class="field"><span>Screen view CPU budget (% of one core)</span><input name="screen_cpu_budget_pct" type="number" min="1" max="100" class="input mono" value="{{ $v['screen_cpu_budget_pct'] ?? 8 }}"><p class="help">Live screen view on a lab PC lowers its frame rate (not below 2 fps), then quality, to stay under this. Default 8.</p></label>
           <label class="field"><span>Search engine override URL (udm=14)</span><input name="google_search_url" class="input mono" value="{{ $v['google_search_url'] ?? 'https://www.google.com/search?q={searchTerms}&udm=14' }}"><p class="help">Forces web-only search results without generative AI overviews when enabled in a profile.</p></label>
           <label class="field"><span>Search sites to inspect</span><textarea name="inspect_hosts" class="textarea mono" rows="3">{{ !empty($v['inspect_hosts']) ? $v['inspect_hosts'] : "www.google.com\nsearch.yahoo.com\nduckduckgo.com" }}</textarea><p class="help">Only these sites are opened up so AI summary boxes can be hidden.</p></label>
           <label class="field"><span>Selectors that hide AI summaries</span><textarea name="google_hide_selectors" class="textarea mono" rows="2">{{ !empty($v['google_hide_selectors']) ? $v['google_hide_selectors'] : 'div[data-attrid="AIOverview"], #m-x-content, g-ai-overview' }}</textarea></label>
@@ -75,7 +76,7 @@
           <div class="stack" style="--gap:12px"><label class="check"><span class="switch"><input type="checkbox" name="log_urls" value="1" x-model="hosts"><i></i></span> Log which allowed sites are visited</label><label class="check" x-show="hosts"><span class="switch"><input type="checkbox" name="log_queries" value="1" x-model="queries"><i></i></span> <span>Include search terms <span class="muted">(off by default)</span></span></label></div>
         </div></section>
       <section class="section" id="notice"><div class="panel-head"><h2 class="h2">Student notice</h2><a class="small" href="{{ route('notice') }}">Preview</a></div>
-        <div class="panel-body" style="max-width:760px"><textarea name="notice_text" class="textarea" rows="4" required>{{ !empty($v['notice_text']) ? $v['notice_text'] : 'Lab computers are equipped with XephyGuard. During tests, generative AI and assistance tools are blocked. Passwords and typed text are never collected. Screens are viewed only by your instructor, only during a session, and a notice is shown on your screen while it happens.' }}</textarea><p class="help">Shown on the agent’s indicator and on the public notice page.</p></div></section>
+        <div class="panel-body" style="max-width:760px"><textarea name="notice_text" class="textarea" rows="4" required>{{ $v['notice_text'] }}</textarea><p class="help">Shown on the agent’s indicator and on the public notice page. Added automatically from the enabled features: “{{ $v['notice_generated'] }}”</p></div></section>
       <div class="savebar"><span class="muted small grow">Changes apply to every PC within a few seconds.</span><button type="button" class="btn" @click="reload()">Discard</button><button type="submit" class="btn btn-solid">Save settings</button></div>
     </form>
   </div>

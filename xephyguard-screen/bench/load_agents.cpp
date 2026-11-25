@@ -88,7 +88,7 @@ int main(int argc, char* argv[]) {
       enc_cfg.quality_text = 85;
       enc_cfg.codec = xg::Codec::Webp;
       xg::FrameEncoder encoder(enc_cfg);
-      xg::FlowControl flow(3);
+      xg::FlowControl flow;
 
       std::mt19937 rng(1337 + agent_idx);
       std::uniform_real_distribution<double> dist_loss(0.0, 100.0);

@@ -14,6 +14,29 @@ json KeyStatsWindow::to_json() const {
                 {"bursts", bursts}, {"max_pause", max_pause_ms}};
 }
 
+json keystats_from_helper(const json& m) {
+    struct Field { const char* name; double lo, hi; bool integer; };
+    static constexpr Field kFields[] = {
+        {"window_start", 0, 9007199254740992.0, true}, {"window_s", 1, 3600, true},
+        {"keys", 0, 100000, true},                     {"backspaces", 0, 100000, true},
+        {"backspace_ratio", 0, 1, false},              {"iki_mean", 0, 3600000, false},
+        {"iki_median", 0, 3600000, false},             {"iki_p90", 0, 3600000, false},
+        {"iki_std", 0, 3600000, false},                {"bursts", 0, 100000, true},
+        {"max_pause", 0, 3600000, true},               {"paste_chords", 0, 100000, true}};
+    json out = json::object();
+    if (!m.is_object()) return out;
+    for (const auto& f : kFields) {
+        auto it = m.find(f.name);
+        if (it == m.end() || !it->is_number()) continue;
+        const double v = it->get<double>();
+        if (v != v) continue;  // NaN
+        const double c = std::clamp(v, f.lo, f.hi);
+        if (f.integer) out[f.name] = int64_t(c);
+        else out[f.name] = c;
+    }
+    return out;
+}
+
 void KeyStatsAggregator::on_key(int64_t t, bool is_backspace) {
     if (times_.empty() && start_ == 0) start_ = t - (t % window_ms_);
     times_.emplace_back(t, is_backspace);

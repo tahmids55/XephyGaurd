@@ -13,7 +13,9 @@ class User extends Authenticatable
     public const ROLES = ['admin', 'instructor', 'assistant'];
 
     protected $fillable = ['name', 'email', 'password', 'role', 'active'];
+
     protected $attributes = ['role' => 'assistant', 'active' => true];
+
     protected $hidden = ['password', 'remember_token'];
 
     protected function casts(): array

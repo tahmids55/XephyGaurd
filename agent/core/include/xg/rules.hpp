@@ -24,6 +24,14 @@ class RuleEngine {
 public:
     RuleEngine() = default;
     explicit RuleEngine(SignatureSet set) { load(std::move(set)); }
+    /// Consistent copy (taken under the source's lock), e.g. for a background scan job.
+    RuleEngine(const RuleEngine& o) {
+        std::shared_lock lk(o.mu_);
+        set_ = o.set_;
+        disabled_ = o.disabled_;
+        exe_index_ = o.exe_index_;
+    }
+    RuleEngine& operator=(const RuleEngine&) = delete;
 
     void load(SignatureSet set);
     void set_disabled(std::set<std::string> ids);
@@ -44,6 +52,15 @@ public:
     /// Flat, de-duplicated list of the (lowercase) extension ids of all enabled extension rules; the WSL helper
     /// uses it to report only matching extensions instead of its whole inventory.
     std::vector<std::string> extension_ids() const;
+
+    /// AI site whose title patterns match a focused *browser* window; nullopt for other apps or titles.
+    std::optional<std::string> match_ai_site(const std::string& app, const std::string& title) const;
+    bool is_browser(const std::string& exe) const;
+    /// Backend domains that show extension `e` (matched by `rule_id`) is in use.
+    std::vector<std::string> extension_domains(const ExtensionInfo& e, const std::string& rule_id) const;
+    WebHints web() const;
+    /// Ids of enabled browser extension rules that look like Chromium Web Store ids (32 letters a-p).
+    std::vector<std::string> browser_extension_ids() const;
 
     PortProbe probe() const;
     ArtifactScanSpec artifact_scan() const;

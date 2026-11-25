@@ -18,6 +18,10 @@ std::string ipv4_to_string(uint32_t ip);
 /// Non-IPv4 entries in `exempt_ips` are ignored.
 std::vector<std::string> blocked_ipv4_ranges(const std::vector<std::string>& exempt_ips);
 
+/// True for an address outside the LAN: the public IPv4 space above (IPv4-mapped IPv6 included) or IPv6
+/// global unicast. False for private, loopback, link-local, multicast and anything that does not parse.
+bool is_public_ip(const std::string& ip);
+
 /// IPv6 global-unicast space (everything else - link-local, ULA, multicast - stays reachable).
 inline const char* blocked_ipv6_prefix() { return "2000::/3"; }
 

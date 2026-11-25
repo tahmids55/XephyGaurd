@@ -16,6 +16,7 @@
           'ip' => $e->ip ?? '—',
           'mac' => collect($e->macs ?? [])->first() ?? '—',
           'name' => $e->hostname,
+          'conflict' => $e->conflictPc ? ['id' => $e->conflictPc->id, 'name' => $e->conflictPc->name] : null,
       ];
   })->values()->all() : [];
 
@@ -37,10 +38,8 @@
   })->values()->all() : [];
 @endphp
 <script type="application/json" id="xg-page-data">{!! json_encode([
-  'auto' => (bool) ($lab?->auto_approve ?? false),
   'key' => $key ?? '',
   'fp' => $fingerprint ?? '',
-  'macs' => implode("\n", $lab?->auto_approve_macs ?? []),
   'exeName' => $exeName,
   'cccHost' => $cccHost,
   'baseUrl' => $baseUrl,
@@ -64,6 +63,26 @@
             </form>
           </div>
         </div>
+        <div><div class="cmd-label">One-time PC token (auto-approves one PC; the lab key alone waits for approval)</div>
+          @if (session('enroll_token'))
+          <div class="key"><code>{{ session('enroll_token') }}</code><button type="button" class="btn btn-sm" @click="xgCopy(@js(session('enroll_token')), 'Token copied')">Copy</button></div>
+          <p class="help">Shown once. Pass it to the installer as the enrollment token.</p>
+          @endif
+          <form method="post" action="{{ route('enroll.token') }}" class="row" style="--gap:6px">
+            @csrf
+            <input class="input input-sm" name="pc_name" maxlength="64" placeholder="PC name (optional)" style="width:180px">
+            <select class="input input-sm" name="hours"><option value="24">1 day</option><option value="72" selected>3 days</option><option value="168">7 days</option></select>
+            <button type="submit" class="btn btn-sm">Create token</button>
+          </form>
+          @if ($tokens->count())
+          <ul class="small muted" style="margin-top:6px">
+            @foreach ($tokens as $t)
+            <li>{{ $t->pc_name ?: 'any PC' }}, expires {{ $t->expires_at->format('Y-m-d H:i') }}, by {{ $t->creator?->name ?? '—' }}
+              <form method="post" action="{{ route('enroll.token_revoke', $t) }}" style="display:inline">@csrf<button type="submit" class="btn btn-sm btn-quiet">Revoke</button></form></li>
+            @endforeach
+          </ul>
+          @endif
+        </div>
         <div>
           <div class="seg" style="margin-bottom:10px"><button :aria-pressed="os === 'win'" @click="os = 'win'">Windows</button><button :aria-pressed="os === 'linux'" @click="os = 'linux'">Ubuntu / Debian</button></div>
           <div class="cmd"><pre x-text="cmd"></pre><button class="btn btn-sm copy" @click="xgCopy(cmd, 'Command copied')"><svg class="i i-sm" aria-hidden="true"><use href="#i-copy"/></svg></button></div>
@@ -84,20 +103,12 @@
       </div>
       <template x-for="p in pending" :key="p.id">
         <div class="row" style="padding:14px 20px;border-bottom:1px solid var(--border);flex-wrap:nowrap;--gap:14px">
-          <div class="grow" style="min-width:0"><div class="mono" style="font-weight:500" x-text="p.host"></div><div class="small muted" x-text="p.os + ' · ' + p.ip"></div></div>
+          <div class="grow" style="min-width:0"><div class="mono" style="font-weight:500" x-text="p.host"></div><div class="small muted" x-text="p.os + ' · ' + p.ip"></div><div class="small" x-show="p.conflict" x-text="p.conflict ? 'Looks like ' + p.conflict.name + ' (same hostname or MAC, different machine ID). Approve adds a new PC unless you adopt it.' : ''"></div></div>
           <input class="input input-sm" style="width:110px" x-model="p.name" aria-label="Display name">
-          <button class="btn btn-sm btn-solid" @click="approve(p)">Approve</button><button class="btn btn-sm btn-quiet" @click="reject(p)">Reject</button>
+          <button class="btn btn-sm btn-solid" @click="approve(p)">Approve</button><button class="btn btn-sm" x-show="p.conflict" @click="approve(p, p.conflict.id)" x-text="p.conflict ? 'Adopt ' + p.conflict.name : ''"></button><button class="btn btn-sm btn-quiet" @click="reject(p)">Reject</button>
         </div>
       </template>
       <div class="empty-state" x-show="!pending.length"><b>No PCs waiting</b>New installs appear here.</div>
-      <form method="post" action="{{ route('enroll.auto') }}" class="panel-body stack" style="border-top:1px solid var(--border);background:var(--surface-2)">
-        @csrf
-        <label class="check"><span class="switch"><input type="checkbox" name="auto_approve" value="1" x-model="auto"><i></i></span> Approve known MAC addresses automatically</label>
-        <div class="stack" style="--gap:8px" x-show="auto">
-          <textarea name="macs" class="textarea mono" rows="3" x-model="macs"></textarea>
-          <div><button type="submit" class="btn btn-sm">Save list</button></div>
-        </div>
-      </form>
     </section>
   </div>
 

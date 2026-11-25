@@ -1,0 +1,23 @@
+# Windows the live screen view must never show (F43, ETHICS.md "Screen privacy mask").
+# The server sends this list to every agent as policy `screen.privacy_rules`; the agent has no built-in list.
+# A window is hidden when every field of one entry matches:
+#   process      executable name, case-insensitive (Linux: process name; Windows: file name without ".exe")
+#   title_regex  case-insensitive regex searched in the first 512 bytes of the window title
+# Keep patterns simple (literals, `|`, `.`, groups): the PC and the server use different regex engines.
+# At most 128 entries, strings at most 256 bytes. Invalid entries are skipped and logged by the server.
+version: 1
+rules:
+  # Password managers: hide the whole app.
+  - { id: pm.keepassxc,  process: keepassxc,  description: "KeePassXC" }
+  - { id: pm.keepass,    process: keepass,    description: "KeePass" }
+  - { id: pm.bitwarden,  process: bitwarden,  description: "Bitwarden desktop" }
+  - { id: pm.1password,  process: 1password,  description: "1Password" }
+  - { id: pm.enpass,     process: enpass,     description: "Enpass" }
+  - { id: pm.nordpass,   process: nordpass,    description: "NordPass" }
+  # Browser windows by title (browser titles end with the browser name).
+  - { id: web.private,   title_regex: "incognito|inprivate|private browsing|private window", description: "Private / incognito browser windows" }
+  - { id: web.vault,     title_regex: "bitwarden|lastpass|1password|keepass|dashlane", description: "Web password managers" }
+  - { id: web.banking,   title_regex: "internet banking|online banking|net banking|ebanking|e-banking|mobile banking", description: "Online banking pages" }
+  - { id: web.signin,    title_regex: "sign in|log in|login|password", description: "Sign-in and password pages" }
+  - { id: web.mail,      title_regex: "gmail|outlook|inbox", description: "Webmail" }
+  - { id: web.payment,   title_regex: "paypal|checkout|payment", description: "Payment pages" }

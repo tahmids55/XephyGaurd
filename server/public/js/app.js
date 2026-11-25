@@ -84,10 +84,11 @@ window.xgApi = async function (url, opts = {}) {
   const VERSION = 1;
   const HEADER_SIZE = 28;
   const TILE_HEADER_SIZE = 10;
-  const MAX_TILES = 4096;
+  const MAX_TILES = 16384;
+  const MONITOR_REC_SIZE = 8, MAX_MONITORS = 16, ALL_SCREENS = 0xFFFF;
   const MAX_PAYLOAD = 64 * 64 * 4;
-  const MsgType = { Frame: 1, Cursor: 2, Ack: 3, KeyframeReq: 4, Status: 5 };
-  const Flags = { KEY: 1, FULL: 2, DELTA: 4, MASKED: 8, SECURE: 16, CURSOR_F: 32 };
+  const MsgType = { Frame: 1, Cursor: 2, Ack: 3, KeyframeReq: 4, Status: 5, Monitors: 6 };
+  const Flags = { KEY: 1, FULL: 2, DELTA: 4, MASKED: 8, SECURE: 16, CURSOR_F: 32, ALL_SCREENS: 128 };
   const Codec = { Raw: 0, Webp: 1, Jpeg: 2 };
 
   class TileCanvas {
@@ -167,6 +168,17 @@ window.xgApi = async function (url, opts = {}) {
       const type = view.getUint8(3), flags = view.getUint16(4, true), monitorId = view.getUint16(6, true);
       const streamId = view.getUint32(8, true), seq = view.getUint32(12, true), baseSeq = view.getUint32(16, true);
       const width = view.getUint16(20, true), height = view.getUint16(22, true), tileCount = view.getUint16(24, true);
+      if (type === MsgType.Monitors) { // monitor rectangles for the picker; length must match the count exactly
+        if (tileCount > MAX_MONITORS || byteLength !== HEADER_SIZE + tileCount * MONITOR_REC_SIZE) return null;
+        const monitors = [];
+        for (let i = 0; i < tileCount; ++i) {
+          const o = HEADER_SIZE + i * MONITOR_REC_SIZE;
+          const m = { id: i + 1, x: view.getUint16(o, true), y: view.getUint16(o + 2, true), w: view.getUint16(o + 4, true), h: view.getUint16(o + 6, true) };
+          if (m.w === 0 || m.h === 0) return null;
+          monitors.push(m);
+        }
+        return { type, flags, monitorId, streamId, seq, baseSeq, width, height, tiles: [], monitors };
+      }
       if (tileCount > MAX_TILES) return null;
       let offset = HEADER_SIZE;
       const tiles = [];
@@ -207,7 +219,7 @@ window.xgApi = async function (url, opts = {}) {
       this._manualClose = false;
       this._rxQueue = Promise.resolve();
     }
-    connect(url) {
+    connect(url, token) {
       if (this.ws) this.disconnect();
       this._manualClose = false;
       this.waitingForKeyframe = true;
@@ -215,6 +227,8 @@ window.xgApi = async function (url, opts = {}) {
       this.ws = new WebSocket(url);
       this.ws.binaryType = 'arraybuffer';
       this.ws.onopen = () => {
+        // The lease token is the first message, never part of the URL (screen Step 40).
+        if (token) this.ws.send(JSON.stringify({ type: 'auth', token }));
         this.waitingForKeyframe = true;
         this.requestKeyframe(0, 0);
         if (this.options.onOpen) this.options.onOpen();
@@ -233,6 +247,12 @@ window.xgApi = async function (url, opts = {}) {
     }
     async handleBinaryFrame(data) {
       const msg = parseMessage(data);
+      if (msg && msg.type === MsgType.Monitors) { // not a frame: no ACK, nothing drawn
+        this.monitors = msg.monitors;
+        this.allScreens = (msg.flags & Flags.ALL_SCREENS) !== 0;
+        if (this.options.onMonitors) this.options.onMonitors({ monitors: msg.monitors, active: msg.monitorId, allScreens: this.allScreens });
+        return;
+      }
       if (!msg || msg.type !== MsgType.Frame || !this.tileCanvas) return;
       if (msg.flags & Flags.MASKED) this.tileCanvas.setBanner('PRIVACY MASKED');
       else if (msg.flags & Flags.SECURE) this.tileCanvas.setBanner('SECURE DESKTOP');
@@ -245,7 +265,7 @@ window.xgApi = async function (url, opts = {}) {
         this.waitingForKeyframe = false;
       } else if ((msg.flags & Flags.DELTA) !== 0) {
         if (this.waitingForKeyframe || msg.baseSeq !== this.lastAppliedSeq) {
-          this.requestKeyframe(msg.streamId, msg.monitorId);
+          this.requestKeyframe(msg.streamId, 0); // 0 = keep the monitor that is shown
           this.waitingForKeyframe = true;
           return;
         }
@@ -283,6 +303,21 @@ window.xgApi = async function (url, opts = {}) {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(encodeKeyframeReq(streamId, monitorId));
       }
+    }
+    // Asks the agent to show monitor `id` (1..N) or ALL_SCREENS; frames of the old picture are dropped until its keyframe.
+    selectMonitor(id) {
+      const ok = id === ALL_SCREENS ? this.allScreens === true : Array.isArray(this.monitors) && id >= 1 && id <= this.monitors.length;
+      if (!ok || !this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+      this.waitingForKeyframe = true;
+      this._rxQueue = Promise.resolve();
+      this.requestKeyframe(0, id);
+      return true;
+    }
+    // Hands the token from POST /api/screen/{audit}/renew to the gateway; without it the socket closes at the lease end.
+    renewLease(token) {
+      if (!token || !this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+      this.ws.send(JSON.stringify({ type: 'renew', token }));
+      return true;
     }
     disconnect() {
       this._manualClose = true;
@@ -507,11 +542,11 @@ document.addEventListener('alpine:init', () => {
     pcs: (window.XG_LIVE && Array.isArray(window.XG_LIVE.pcs)) ? structuredClone(window.XG_LIVE.pcs) : [],
     alerts: (window.XG_LIVE && Array.isArray(window.XG_LIVE.alerts)) ? structuredClone(window.XG_LIVE.alerts) : [],
     serverDetails: {},
-    activePcId: null, inspector: false, tab: 'screen', screenMode: 'snapshot', monitor: 0, snapT: 4200, snapAt: '',
+    activePcId: null, inspector: false, tab: 'screen', screenMode: 'snapshot', monitor: 0, screenMonitors: [], screenMonitorActive: 0, screenAllScreens: false, snapT: 4200, snapAt: '',
     screenStreaming: false, screenHasFrame: false, screenStatus: '', screenAuditId: null, screenViewer: null, screenRenewTimer: null,
     wallStreams: {},
     tile: 240, flagged: false, blur: false, pinned: [], dock: { att: true, props: true, list: true }, pcFilter: 'all',
-    messageModal: false, messageTarget: null, messageText: '', showDone: false, closeModal: false, closeName: '', closePid: null, closeManual: false,
+    messageModal: false, messageTarget: null, messageText: '', showDone: false, closeModal: false, closeName: '', closePid: null, closeStart: null, closeManual: false,
 
     init() {
       const h = location.hash;
@@ -589,6 +624,7 @@ document.addEventListener('alpine:init', () => {
             os: ((pcObj.os || 'Linux') + ' ' + (pcObj.os_version || '')).trim(),
             session: mappedSession,
             agent: pcObj.agent_version || '—',
+            streamCost: pcObj.screen_cost || '',
             status: pcUiStatus,
             user: pcUser,
             last: pcObj.last_event || (pcUiStatus === 'offline' ? 'Offline' : 'Active'),
@@ -602,7 +638,7 @@ document.addEventListener('alpine:init', () => {
             ? d.timeline.map(e => ({ time: e.at, sev: e.type === 'rule_hit' || e.type === 'tamper' ? 'high' : 'info', label: e.summary }))
             : base.events,
           processes: (d.running_processes && d.running_processes.length)
-            ? d.running_processes.map(p => ({ pid: p.pid || 0, name: p.exe || p.name || 'process', title: p.title || p.cmdline || '', cpu: Number(p.cpu || 0), mem: Math.round(Number(p.rss_mb || p.mem || 0)), net: Number(p.net_mbps || 0), threat: p.rule_id || '' }))
+            ? d.running_processes.map(p => ({ pid: p.pid || 0, start: p.start || 0, name: p.exe || p.name || 'process', title: p.title || p.cmdline || '', cpu: Number(p.cpu || 0), mem: Math.round(Number(p.rss_mb || p.mem || 0)), net: Number(p.net_mbps || 0), threat: p.rule_id || '' }))
             : ((d.processes && d.processes.length)
               ? d.processes.map(p => ({ pid: p.pid || 0, name: p.exe || 'process', title: p.type || '', cpu: 0, mem: 0, net: 0, threat: p.rule || '' }))
               : base.processes),
@@ -817,9 +853,10 @@ document.addEventListener('alpine:init', () => {
         Alpine.store('toasts').add(e.message || 'Rescan request failed.', 'alert');
       }
     },
-    promptCloseProgram(name = '', pid = null) {
+    promptCloseProgram(name = '', pid = null, start = null) {
       this.closeName = name;
       this.closePid = pid;
+      this.closeStart = start;
       this.closeManual = !name && !pid;
       this.closeModal = true;
     },
@@ -832,11 +869,12 @@ document.addEventListener('alpine:init', () => {
       const target = this.active;
       if (!target || !target.id) return;
       try {
-        await window.xgApi(`/pcs/${target.id}/kill`, { method: 'POST', body: JSON.stringify({ exe: exe || null, pid: this.closePid || null }) });
+        await window.xgApi(`/pcs/${target.id}/kill`, { method: 'POST', body: JSON.stringify({ exe: exe || null, pid: this.closePid || null, start_time: (this.closePid && this.closeStart) || null }) });
         this.closeModal = false;
         Alpine.store('toasts').add(`Asked ${target.name} to close ${exe || ('PID ' + this.closePid)}.`, 'watch');
         this.closeName = '';
         this.closePid = null;
+        this.closeStart = null;
         this.closeManual = false;
       } catch (e) {
         Alpine.store('toasts').add(e.message || 'Could not send kill command.', 'alert');
@@ -855,7 +893,7 @@ document.addEventListener('alpine:init', () => {
         const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         if (!gwUrl) gwUrl = `${wsProto}//${window.location.host}/screen-gw`;
         else if (gwUrl.startsWith('/')) gwUrl = `${wsProto}//${window.location.host}${gwUrl.replace(/\/$/, '')}`;
-        const wsUrl = `${gwUrl.replace(/\/$/, '')}/view?token=${data.token}`;
+        const wsUrl = `${gwUrl.replace(/\/$/, '')}/view`;
         const canvas = this.$refs.live;
         if (canvas && canvas.dataset) delete canvas.dataset.hasLiveFrame;
         if (canvas && window.ScreenViewer) {
@@ -867,6 +905,11 @@ document.addEventListener('alpine:init', () => {
               if (mode === 'snapshot') {
                 setTimeout(() => { if (this.screenMode === 'snapshot') this.stopScreen(true); }, 60);
               }
+            },
+            onMonitors: ({ monitors, active, allScreens }) => {
+              this.screenMonitors = monitors;
+              this.screenMonitorActive = active;
+              this.screenAllScreens = allScreens;
             },
             onControlMessage: msg => {
               if (msg && msg.type === 'status' && msg.agent_connected === false && !this.screenHasFrame && !warnedOffline) {
@@ -888,11 +931,13 @@ document.addEventListener('alpine:init', () => {
               }
             }
           });
-          this.screenViewer.connect(wsUrl);
+          this.screenViewer.connect(wsUrl, data.token);
           if (mode === 'live' && this.screenAuditId) {
             this.screenRenewTimer = setInterval(() => {
               if (this.screenAuditId && this.screenStreaming) {
-                window.xgApi(`/api/screen/${this.screenAuditId}/renew`, { method: 'POST' }).catch(() => {});
+                window.xgApi(`/api/screen/${this.screenAuditId}/renew`, { method: 'POST' })
+                  .then(r => { if (r && r.token && this.screenViewer) this.screenViewer.renewLease(r.token); })
+                  .catch(() => {});
               }
             }, 20000);
           }
@@ -902,7 +947,11 @@ document.addEventListener('alpine:init', () => {
         Alpine.store('toasts').add(e.message || 'Screen stream unavailable.', 'watch');
       }
     },
+    pickMonitor(id) {
+      if (this.screenViewer && this.screenViewer.selectMonitor(id)) this.screenMonitorActive = id === 0xFFFF ? 0 : id;
+    },
     async stopScreen(keepCanvas = false) {
+      this.screenMonitors = []; this.screenMonitorActive = 0; this.screenAllScreens = false;
       if (this.screenRenewTimer) { clearInterval(this.screenRenewTimer); this.screenRenewTimer = null; }
       if (this.screenViewer) { this.screenViewer.disconnect(); this.screenViewer = null; }
       if (this.screenAuditId) {
@@ -948,12 +997,23 @@ document.addEventListener('alpine:init', () => {
           else if (gwUrl.startsWith('/')) gwUrl = `${wsProto}//${window.location.host}${gwUrl.replace(/\/$/, '')}`;
           const viewer = new window.ScreenViewer(canvas, {
             onFrame: () => { if (canvas.dataset) canvas.dataset.hasLiveFrame = '1'; },
-            onClose: () => { if (canvas.dataset) delete canvas.dataset.hasLiveFrame; }
+            onClose: manual => {
+              if (canvas.dataset) delete canvas.dataset.hasLiveFrame;
+              // Closed by the gateway (lease end, agent restart, revoke): drop the entry so the next sync opens a new lease.
+              if (!manual && this.wallStreams[p.id] && this.wallStreams[p.id].viewer === viewer) {
+                this.stopWallOne(p.id);
+                setTimeout(() => this.syncWallStreams(), 10000);
+              }
+            }
           });
-          viewer.connect(`${gwUrl.replace(/\/$/, '')}/view?token=${data.token}`);
+          viewer.connect(`${gwUrl.replace(/\/$/, '')}/view`, data.token);
           const timer = setInterval(() => {
             const st = this.wallStreams[p.id];
-            if (st && st.auditId) window.xgApi(`/api/screen/${st.auditId}/renew`, { method: 'POST' }).catch(() => {});
+            if (st && st.auditId) {
+              window.xgApi(`/api/screen/${st.auditId}/renew`, { method: 'POST' })
+                .then(r => { if (r && r.token && st.viewer) st.viewer.renewLease(r.token); })
+                .catch(() => {});
+            }
           }, 20000);
           this.wallStreams[p.id] = { viewer, auditId: data.audit_id, timer };
         } catch (e) {
@@ -1006,6 +1066,7 @@ document.addEventListener('alpine:init', () => {
         fd.append('image', blob, `evidence-pc-${pcId}.png`);
         fd.append('monitor', String(this.monitor || 0));
         fd.append('source_mode', this.screenMode === 'live' ? 'live' : 'snapshot');
+        fd.append('screen_view_id', String(this.screenAuditId || ''));
         const res = await fetch(`/pcs/${pcId}/evidence`, {
           method: 'POST',
           credentials: 'same-origin',
@@ -1481,10 +1542,8 @@ document.addEventListener('alpine:init', () => {
     const d = window.xgJson('xg-page-data', {}) || {};
     return {
       os: 'win', q: '',
-      auto: !!d.auto,
       key: d.key || '',
       fp: d.fp || '',
-      macs: d.macs || '',
       exeName: d.exeName || 'XephyGuard-Setup.exe',
       cccHost: d.cccHost || window.location.hostname || '',
       baseUrl: d.baseUrl || window.location.origin,
@@ -1503,9 +1562,10 @@ document.addEventListener('alpine:init', () => {
         return this.enrolled.filter(p => !q || (p.name + ' ' + p.host + ' ' + p.ip).toLowerCase().includes(q));
       },
       confirmSubmit(evt, msg) { if (!confirm(msg)) evt.preventDefault(); },
-      async approve(p) {
+      async approve(p, adoptPcId = null) {
         try {
-          const res = p.real ? await window.xgApi('/enroll/' + p.id + '/approve', { method: 'POST', body: JSON.stringify({ name: p.name }) }) : null;
+          const body = adoptPcId ? { name: p.name, adopt_pc_id: adoptPcId } : { name: p.name };
+          const res = p.real ? await window.xgApi('/enroll/' + p.id + '/approve', { method: 'POST', body: JSON.stringify(body) }) : null;
           this.pending = this.pending.filter(x => x.id !== p.id);
           if (res && res.pc) this.enrolled.unshift(res.pc);
           Alpine.store('toasts').add('Enrolled ' + (p.name || p.host) + '.', 'ok');

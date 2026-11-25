@@ -1,43 +1,38 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services;
 
 use App\Models\Agent;
 use App\Models\Enrollment;
+use App\Models\EnrollmentToken;
 use App\Models\Lab;
 use App\Models\Pc;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 
-/** "Approve, don't configure": agents register as Pending; staff approve with one click. */
+/** "Approve, don't configure": agents register as Pending; staff approve with one click, or a one-time token approves. */
 class EnrollmentService
 {
     public function __construct(private readonly CertificateAuthority $ca) {}
 
     /** @return array{enrollment: Enrollment, poll_token: string} */
-    public function register(Lab $lab, array $data, string $ip): array
+    public function register(Lab $lab, array $data, string $ip, ?EnrollmentToken $enrollToken = null): array
     {
         $pollToken = Str::random(48);
         $macs = array_values(array_unique(array_map('strtolower', $data['macs'] ?? [])));
         $hostname = trim($data['hostname'] ?? '');
         $uid = self::normalizeUid($data['machine_uid'] ?? null);
 
-        // Cancel/supersede any existing pending enrollments for this machine so teacher sees only the latest.
-        // With a machine_uid the machine is identified exactly; hostname is only a legacy fallback because
-        // cloned lab images share hostnames.
+        // Supersede older pending requests of the same machine (exact machine_uid only) so staff see the latest.
         if ($uid !== null) {
             Enrollment::query()
                 ->where('lab_id', $lab->id)
                 ->where('status', 'pending')
                 ->where('machine_uid', $uid)
-                ->update(['status' => 'superseded', 'decided_at' => now()]);
-        } elseif ($hostname !== '') {
-            Enrollment::query()
-                ->where('lab_id', $lab->id)
-                ->where('status', 'pending')
-                ->whereNull('machine_uid')
-                ->whereRaw('LOWER(hostname) = ?', [strtolower($hostname)])
                 ->update(['status' => 'superseded', 'decided_at' => now()]);
         }
 
@@ -53,16 +48,29 @@ class EnrollmentService
             'csr_pem' => $data['csr_pem'],
             'poll_token_hash' => hash('sha256', $pollToken),
         ]);
-        if ($lab->auto_approve && array_intersect($macs, array_map('strtolower', $lab->auto_approve_macs ?? []))) {
-            $this->approve($enrollment, null);
+        // Flag (never merge) a PC that only looks like this machine (same hostname or MAC, other or no uid).
+        $conflict = $this->conflictFor($lab->id, $uid, $hostname, $macs);
+        if ($conflict !== null) {
+            $enrollment->forceFill(['conflict_pc_id' => $conflict->id])->save();
         }
+        if ($enrollToken !== null) {
+            // consume() is atomic: if another request used the token first, this one stays pending.
+            if ($enrollToken->consume($enrollment)) {
+                $this->approve($enrollment, null, $enrollToken->pc_name, 'token');
+            }
+        }
+        // MAC addresses never approve anything (spoofable; S-16, DECISIONS #28). Staff click or token only.
 
         return ['enrollment' => $enrollment->fresh(), 'poll_token' => $pollToken];
     }
 
-    public function approve(Enrollment $e, ?User $by, ?string $name = null): Pc
+    /**
+     * Approves an enrollment. An existing PC is reused only when its machine_uid equals the enrollment's,
+     * or when staff explicitly pick it ($adopt). Look-alikes (hostname/MAC) are flagged, never merged (S-17).
+     */
+    public function approve(Enrollment $e, ?User $by, ?string $name = null, string $via = 'staff', ?Pc $adopt = null): Pc
     {
-        return DB::transaction(function () use ($e, $by, $name) {
+        return DB::transaction(function () use ($e, $by, $name, $via, $adopt) {
             // If already approved, return associated PC immediately
             if ($e->status === 'approved' && $e->pc_id) {
                 return $e->pc ?: Pc::findOrFail($e->pc_id);
@@ -71,49 +79,21 @@ class EnrollmentService
             $signed = $this->ca->signClientCsr($e->csr_pem, config('xephyguard.agent_cert_days'));
             $token = Str::random(64);
             $cleanMacs = array_values(array_unique(array_map('strtolower', (array) ($e->macs ?? []))));
-            $eHost = strtolower(trim($e->hostname ?? ''));
 
             $uid = self::normalizeUid($e->machine_uid);
-            $matches = function (Pc $p) use ($cleanMacs, $eHost) {
-                $pMacs = array_map('strtolower', (array) ($p->macs ?? []));
-                $macMatch = ! empty($cleanMacs) && ! empty($pMacs) && ! empty(array_intersect($pMacs, $cleanMacs));
-                $hostMatch = $eHost !== '' && strtolower(trim($p->hostname ?? '')) === $eHost;
-
-                return [$macMatch, $hostMatch];
-            };
-
-            $pc = null;
-            if ($uid !== null) {
-                // Exact identity: the same installation re-enrolling (active first, then retired).
-                $pc = Pc::query()->where('lab_id', $e->lab_id)->where('machine_uid', $uid)
-                    ->orderByRaw('retired_at IS NOT NULL')->orderByDesc('id')->first();
-
-                // One-time adoption of a pre-uid PC row: only when hostname AND a MAC match and exactly one
-                // such row exists, so identical clones are never merged.
-                if (! $pc) {
-                    $legacy = Pc::query()->where('lab_id', $e->lab_id)->whereNull('machine_uid')->whereNull('retired_at')
-                        ->get()->filter(function (Pc $p) use ($matches) {
-                            [$m, $h] = $matches($p);
-
-                            return $m && $h;
-                        });
-                    if ($legacy->count() === 1) {
-                        $pc = $legacy->first();
-                    }
+            if ($adopt !== null) {
+                if ((int) $adopt->lab_id !== (int) $e->lab_id || ($adopt->machine_uid !== null && $adopt->machine_uid !== $uid)) {
+                    throw new InvalidArgumentException('That PC belongs to another machine; it cannot be adopted.');
                 }
+                if ($uid !== null && Pc::query()->where('machine_uid', $uid)->whereKeyNot($adopt->id)->exists()) {
+                    throw new InvalidArgumentException('This machine is already enrolled as another PC.');
+                }
+                $pc = $adopt;
             } else {
-                // Legacy agent without machine_uid: previous behaviour (MAC intersection OR hostname).
-                $pc = Pc::query()->where('lab_id', $e->lab_id)->whereNull('retired_at')->get()
-                    ->first(function (Pc $p) use ($matches) {
-                        return in_array(true, $matches($p), true);
-                    });
-                if (! $pc) {
-                    $pc = Pc::query()->where('lab_id', $e->lab_id)->whereNotNull('retired_at')->get()
-                        ->first(function (Pc $p) use ($matches) {
-                            return in_array(true, $matches($p), true);
-                        });
-                }
+                $pc = $uid === null ? null : Pc::query()->where('lab_id', $e->lab_id)->where('machine_uid', $uid)
+                    ->orderByRaw('retired_at IS NOT NULL')->orderByDesc('id')->first();
             }
+            $conflict = $pc === null ? $this->conflictFor((int) $e->lab_id, $uid, (string) $e->hostname, $cleanMacs) : null;
 
             // Create a new PC when nothing matched. Duplicate display names get a numeric suffix.
             $isNew = ! $pc;
@@ -145,18 +125,6 @@ class EnrollmentService
             }
             $pc->save();
 
-            // Legacy agents only: retire other rows of the same hostname (a uid-identified PC never does this,
-            // because identical hostnames are different machines).
-            if ($uid === null && $eHost !== '') {
-                Pc::query()
-                    ->where('lab_id', $e->lab_id)
-                    ->where('id', '!=', $pc->id)
-                    ->whereNull('retired_at')
-                    ->whereNull('machine_uid')
-                    ->whereRaw('LOWER(hostname) = ?', [$eHost])
-                    ->update(['retired_at' => now()]);
-            }
-
             // Invalidate other pending enrollments of the same machine.
             $pending = Enrollment::query()
                 ->where('lab_id', $e->lab_id)
@@ -164,16 +132,13 @@ class EnrollmentService
                 ->where('status', 'pending');
             if ($uid !== null) {
                 $pending->where('machine_uid', $uid)->update(['status' => 'superseded', 'decided_at' => now()]);
-            } elseif ($eHost !== '') {
-                $pending->whereNull('machine_uid')->whereRaw('LOWER(hostname) = ?', [$eHost])
-                    ->update(['status' => 'superseded', 'decided_at' => now()]);
             }
 
             // 6. Revoke existing agent tokens for this PC and issue the new one
             Agent::query()->where('pc_id', $pc->id)->whereNull('revoked_at')->update(['revoked_at' => now()]);
             Agent::create([
                 'pc_id' => $pc->id,
-                'token_hash' => hash('sha256', $token),
+                'token_hash' => Agent::tokenHash($token, $signed['fingerprint']),
                 'cert_serial' => $signed['serial'],
                 'cert_fingerprint' => $signed['fingerprint'],
                 'cert_expires_at' => $signed['expires_at'],
@@ -183,7 +148,8 @@ class EnrollmentService
                 'status' => 'approved', 'pc_id' => $pc->id, 'cert_pem' => $signed['pem'], 'issued_token' => $token,
                 'decided_by' => $by?->id, 'decided_at' => now(),
             ])->save();
-            Audit::log('enrollment.approve', $e, ['pc_id' => $pc->id, 'hostname' => $e->hostname, 'auto' => $by === null, 'new_pc' => $isNew, 'machine_uid' => $uid]);
+            Audit::log('enrollment.approve', $e, ['pc_id' => $pc->id, 'hostname' => $e->hostname, 'auto' => $by === null, 'via' => $via, 'new_pc' => $isNew, 'machine_uid' => $uid,
+                'adopted' => $adopt !== null, 'conflict_pc_id' => $conflict?->id]);
 
             return $pc;
         });
@@ -218,6 +184,22 @@ class EnrollmentService
         $e->forceFill(['issued_token' => null])->save();
 
         return $out;
+    }
+
+    /** An active PC that looks like this machine (hostname or MAC) but is not identified by its uid. */
+    private function conflictFor(int $labId, ?string $uid, string $hostname, array $macs): ?Pc
+    {
+        $host = strtolower(trim($hostname));
+        $macs = array_map('strtolower', $macs);
+
+        return Pc::query()->where('lab_id', $labId)->whereNull('retired_at')
+            ->where(fn ($q) => $uid === null ? $q : $q->whereNull('machine_uid')->orWhere('machine_uid', '!=', $uid))
+            ->get()->first(function (Pc $p) use ($host, $macs) {
+                $pMacs = array_map('strtolower', (array) ($p->macs ?? []));
+
+                return ($host !== '' && strtolower(trim((string) $p->hostname)) === $host)
+                    || ($macs !== [] && array_intersect($pMacs, $macs) !== []);
+            });
     }
 
     private static function normalizeUid(?string $uid): ?string

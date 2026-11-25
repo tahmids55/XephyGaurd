@@ -21,6 +21,12 @@
     <div class="note warn"><svg class="i i-sm" aria-hidden="true"><use href="#i-warn"/></svg><span>{{ $errors->first() }}</span></div>
     @endif
     <form method="post" action="{{ route('setup.store') }}" class="stack" style="--gap:18px">@csrf
+      @if ($needsToken)
+      <section class="fgroup">
+        <div class="fhead"><b>Setup token</b></div>
+        <div class="fbody"><label class="field"><span>Printed by install.sh on the CCC (not needed when you open https://127.0.0.1/setup on the CCC itself)</span><input name="setup_token" type="password" class="input mono" autocomplete="off" required></label></div>
+      </section>
+      @endif
       <section class="fgroup">
         <div class="fhead"><b>1. Administrator account</b></div>
         <div class="fbody cols-2">
@@ -52,7 +58,7 @@
         <div class="fhead"><b>5. Privacy</b></div>
         <div class="fbody stack">
           <label class="field" style="max-width:220px"><span>Keep raw events for (days)</span><input name="retention_days_raw" type="number" class="input" value="{{ old('retention_days_raw', $defaults['retention_days_raw']) }}"></label>
-          <label class="field"><span>Notice shown to students</span><textarea name="notice_text" rows="4" class="textarea">{{ old('notice_text', $defaults['notice_text']) }}</textarea></label>
+          <label class="field"><span>Notice shown to students</span><textarea name="notice_text" rows="4" class="textarea">{{ old('notice_text', $defaults['notice_text']) }}</textarea><span class="help">Added automatically: “{{ $defaults['notice_generated'] }}”</span></label>
         </div>
       </section>
       <button class="btn btn-solid">Finish setup</button>

@@ -8,11 +8,14 @@
 //   {"t":"keys", ...KeyStatsWindow...}           (Windows only; Linux service reads evdev itself)
 //   {"t":"paste_chord","ts":...}                 (Ctrl+V / Shift+Insert observed — Windows hook)
 //   {"t":"ping"}
+//   {"t":"screen_caps",...,"ipc_stream":true}  (helper streams over IPC; the service relays, screen Step 60)
+//   binary screen frame record (opaque, not JSON): see ipc_framing.hpp
 // service -> helper:
 //   {"t":"config","title_capture":"app_only","collect":{"window":true,"clipboard":true,"keys":false},"mode":"test"}
 //   {"t":"indicator","text":"Monitored by XephyGuard","mode":"test"}
 //   {"t":"notify","title":"...","body":"...","urgent":true}
 //   {"t":"pong"}
+//   {"t":"screen_rx","data":"<base64>"}   (one gateway message: Ack / KeyframeReq / Status, <= 1 KiB)
 #include <string>
 
 #include "xg/event.hpp"

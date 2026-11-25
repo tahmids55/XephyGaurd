@@ -17,6 +17,7 @@ import csv
 import json
 import os
 import pathlib
+import re
 import shlex
 import subprocess
 import sys
@@ -59,6 +60,13 @@ def ccc_results(api: str, token: str, pc_ip: str, since_ms: int) -> dict:
                                                                                    "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as r:
         return json.loads(r.read())
+
+
+def expand_ccc(cmd: str, ccc: str) -> str:
+    """Replaces @CCC@ in a scenario command with the quoted-safe CCC host (letters, digits, dots, dashes, colons)."""
+    if not re.fullmatch(r"[A-Za-z0-9.:\-]+", ccc):
+        raise ValueError(f"bad --ccc value: {ccc!r}")
+    return cmd.replace("@CCC@", ccc)
 
 
 def blocked_check(rule: dict | None, out: str) -> bool:
@@ -128,6 +136,11 @@ def run(a: argparse.Namespace) -> int:
         if sc.get("manual") or sc.get("layer") == "manual":
             results.append(Result(sc["id"], sc["layer"], sc["title"], "skipped", False, False, None, "manual scenario", "", 0))
             continue
+        if "@CCC@" in sc.get("run", ""):  # scenarios that attack the CCC from the PC need its address
+            if not a.ccc:
+                results.append(Result(sc["id"], sc["layer"], sc["title"], "skipped", False, False, None, "needs --ccc", "", 0))
+                continue
+            sc = {**sc, "run": expand_ccc(sc["run"], a.ccc)}
         print(f"[{sc['id']}] {sc['title']}", flush=True)
         start = int(time.time() * 1000)
         try:
@@ -227,6 +240,7 @@ def main() -> int:
     r.add_argument("--scenarios", required=True)
     r.add_argument("--out", type=pathlib.Path, required=True)
     r.add_argument("--api", default="http://127.0.0.1:8000")
+    r.add_argument("--ccc", help="CCC host or IP as the lab PC reaches it; fills @CCC@ in scenarios that attack the CCC")
     r.add_argument("--token", help="internal token (default: $XG_INTERNAL_TOKEN)")
     r.add_argument("--wait", type=float, default=15.0, help="seconds to wait for CCC evidence")
     r.add_argument("--pause", type=float, default=2.0)

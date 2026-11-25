@@ -10,6 +10,8 @@
 #include <vector>
 
 #include "xg/config.hpp"
+#include "xg/event.hpp"
+#include "xg/signatures.hpp"
 #include "xg/types.hpp"
 
 namespace xg {
@@ -22,7 +24,9 @@ public:
     /// Optional push notifications of exec events (netlink proc connector / ETW). Returns false if
     /// unsupported; the agent then relies on periodic snapshots only.
     virtual bool watch(std::function<void(const ProcessInfo&)> on_exec) = 0;
-    virtual bool kill(int64_t pid) = 0;
+    /// Terminates `pid`. With `expected_start` != 0 it acts only if that pid still has this start time
+    /// (ProcessInfo::start_time), checked race-free (pidfd / process handle), so a reused pid is never hit.
+    virtual bool kill(int64_t pid, int64_t expected_start = 0) = 0;
     virtual void stop() = 0;
 };
 
@@ -32,8 +36,12 @@ public:
     virtual std::vector<AdapterInfo> adapters() = 0;
     virtual std::vector<ListeningSocket> listening_sockets() = 0;
     virtual std::vector<OutboundAiFlow> active_ai_flows() { return {}; }
+    /// Established TCP connections for which WebHints::is_tunnel() is true (hints from set_web_hints).
+    virtual std::vector<OutboundTunnel> active_tunnels() { return {}; }
     /// Updates the set of monitored AI / IDE host suffixes from synced signatures/blocklists.
     virtual void set_ai_domains(std::vector<std::string> /*domains*/) {}
+    /// Telemetry hosts and per-process fallback domains from the bundle's web section.
+    virtual void set_web_hints(const WebHints& /*hints*/) {}
     /// Calls `on_change` (debounced by the caller) when links, addresses or routes change.
     virtual bool watch(std::function<void()> on_change) = 0;
     virtual void stop() = 0;
@@ -49,6 +57,14 @@ public:
     virtual bool restore() = 0;
     /// True while the block rules are present and enabled (the agent re-checks this periodically).
     virtual bool active() = 0;
+    /// Session egress lock, independent of isolate()/restore() (own table / firewall rule). `off` removes it.
+    /// Idempotent. Returns false if the rules could not be installed (or the adapter has no lock).
+    virtual bool set_network_lock(NetworkLock level, const std::vector<std::string>& exempt_hosts) {
+        (void)exempt_hosts;
+        return level == NetworkLock::off;
+    }
+    /// The lock that is installed right now (the agent re-checks this for tamper).
+    virtual NetworkLock network_lock() { return NetworkLock::off; }
 };
 
 class IWindowMonitor {
@@ -125,8 +141,16 @@ public:
     virtual void set_browser_ai_overview_suppressed(bool /*suppressed*/, const std::string& /*search_url*/ = {}) {}
     /// Configures or clears browser PAC proxy policies (Chrome, Edge, Brave, Opera, Vivaldi, Firefox) for proxy_only mode.
     virtual void set_browser_proxy_pac(const std::string& /*pac_url*/) {}
+    /// Blocks (non-empty) or unblocks (empty) Chromium-family browser extensions by Web Store id through managed
+    /// browser policy (ExtensionInstallBlocklist), keeping entries an administrator added (plan alternative F80).
+    virtual void set_browser_extension_blocklist(const std::vector<std::string>& /*chromium_ids*/) {}
     /// Pins system DNS to the lab resolver when gateway mode is active on Linux; empty clears the override.
     virtual void set_lab_dns(const std::string& /*dns_ip*/) {}
+    /// Screen capabilities to report before any helper has sent its own `screen_caps`.
+    virtual json fallback_screen_caps(const std::vector<UserSession>& /*sessions*/, bool /*screen_enabled*/) {
+        return {{"session_type", "unknown"}, {"snapshot", false}, {"live", false}, {"delta_tiles", false},
+                {"monitors", 1}, {"secure_desktop", false}};
+    }
 };
 
 class IGpuMonitor {
@@ -167,6 +191,10 @@ public:
     virtual bool send(uint64_t conn_id, const std::string& line) = 0;
     virtual void broadcast(const std::string& line) = 0;
     virtual void stop() = 0;
+    /// Receives screen frame records (opaque bytes, type and size already checked, ipc_framing.hpp). Set before
+    /// start(); without a handler frames are dropped. Called on the IPC thread: must not block for long.
+    using FrameHandler = std::function<void(const Peer&, std::string&& frame)>;
+    virtual void set_frame_handler(FrameHandler h) { (void)h; }
 };
 
 class IIpcClient {
@@ -206,6 +234,16 @@ struct ServicePlatform {
     std::unique_ptr<IIpcServer> ipc;
 };
 
+/// Per-user OS settings the helper applies inside the session (adapters only, never in apps/).
+class IHelperSystem {
+public:
+    virtual ~IHelperSystem() = default;
+    /// Windows: HKCU DisableTaskMgr during Test mode. Other platforms: no-op.
+    virtual void set_taskmgr_disabled(bool /*disabled*/) {}
+    /// Sets (non-empty) or clears (empty) the user's system proxy PAC URL. Idempotent.
+    virtual void set_user_proxy(const std::string& pac_url) = 0;
+};
+
 /// Everything the per-session helper needs.
 struct HelperPlatform {
     std::unique_ptr<IWindowMonitor> window;
@@ -213,6 +251,7 @@ struct HelperPlatform {
     std::unique_ptr<IInputTimingMonitor> input;     // Windows low-level hook (timing only); Linux: nullptr
     std::unique_ptr<IStudentUi> ui;
     std::unique_ptr<IIpcClient> ipc;
+    std::unique_ptr<IHelperSystem> system;
     /// Measures the clipboard right now (features only). Used when a paste is observed.
     std::function<bool(PasteInfo&)> probe_clipboard;
 };
@@ -224,5 +263,7 @@ std::string default_ipc_endpoint();
 std::string default_data_dir();
 std::string default_log_dir();
 std::string default_config_dir();
+/// Installed path of the session helper binary.
+std::string default_helper_path();
 
 }  // namespace xg

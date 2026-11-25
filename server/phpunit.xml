@@ -31,7 +31,8 @@
         <env name="XG_INTERNAL_TOKEN" value="test-internal-token"/>
         <env name="XG_ANALYSIS_URL" value="http://analysis.test"/>
         <env name="SCREEN_GATEWAY_SECRET" value="phpunit-ephemeral-gateway-secret-32b"/>
-        <env name="SCREEN_GATEWAY_AGENT_SECRET" value="phpunit-ephemeral-agent-secret-32b"/>
+        <!-- port 9 (discard): revoke calls in tests never reach a locally running gateway; tests that check them use Http::fake -->
+        <env name="SCREEN_GATEWAY_INTERNAL_URL" value="http://127.0.0.1:9"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>

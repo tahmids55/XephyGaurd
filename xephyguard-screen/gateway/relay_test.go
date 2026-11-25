@@ -18,32 +18,75 @@ type FakeAuth struct {
 	agentErr   error
 	viewerErr  error
 	agentID    string
+	agentPC    uint32 // 0: the agent's PC is its ?stream_id (default 100)
 	streamIDFn func(r *http.Request) (uint32, error)
+	mode       string                                     // lease mode; default live
+	lease      time.Duration                              // lease length; default 1 min
+	userFn     func(r *http.Request) (user, audit uint64) // identity of the lease (revoke tests)
+	renewFn    func(token string) (ViewerGrant, error)    // nil: renewal refused
+	tokenFn    func(token string) (ViewerGrant, error)    // first-message auth (screen Step 40); nil: refused
 }
 
-func (f *FakeAuth) AuthViewer(r *http.Request) (uint32, error) {
+func (f *FakeAuth) RenewViewer(token string) (ViewerGrant, error) {
+	if f.renewFn == nil {
+		return ViewerGrant{}, errors.New("no renewal")
+	}
+	return f.renewFn(token)
+}
+
+func (f *FakeAuth) AuthViewerToken(token string) (ViewerGrant, error) {
+	if f.tokenFn == nil {
+		return ViewerGrant{}, errors.New("no token auth")
+	}
+	return f.tokenFn(token)
+}
+
+func (f *FakeAuth) AuthViewer(r *http.Request) (ViewerGrant, error) {
 	if f.viewerErr != nil {
-		return 0, f.viewerErr
+		return ViewerGrant{}, f.viewerErr
 	}
+	sid := uint32(100)
 	if f.streamIDFn != nil {
-		return f.streamIDFn(r)
+		v, err := f.streamIDFn(r)
+		if err != nil {
+			return ViewerGrant{}, err
+		}
+		sid = v
+	} else if sidStr := r.URL.Query().Get("stream_id"); sidStr != "" {
+		v, _ := strconv.ParseUint(sidStr, 10, 32)
+		sid = uint32(v)
 	}
-	sidStr := r.URL.Query().Get("stream_id")
-	if sidStr != "" {
-		sid, _ := strconv.ParseUint(sidStr, 10, 32)
-		return uint32(sid), nil
+	mode := f.mode
+	if mode == "" {
+		mode = "live"
 	}
-	return 100, nil
+	lease := f.lease
+	if lease == 0 {
+		lease = time.Minute
+	}
+	g := ViewerGrant{StreamID: sid, PCID: sid, Mode: mode, Exp: time.Now().Add(lease), IssuedAt: time.Now()}
+	if f.userFn != nil {
+		g.UserID, g.AuditID = f.userFn(r)
+	}
+	return g, nil
 }
 
-func (f *FakeAuth) AuthAgent(r *http.Request) (string, error) {
+func (f *FakeAuth) AuthAgent(r *http.Request) (string, uint32, error) {
 	if f.agentErr != nil {
-		return "", f.agentErr
+		return "", 0, f.agentErr
 	}
+	id := "test-agent-fp"
 	if f.agentID != "" {
-		return f.agentID, nil
+		id = f.agentID
 	}
-	return "test-agent-fp", nil
+	pc := f.agentPC
+	if pc == 0 {
+		pc = 100
+		if sid, err := strconv.ParseUint(r.URL.Query().Get("stream_id"), 10, 32); err == nil && sid != 0 {
+			pc = uint32(sid)
+		}
+	}
+	return id, pc, nil
 }
 
 func makeTestFrame(streamID uint32, monitorID uint16, seq uint32) []byte {
@@ -137,8 +180,8 @@ func TestPairingAndForwardingBothDirections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agent read ACK failed: %v", err)
 	}
-	// Initial keyframe request might precede ACK
-	if len(agentRcvd) >= 4 && agentRcvd[3] == 4 {
+	// The viewer-count Status and the initial keyframe request may precede the ACK
+	for len(agentRcvd) >= 4 && (agentRcvd[3] == 4 || agentRcvd[3] == 5) {
 		_, agentRcvd, err = agentConn.Read(ctx)
 		if err != nil {
 			t.Fatalf("agent read ACK after keyframe req failed: %v", err)

@@ -295,11 +295,6 @@ if (-not $gwSecret -or $gwSecret.StartsWith("dev-secret")) {
     $envRaw = Set-DotEnvKey -Content $envRaw -Key "SCREEN_GATEWAY_SECRET" -Value (New-RandomHex 32)
     $envChanged = $true
 }
-$gwAgentSecret = $envMap["SCREEN_GATEWAY_AGENT_SECRET"]
-if (-not $gwAgentSecret -or $gwAgentSecret.StartsWith("dev-secret")) {
-    $envRaw = Set-DotEnvKey -Content $envRaw -Key "SCREEN_GATEWAY_AGENT_SECRET" -Value (New-RandomHex 32)
-    $envChanged = $true
-}
 if ($envMap["SCREEN_GATEWAY_URL"] -eq "ws://127.0.0.1:8082") {
     $envRaw = Set-DotEnvKey -Content $envRaw -Key "SCREEN_GATEWAY_URL" -Value ""
     $envChanged = $true

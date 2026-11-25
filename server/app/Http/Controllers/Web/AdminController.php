@@ -1,16 +1,23 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
+use App\Models\Lab;
 use App\Models\Pc;
 use App\Models\Setting;
 use App\Models\User;
 use App\Services\Audit;
 use App\Services\Doctor;
 use App\Services\NetworkPolicyWriter;
+use App\Services\NoticeText;
+use App\Services\PrivacySettings;
+use App\Services\ScreenGatewayRevoker;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Validation\Rules\Password;
 
 /** System health, settings, users and the audit log. */
@@ -34,17 +41,20 @@ class AdminController extends Controller
         $keys = ['lab_name', 'network_mode', 'ccc_ip', 'lab_subnet', 'retention_days_raw', 'retention_days_reports',
             'notice_text', 'paste_alert_chars', 'timezone', 'google_search_url'];
         $values = collect($keys)->mapWithKeys(fn ($k) => [$k => Setting::get($k)])->all();
-        $lab = \App\Models\Lab::current();
+        $lab = Lab::current();
         $values['lab_name'] ??= $lab->name;
         $values['ccc_ip'] ??= $lab->ccc_ip ?: (filter_var(request()->getHost(), FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) ? request()->getHost() : '127.0.0.1');
         $values['lab_subnet'] ??= $lab->subnet ?: '192.168.10.0/24';
         $values['paste_alert_chars'] ??= 800;
         $values['timezone'] ??= config('app.timezone', 'UTC');
         $values['google_search_url'] ??= 'https://www.google.com/search?q={searchTerms}&udm=14';
+        $values['notice_text'] = NoticeText::adminText();
+        $values['notice_generated'] = NoticeText::featureSentences();
+        $values['screen_cpu_budget_pct'] = Setting::get('screen.cpu_budget_pct', 8);
         foreach (['always_on', 'practice', 'test'] as $m) {
-            $values["title_capture_$m"] = Setting::get("privacy.title_capture.$m", $m === 'always_on' ? 'off' : 'app_only');
+            $values["title_capture_$m"] = PrivacySettings::titleCaptureSetting($m);
         }
-        $values['log_urls'] = Setting::get('privacy.log_urls', ['enabled' => false, 'query' => false]);
+        $values['log_urls'] = PrivacySettings::logUrls();
         $values['inspect_hosts'] = implode("\n", Setting::get('inspect_hosts', NetworkPolicyWriter::DEFAULT_INSPECT_HOSTS));
         $values['google_hide_selectors'] = implode("\n", Setting::get('google_hide_selectors', []));
 
@@ -62,12 +72,16 @@ class AdminController extends Controller
             'title_capture_always_on' => 'required|in:off,app_only,full', 'title_capture_practice' => 'required|in:off,app_only,full',
             'title_capture_test' => 'required|in:off,app_only,full', 'log_urls' => 'nullable|boolean', 'log_queries' => 'nullable|boolean',
             'inspect_hosts' => 'nullable|string|max:5000', 'google_hide_selectors' => 'nullable|string|max:5000',
+            'screen_cpu_budget_pct' => 'nullable|integer|min:1|max:100',
         ]);
         foreach (['lab_name', 'network_mode', 'ccc_ip', 'lab_subnet', 'retention_days_raw', 'retention_days_reports', 'notice_text', 'paste_alert_chars'] as $k) {
             Setting::put($k, $d[$k]);
         }
         Setting::put('timezone', ($d['timezone'] ?? '') ?: config('app.timezone', 'UTC'));
         Setting::put('google_search_url', $d['google_search_url'] ?? '');
+        if (isset($d['screen_cpu_budget_pct'])) {
+            Setting::put('screen.cpu_budget_pct', (int) $d['screen_cpu_budget_pct']);
+        }
         foreach (['always_on', 'practice', 'test'] as $m) {
             Setting::put("privacy.title_capture.$m", $d["title_capture_$m"]);
         }
@@ -76,7 +90,7 @@ class AdminController extends Controller
         $lines = fn ($s) => array_values(array_filter(array_map('trim', preg_split('/\R/', (string) $s))));
         Setting::put('inspect_hosts', $lines($d['inspect_hosts'] ?? '') ?: NetworkPolicyWriter::DEFAULT_INSPECT_HOSTS);
         Setting::put('google_hide_selectors', $lines($d['google_hide_selectors'] ?? ''));
-        \App\Models\Lab::current()->update(['name' => $d['lab_name'], 'ccc_ip' => $d['ccc_ip'], 'subnet' => $d['lab_subnet']]);
+        Lab::current()->update(['name' => $d['lab_name'], 'ccc_ip' => $d['ccc_ip'], 'subnet' => $d['lab_subnet']]);
         Audit::log('settings.save', null, collect($d)->except('notice_text')->all());
         $net->write();
 
@@ -106,6 +120,9 @@ class AdminController extends Controller
         }
         $user = $user?->exists ? tap($user)->update($data) : User::create($data);
         Audit::log('user.save', $user, ['email' => $user->email, 'role' => $user->role, 'active' => $user->active]);
+        if (! $user->active || ! $user->hasRole('instructor')) {
+            app(ScreenGatewayRevoker::class)->user($user->id);   // lost the right to watch screens
+        }
 
         return $request->expectsJson()
             ? response()->json(['ok' => true])
@@ -119,7 +136,7 @@ class AdminController extends Controller
                 ->when($request->string('action')->toString(), fn ($q, $a) => $q->where('action', 'like', "$a%"))
                 ->latest('id')->paginate(100)->withQueryString();
         } catch (\Throwable) {
-            $entries = new \Illuminate\Pagination\LengthAwarePaginator([], 0, 100);
+            $entries = new LengthAwarePaginator([], 0, 100);
         }
 
         return view('admin.audit', ['entries' => $entries]);

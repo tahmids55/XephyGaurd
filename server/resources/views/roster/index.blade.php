@@ -27,7 +27,7 @@
   </form>
   <div class="optbar"><span class="otitle">Roster</span><span class="osub">Maps lab logins to students. Exports use the pseudonym only.</span><span class="grow"></span><button type="button" class="btn btn-solid" @click="triggerImport()"><svg class="i i-sm" aria-hidden="true"><use href="#i-upload"/></svg> Import CSV</button></div><div class="canvas ">
   
-  <div class="toolbar"><input class="input input-sm" style="width:280px" placeholder="Search ID, name or login" x-model="q"><span class="grow"></span><label class="check small"><span class="switch"><input type="checkbox" x-model="pseudo" @change="togglePseudo()"><i></i></span> Pseudonyms in research exports</label></div>
+  <div class="toolbar"><input class="input input-sm" style="width:280px" placeholder="Search ID, name or login" x-model="q"><span class="grow"></span><label class="check small"><span class="switch"><input type="checkbox" x-model="pseudo" @change="togglePseudo()"><i></i></span> Show pseudonyms</label></div>
   <section class="panel">
     <div class="table-wrap"><table class="tbl">
       <thead><tr><th>ID</th><th>Name</th><th>Login</th><th>Pseudonym</th><th>Research consent</th><th>Accommodation</th></tr></thead>

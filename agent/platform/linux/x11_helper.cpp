@@ -36,6 +36,8 @@ bool x11_session() {
     return !(t && std::string(t) == "wayland");  // XWayland exists but cannot see native Wayland clients
 }
 
+ChildReaper g_notify_children;
+
 void spawn_notify(const std::string& title, const std::string& body, bool urgent) {
     pid_t pid = fork();
     if (pid == 0) {
@@ -43,7 +45,8 @@ void spawn_notify(const std::string& title, const std::string& body, bool urgent
                body.c_str(), static_cast<char*>(nullptr));
         _exit(127);
     }
-    while (waitpid(-1, nullptr, WNOHANG) > 0) {}
+    g_notify_children.add(pid);
+    g_notify_children.reap();
 }
 
 #ifdef XG_HAVE_X11

@@ -50,3 +50,25 @@ def test_evidence_matching_and_tables(tmp_path):
     assert "| agent | 2 | 0 | 1 | 1 | 50% |" in md
     assert "| **overall** | 3 | 1 | 1 | 1 | 33% |" in md
     assert "\\toprule" in redteam.table_latex(rows)
+
+
+def test_ccc_placeholder_is_filled_and_validated():
+    assert redteam.expand_ccc("curl https://@CCC@:8443/x", "192.168.10.2") == "curl https://192.168.10.2:8443/x"
+    for bad in ["a;rm -rf /", "a b", "$(x)", ""]:
+        try:
+            redteam.expand_ccc("@CCC@", bad)
+        except ValueError:
+            continue
+        raise AssertionError(bad)
+
+
+def test_screen_scenarios_are_present_and_judged_by_blocked_if():
+    sc = {s["id"]: s for s in yaml.safe_load((ROOT / "scenarios" / "linux.yaml").read_text())["scenarios"]}
+    for sid in ["screen.agent_spoof_fingerprint", "screen.agent_spoof_verify_header", "screen.gateway_port_8082",
+                "screen.view_without_token", "screen.view_forged_jwt", "screen.read_agent_key", "screen.agent_wrong_stream",
+                "screen.viewer_injection", "screen.lease_expiry", "screen.idle_pc_view"]:
+        assert sid in sc, sid
+        if sc[sid].get("run"):
+            assert sc[sid]["blocked_if"], sid
+        else:
+            assert sc[sid]["layer"] == "manual", sid

@@ -61,8 +61,9 @@ std::string diag_dst_ip(uint8_t family, const uint32_t dst[4]) {
     return {};
 }
 
-bool matches_ai_domain_list(const std::string& sni, const std::vector<std::string>& domains) {
-    if (sni.empty() || is_ai_telemetry_domain(sni)) return false;
+bool matches_ai_domain_list(const std::string& sni, const std::vector<std::string>& domains,
+                            const std::vector<std::string>& telemetry) {
+    if (sni.empty() || is_ai_telemetry_domain(sni, telemetry)) return false;
     for (const auto& pat : domains) {
         if (pat.empty()) continue;
         if (sni == pat || iends_with(sni, "." + pat)) return true;
@@ -70,13 +71,9 @@ bool matches_ai_domain_list(const std::string& sni, const std::vector<std::strin
     return false;
 }
 
-std::string fallback_ai_domain_for_proc(const std::string& proc) {
-    if (proc == "copilot-runtime" || proc == "copilot-language-server" || proc == "copilot") {
-        return "api.githubcopilot.com";
-    }
-    if (proc == "claude") return "api.anthropic.com";
-    if (proc == "ollama") return "ollama.com";
-    return {};
+std::string fallback_ai_domain_for_proc(const std::string& proc, const WebHints& hints) {
+    auto it = hints.process_domains.find(normalize_exe(proc));
+    return it == hints.process_domains.end() ? std::string{} : it->second;
 }
 
 std::mutex g_owners_mu;
@@ -247,6 +244,11 @@ public:
         }
     }
 
+    void set_web_hints(const WebHints& hints) override {
+        std::lock_guard lk(tracker_mu_);
+        tracker_.hints = hints;
+    }
+
     std::vector<OutboundAiFlow> active_ai_flows() override {
         auto sockets = query_sock_diag_tcp();
         if (sockets.empty()) return {};
@@ -270,6 +272,34 @@ public:
                 }
             }
         });
+    }
+
+    std::vector<OutboundTunnel> active_tunnels() override {
+        WebHints hints;
+        {
+            std::lock_guard lk(tracker_mu_);
+            hints = tracker_.hints;
+        }
+        if (hints.tunnel.id.empty()) return {};
+        std::vector<OutboundTunnel> out;
+        std::vector<uint64_t> inodes;
+        std::set<uint64_t> need;
+        for (const auto& s : query_sock_diag_tcp()) {  // established sockets only
+            if (!hints.is_tunnel(s.remote_ip, s.remote_port)) continue;
+            out.push_back({0, {}, s.remote_ip, s.remote_port});
+            need.insert(s.inode);
+            inodes.push_back(s.inode);
+            if (out.size() >= 64) break;  // bounded: one report per process/destination is enough
+        }
+        if (out.empty()) return out;
+        std::unordered_map<uint64_t, std::pair<int64_t, std::string>> owners;
+        resolve_socket_inodes(need, owners);
+        for (size_t i = 0; i < out.size(); ++i)
+            if (auto it = owners.find(inodes[i]); it != owners.end()) {
+                out[i].pid = it->second.first;
+                out[i].process = it->second.second;
+            }
+        return out;
     }
 
     std::vector<AdapterInfo> adapters() override {
@@ -537,13 +567,13 @@ std::vector<OutboundAiFlow> SocketDeltaTracker::evaluate(
 
         // Exact 4-tuple SNI match first: if SNI is known non-AI (e.g. Cloudflare CDN blog), do NOT guess by IP.
         if (auto sit = tuple_sni.find(key); sit != tuple_sni.end()) {
-            if (matches_ai_domain_list(sit->second, ai_domains)) {
+            if (matches_ai_domain_list(sit->second, ai_domains, hints.telemetry_domains)) {
                 matched_domain = sit->second;
             } else {
                 continue;
             }
         } else {
-            matched_domain = fallback_ai_domain_for_proc(s.process);
+            matched_domain = fallback_ai_domain_for_proc(s.process, hints);
         }
 
         if (matched_domain.empty()) continue;

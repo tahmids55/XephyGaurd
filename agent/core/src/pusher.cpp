@@ -4,6 +4,7 @@
 #include <thread>
 
 #include "xg/crypto.hpp"
+#include "xg/json_read.hpp"
 #include "xg/log.hpp"
 #include "xg/util.hpp"
 
@@ -42,9 +43,9 @@ bool PusherClient::session(const std::atomic<bool>& stop) {
     std::string socket_id;
     if (auto m = ws.receive(10000)) {
         auto j = json::parse(*m, nullptr, false);
-        if (!j.is_discarded() && j.value("event", "") == "pusher:connection_established") {
-            auto d = json::parse(j.value("data", "{}"), nullptr, false);
-            if (!d.is_discarded()) socket_id = d.value("socket_id", "");
+        if (!j.is_discarded() && jr::str(j, "event") == "pusher:connection_established") {
+            auto d = json::parse(jr::str(j, "data", "{}"), nullptr, false);
+            if (!d.is_discarded()) socket_id = jr::str(d, "socket_id");
         }
     }
     if (socket_id.empty()) { log::warn("realtime: no socket id from server"); return false; }
@@ -66,7 +67,7 @@ bool PusherClient::session(const std::atomic<bool>& stop) {
             last_rx = now;
             auto j = json::parse(*m, nullptr, false);
             if (j.is_discarded()) continue;
-            const std::string ev = j.value("event", "");
+            const std::string ev = jr::str(j, "event");
             if (ev == "pusher:ping") { ws.send_text(R"({"event":"pusher:pong","data":{}})"); continue; }
             if (ev == "pusher:pong" || ev == "pusher_internal:subscription_succeeded") continue;
             if (ev == "pusher:error") { log::warn("realtime: server error {}", j.dump()); continue; }

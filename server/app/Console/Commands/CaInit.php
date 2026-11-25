@@ -2,17 +2,13 @@
 
 namespace App\Console\Commands;
 
-use App\Models\Lab;
-use App\Services\Bootstrap;
 use App\Services\CertificateAuthority;
-use App\Services\Doctor;
-use App\Services\NetworkPolicyWriter;
-use App\Services\SignatureCompiler;
 use Illuminate\Console\Command;
 
 class CaInit extends Command
 {
     protected $signature = 'xephyguard:ca:init {--cn=XephyGuard Lab CA} {--server-ip=*} {--server-dns=*} {--force}';
+
     protected $description = 'Create the internal CA (if missing) and issue the CCC server certificate';
 
     public function handle(): int

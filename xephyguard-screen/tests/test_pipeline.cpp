@@ -130,7 +130,7 @@ TEST_CASE("Pipeline: End-to-end capture to viewer with PSNR > 30 dB") {
   enc_cfg.codec = xg::Codec::Webp;
   enc_cfg.quality_text = 85;
   xg::FrameEncoder encoder(enc_cfg);
-  xg::FlowControl flow(3);
+  xg::FlowControl flow;
 
   ViewerState viewer;
 
@@ -185,7 +185,7 @@ TEST_CASE("Pipeline: Intermediate frame drop triggers base_seq mismatch and keyf
   enc_cfg.codec = xg::Codec::Webp;
   enc_cfg.quality_text = 85;
   xg::FrameEncoder encoder(enc_cfg);
-  xg::FlowControl flow(3);
+  xg::FlowControl flow;
 
   ViewerState viewer;
   uint32_t stream_id = 101;

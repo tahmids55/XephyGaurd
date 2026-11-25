@@ -1,0 +1,55 @@
+# Browser AI site detection and network hints for the agent. Compiled into the signed bundle ("web").
+# Never hard-code these in the agent (CLAUDE.md invariant).
+#
+# ai_sites: window-title patterns of browser tabs. A title is a corroborating signal only: in proxy mode the
+# proxy's domain decision is the authority. All comparisons are lowercase, on the page title after one of
+# `browser_title_suffixes` has been removed ("ChatGPT - Google Chrome" -> "chatgpt"):
+#   equals:   page title is exactly this
+#   prefix:   page title starts with this
+#   suffix:   page title ends with this (e.g. "<chat name> - claude")
+#   contains: page title contains this anywhere (use only brand names that are unique)
+# Titles are only checked for windows whose app is in `browsers` (so "claude_notes.py - VS Code" is ignored).
+version: 1
+# Severity of a web.ai_tab hit raised from a window title alone. Medium: the title only corroborates; the
+# proxy's domain decision (blocked/observed AI host) is the authoritative signal (plan alternative F76).
+ai_tab_severity: medium
+browsers: [chrome, google-chrome, google-chrome-stable, chromium, chromium-browser, msedge, microsoft-edge,
+           brave, brave-browser, firefox, firefox-esr, librewolf, navigator, opera, vivaldi, vivaldi-bin, arc, zen]
+browser_title_suffixes: [" - google chrome", " - chromium", " - mozilla firefox", " — mozilla firefox",
+                         " - microsoft edge", " - microsoft​ edge", " - brave", " - opera", " - vivaldi", " - arc"]
+ai_sites:
+  - { site: "ChatGPT",           contains: [chatgpt] }
+  - { site: "Claude AI",         equals: [claude], suffix: [" - claude", " | claude"], contains: [claude.ai] }
+  - { site: "Google Gemini",     equals: [gemini, google gemini], suffix: [" - gemini", " - google gemini"], contains: [gemini.google] }
+  - { site: "Google AI Studio",  contains: [google ai studio, aistudio.google] }
+  - { site: "DeepSeek",          contains: [deepseek] }
+  - { site: "Perplexity AI",     equals: [perplexity], suffix: [" - perplexity", " | perplexity"], contains: [perplexity.ai] }
+  - { site: "Grok (xAI)",        equals: [grok], suffix: [" - grok", " | grok"], contains: [grok.com] }
+  - { site: "GitHub Copilot",    equals: [copilot, microsoft copilot], prefix: ["copilot - "], contains: [github copilot, copilot.microsoft.com] }
+  - { site: "Phind",             contains: [phind] }
+  - { site: "Blackbox AI",       contains: [blackbox ai, blackbox.ai] }
+  - { site: "Poe AI",            equals: [poe], prefix: ["poe - "], suffix: [" - poe"], contains: [poe.com] }
+  - { site: "Vercel v0",         contains: [v0 by vercel, v0.dev] }
+  - { site: "Bolt.new",          contains: [bolt.new] }
+  - { site: "Lovable AI",        equals: [lovable], suffix: [" - lovable", " | lovable"], contains: [lovable.dev] }
+  - { site: "HuggingChat",       contains: [huggingchat] }
+  - { site: "NotebookLM",        contains: [notebooklm] }
+  - { site: "Mistral Le Chat",   equals: [le chat], suffix: [" - le chat", " | le chat", " | mistral ai"], contains: [chat.mistral.ai] }
+# Passive telemetry/experiment hosts (substring match) that must never raise an AI alert.
+telemetry_domains: [telemetry, "exp.individual.", exp-tas.com, events.data.microsoft.com, applicationinsights]
+# Domain to report for an AI client process when its connection has no readable SNI.
+process_domains:
+  copilot-runtime: api.githubcopilot.com
+  copilot-language-server: api.githubcopilot.com
+  copilot: api.githubcopilot.com
+  claude: api.anthropic.com
+  ollama: ollama.com
+# Outbound TCP connections to a public address on these ports are flagged as a possible tunnel during a
+# session (practice / test): the proxy cannot see inside them. Only the destination address, port and the
+# process name are reported, never the traffic. UDP VPNs (WireGuard, OpenVPN/UDP) show up as a VPN adapter
+# (adapters.yaml) instead. A tunnel on port 443 looks like normal HTTPS and is not detected by this rule.
+tunnel:
+  id: net.tunnel_flow
+  severity: medium
+  description: "Connection to an outside host on a tunnel port (SSH / VPN / SOCKS / Tor)"
+  tcp_ports: [22, 1080, 1194, 1723, 8388, 9001, 9030, 9050, 9150]

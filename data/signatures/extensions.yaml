@@ -1,22 +1,24 @@
 # IDE / editor / browser extension signatures. IDs are compared lowercase.
+# domains:    backend host suffixes; traffic to them from the matching IDE marks the extension "actively used".
+# id_domains: per-extension-id domains for rules that group several extensions (overrides `domains`).
 version: 1
 rules:
-  - { id: ext.copilot,        severity: high,   ide: vscode, ext_ids: [github.copilot, github.copilot-chat], description: "GitHub Copilot" }
-  - { id: ext.claude_code,    severity: high,   ide: vscode, ext_ids: [anthropic.claude-code], description: "Claude Code" }
-  - { id: ext.continue,       severity: high,   ide: vscode, ext_ids: [continue.continue], description: "Continue" }
-  - { id: ext.codeium,        severity: high,   ide: vscode, ext_ids: [codeium.codeium, codeium.windsurfpyright], description: "Codeium / Windsurf plugin" }
-  - { id: ext.tabnine,        severity: high,   ide: vscode, ext_ids: [tabnine.tabnine-vscode], description: "Tabnine" }
-  - { id: ext.cody,           severity: high,   ide: vscode, ext_ids: [sourcegraph.cody-ai], description: "Sourcegraph Cody" }
-  - { id: ext.cline,          severity: high,   ide: vscode, ext_ids: [saoudrizwan.claude-dev], description: "Cline" }
-  - { id: ext.roo,            severity: high,   ide: vscode, ext_ids: [rooveterinaryinc.roo-cline], description: "Roo Code" }
+  - { id: ext.copilot,        severity: high,   ide: vscode, ext_ids: [github.copilot, github.copilot-chat], domains: [githubcopilot.com, copilot-proxy.githubusercontent.com, copilot-telemetry.githubusercontent.com, copilot.microsoft.com], description: "GitHub Copilot" }
+  - { id: ext.claude_code,    severity: high,   ide: vscode, ext_ids: [anthropic.claude-code], domains: [anthropic.com, claude.ai, openrouter.ai], description: "Claude Code" }
+  - { id: ext.continue,       severity: high,   ide: vscode, ext_ids: [continue.continue], domains: [anthropic.com, openai.com, deepseek.com, openrouter.ai, groq.com, mistral.ai], description: "Continue" }
+  - { id: ext.codeium,        severity: high,   ide: vscode, ext_ids: [codeium.codeium, codeium.windsurfpyright], domains: [codeium.com, windsurf.com], description: "Codeium / Windsurf plugin" }
+  - { id: ext.tabnine,        severity: high,   ide: vscode, ext_ids: [tabnine.tabnine-vscode], domains: [tabnine.com], description: "Tabnine" }
+  - { id: ext.cody,           severity: high,   ide: vscode, ext_ids: [sourcegraph.cody-ai], domains: [sourcegraph.com], description: "Sourcegraph Cody" }
+  - { id: ext.cline,          severity: high,   ide: vscode, ext_ids: [saoudrizwan.claude-dev], domains: [anthropic.com, claude.ai, openrouter.ai], description: "Cline" }
+  - { id: ext.roo,            severity: high,   ide: vscode, ext_ids: [rooveterinaryinc.roo-cline], domains: [anthropic.com, claude.ai, openrouter.ai], description: "Roo Code" }
   - { id: ext.amazon_q,       severity: high,   ide: vscode, ext_ids: [amazonwebservices.amazon-q-vscode, amazonwebservices.codewhisperer-for-command-line-companion], description: "Amazon Q" }
-  - { id: ext.gemini_assist,  severity: high,   ide: vscode, ext_ids: [google.geminicodeassist], description: "Gemini Code Assist" }
+  - { id: ext.gemini_assist,  severity: high,   ide: vscode, ext_ids: [google.geminicodeassist], domains: [googleapis.com, gemini.google.com], description: "Gemini Code Assist" }
   - { id: ext.chatgpt,        severity: high,   ide: vscode, ext_ids: [openai.chatgpt, genieai.chatgpt-vscode, danielsanmedium.dscodegpt], description: "ChatGPT-based extensions" }
-  - { id: ext.blackbox,       severity: high,   ide: vscode, ext_ids: [blackboxapp.blackbox, blackboxapp.blackboxagent], description: "Blackbox AI" }
+  - { id: ext.blackbox,       severity: high,   ide: vscode, ext_ids: [blackboxapp.blackbox, blackboxapp.blackboxagent], domains: [blackbox.ai], description: "Blackbox AI" }
   # JetBrains plugin directory names (lowercase)
-  - { id: ext.jb.ai_assistant, severity: high,  ide: jetbrains, ext_ids: [ml-llm, fullline, aiassistant], description: "JetBrains AI Assistant" }
-  - { id: ext.jb.copilot,      severity: high,  ide: jetbrains, ext_ids: [github-copilot-intellij, copilot], description: "Copilot for JetBrains" }
-  - { id: ext.jb.misc,         severity: high,  ide: jetbrains, ext_ids: [tabnine, codeium, continue, sourcegraph-cody, amazon-q], description: "Other JetBrains AI plugins" }
+  - { id: ext.jb.ai_assistant, severity: high,  ide: jetbrains, ext_ids: [ml-llm, fullline, aiassistant], domains: [jetbrains.ai, grazie.ai], description: "JetBrains AI Assistant" }
+  - { id: ext.jb.copilot,      severity: high,  ide: jetbrains, ext_ids: [github-copilot-intellij, copilot], domains: [githubcopilot.com, copilot-proxy.githubusercontent.com, copilot-telemetry.githubusercontent.com, copilot.microsoft.com], description: "Copilot for JetBrains" }
+  - { id: ext.jb.misc,         severity: high,  ide: jetbrains, ext_ids: [tabnine, codeium, continue, sourcegraph-cody, amazon-q], id_domains: { tabnine: [tabnine.com], codeium: [codeium.com, windsurf.com], continue: [anthropic.com, openai.com, deepseek.com, openrouter.ai, groq.com, mistral.ai], sourcegraph-cody: [sourcegraph.com] }, description: "Other JetBrains AI plugins" }
   # Chromium extension IDs (Chrome Web Store)
   - { id: ext.browser.ai,      severity: medium, ide: browser, ext_ids: [
         "jgjaeacdkonaoafenlfkkkmbaopkbilf",   # Merlin

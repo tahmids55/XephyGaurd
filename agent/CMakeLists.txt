@@ -12,12 +12,23 @@ endif()
 option(XG_BUILD_TESTS "Build unit tests" ON)
 option(XG_WITH_X11 "Build X11 window/clipboard/indicator support into the Linux helper" ON)
 
+set(XG_SANITIZE "" CACHE STRING "Sanitizers for GCC/Clang builds: empty, address,undefined, or thread")
+if(XG_SANITIZE AND NOT MSVC)
+  if(XG_SANITIZE STREQUAL "thread" OR XG_SANITIZE STREQUAL "address,undefined" OR XG_SANITIZE STREQUAL "address"
+     OR XG_SANITIZE STREQUAL "undefined")
+    add_compile_options(-fsanitize=${XG_SANITIZE} -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=${XG_SANITIZE})
+  else()
+    message(FATAL_ERROR "XG_SANITIZE must be address,undefined or thread (got '${XG_SANITIZE}')")
+  endif()
+endif()
+
 include(cmake/Dependencies.cmake)
 
 if(MSVC)
   add_compile_options(/W4 /permissive- /utf-8)
 else()
-  add_compile_options(-Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
+  add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wno-missing-field-initializers)
 endif()
 
 # ---------------------------------------------------------------- core library
@@ -28,7 +39,7 @@ target_link_libraries(xg_core PUBLIC nlohmann_json::nlohmann_json tomlplusplus::
                                      OpenSSL::SSL OpenSSL::Crypto SQLite::SQLite3 Threads::Threads)
 target_compile_definitions(xg_core PUBLIC XG_VERSION="${PROJECT_VERSION}")
 if(WIN32)
-  target_link_libraries(xg_core PUBLIC ws2_32 crypt32)
+  target_link_libraries(xg_core PUBLIC ws2_32 crypt32 advapi32)
   target_compile_definitions(xg_core PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
 endif()
 
@@ -53,7 +64,14 @@ else()
 endif()
 
 # ----------------------------------------------------------------- screen streaming
+# xephyguard-screen reads XG_SANITIZE as a boolean and then adds address,undefined. In a thread build that
+# would mix ASan into TSAN; it already inherits -fsanitize=thread from this directory, so hide the option.
+set(_xg_sanitize "${XG_SANITIZE}")
+if(XG_SANITIZE STREQUAL "thread")
+    set(XG_SANITIZE OFF)
+endif()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../xephyguard-screen ${CMAKE_CURRENT_BINARY_DIR}/xephyguard-screen EXCLUDE_FROM_ALL)
+set(XG_SANITIZE "${_xg_sanitize}")
 
 # ----------------------------------------------------------------- executables
 if(WIN32)
@@ -69,7 +87,7 @@ target_link_libraries(xephyguard-agent PRIVATE xg_platform)
 add_executable(xephyguard-helper apps/helper_main.cpp apps/screen_streamer.cpp ${XG_HELPER_RC})
 target_link_libraries(xephyguard-helper PRIVATE xg_platform xgcore)
 if(WIN32)
-  target_link_libraries(xephyguard-helper PRIVATE winhttp d3d11 dxgi gdi32)
+  target_link_libraries(xephyguard-helper PRIVATE d3d11 dxgi gdi32)
   set_target_properties(xephyguard-helper PROPERTIES WIN32_EXECUTABLE ON)
 endif()
 
@@ -78,7 +96,10 @@ if(XG_BUILD_TESTS)
   enable_testing()
   file(GLOB XG_TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp)
   add_executable(xg_tests ${XG_TEST_SOURCES})
-  target_link_libraries(xg_tests PRIVATE xg_platform Catch2::Catch2WithMain)
+  # apps/screen_streamer.cpp is tested with the fake capture from xephyguard-screen.
+  target_sources(xg_tests PRIVATE apps/screen_streamer.cpp)
+  target_include_directories(xg_tests PRIVATE apps)
+  target_link_libraries(xg_tests PRIVATE xg_platform xgcore Catch2::Catch2WithMain)
   target_compile_definitions(xg_tests PRIVATE XG_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../data")
   include(Catch)
   catch_discover_tests(xg_tests)

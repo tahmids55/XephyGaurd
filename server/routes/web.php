@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use App\Http\Controllers\Web\AdminController;
 use App\Http\Controllers\Web\AlertController;
 use App\Http\Controllers\Web\AuthController;
@@ -18,16 +20,13 @@ use Illuminate\Support\Facades\Route;
 // ---- public (no login): student notice, CA certificate, agent installers -------------------
 Route::get('/notice', [PublicController::class, 'notice'])->name('notice');
 Route::get('/notice.html', [PublicController::class, 'notice'])->name('notice.html');
+Route::get('/js/data.js', [PublicController::class, 'demoData'])->name('demo.data');
 Route::get('/ca.crt', [PublicController::class, 'caCert'])->name('ca.cert');
 Route::get('/install/linux.sh', [PublicController::class, 'linuxInstaller'])->name('install.linux');
 Route::get('/proxy.pac', [PublicController::class, 'proxyPac'])->name('proxy.pac');
 Route::get('/downloads', [PublicController::class, 'downloadsIndex'])->name('downloads.index');
 Route::get('/downloads.html', [PublicController::class, 'downloadsIndex'])->name('downloads.html');
 Route::get('/downloads/{file}', [PublicController::class, 'download'])->name('downloads');
-Route::get('/share', [PublicController::class, 'shareIndex'])->name('share.index');
-Route::get('/share.html', [PublicController::class, 'shareIndex'])->name('share.html');
-Route::post('/share', [PublicController::class, 'shareSave'])->name('share.save');
-Route::get('/share/raw', [PublicController::class, 'shareRaw'])->name('share.raw');
 
 Route::group([], function () {
     Route::get('/setup', [SetupController::class, 'show'])->name('setup.show');
@@ -54,24 +53,33 @@ Route::group([], function () {
             Route::post('/sessions', [SessionController::class, 'start'])->name('sessions.start');
             Route::post('/sessions/{session}/stop', [SessionController::class, 'stop'])->name('sessions.stop');
             Route::post('/sessions/{session}/profile', [SessionController::class, 'switchProfile'])->name('sessions.switch');
+            Route::post('/sessions/{session}/network-lock', [SessionController::class, 'networkLock'])->name('sessions.network_lock');
             Route::post('/sessions/message', [SessionController::class, 'message'])->name('sessions.message');
             Route::post('/pcs/{pc}/isolate', [SessionController::class, 'isolate'])->name('pcs.isolate');
             Route::post('/pcs/{pc}/kill', [SessionController::class, 'kill'])->name('pcs.kill');
             Route::post('/pcs/{pc}/rescan', [SessionController::class, 'rescan'])->name('pcs.rescan');
-            Route::post('/pcs/{pc}/evidence', [EvidenceController::class, 'store'])->name('pcs.evidence');
-            Route::get('/evidence/{capture}', [EvidenceController::class, 'show'])->name('evidence.show');
 
             Route::get('/enroll', [EnrollmentController::class, 'index'])->name('enroll.index');
             Route::get('/enroll.html', [EnrollmentController::class, 'index'])->name('enroll.html');
             Route::post('/enroll/{enrollment}/approve', [EnrollmentController::class, 'approve'])->name('enroll.approve');
             Route::post('/enroll/approve-all', [EnrollmentController::class, 'approveAll'])->name('enroll.approve_all');
             Route::post('/enroll/{enrollment}/reject', [EnrollmentController::class, 'reject'])->name('enroll.reject');
+            Route::post('/enroll/tokens', [EnrollmentController::class, 'createToken'])->name('enroll.token');
+            Route::post('/enroll/tokens/{token}/revoke', [EnrollmentController::class, 'revokeToken'])->name('enroll.token_revoke');
             Route::post('/pcs/{pc}/rename', [EnrollmentController::class, 'rename'])->name('pcs.rename');
             Route::post('/lab/layout', [DashboardController::class, 'saveLayout'])->name('lab.layout');
         });
 
         // instructor: sessions, overrides, timetable, reports, roster
         Route::middleware('role:instructor')->group(function () {
+            // F46 screen evidence: instructor+, only inside an audited live view, every view audited (S-12)
+            Route::post('/pcs/{pc}/evidence', [EvidenceController::class, 'store'])->name('pcs.evidence');
+            Route::get('/evidence/{capture}', [EvidenceController::class, 'show'])->name('evidence.show');
+            // F102 shared clipboard: staff-only, labelled with the real user name (S-8)
+            Route::get('/share', [PublicController::class, 'shareIndex'])->name('share.index');
+            Route::get('/share.html', [PublicController::class, 'shareIndex'])->name('share.html');
+            Route::post('/share', [PublicController::class, 'shareSave'])->name('share.save');
+            Route::get('/share/raw', [PublicController::class, 'shareRaw'])->name('share.raw');
             Route::post('/sessions/{session}/pcs/{pc}/override', [SessionController::class, 'override'])->name('sessions.override');
             Route::get('/profiles', [ProfileController::class, 'index'])->name('profiles.index');
             Route::get('/profiles.html', [ProfileController::class, 'index'])->name('profiles.html');
@@ -113,7 +121,6 @@ Route::group([], function () {
             Route::post('/signatures/{version}/activate', [SignatureController::class, 'activate'])->name('signatures.activate');
 
             Route::post('/enroll/rotate-key', [EnrollmentController::class, 'rotateKey'])->name('enroll.rotate');
-            Route::post('/enroll/auto-approve', [EnrollmentController::class, 'autoApprove'])->name('enroll.auto');
             Route::post('/pcs/{pc}/retire', [EnrollmentController::class, 'retire'])->name('pcs.retire');
             Route::post('/roster/pseudonymize', [RosterController::class, 'pseudonymize'])->name('roster.pseudonymize');
 

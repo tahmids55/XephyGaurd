@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -13,12 +15,14 @@ class EvidenceCapture extends Model
         'lab_session_id',
         'user',
         'captured_by',
+        'screen_view_audit_id',
         'monitor',
         'source_mode',
         'file_path',
         'mime_type',
         'sha256',
         'size_bytes',
+        'encrypted',
         'note',
         'occurred_at',
     ];
@@ -26,6 +30,7 @@ class EvidenceCapture extends Model
     protected $casts = [
         'monitor' => 'integer',
         'size_bytes' => 'integer',
+        'encrypted' => 'boolean',
         'occurred_at' => 'datetime',
     ];
 

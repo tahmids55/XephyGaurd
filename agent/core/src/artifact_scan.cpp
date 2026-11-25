@@ -25,11 +25,18 @@ ArtifactScanResult scan_artifacts(const RuleEngine& rules, const std::vector<std
                 if (p.find('%') != std::string::npos) continue;  // unexpanded Windows var on Linux
                 std::error_code ec;
                 if (!fs::is_directory(p, ec)) continue;
-                uint64_t total = 0;
+                // Same budget as the root walk: a user-made huge tree in ~/.ollama cannot pin the worker (I-AGENT-29).
+                uint64_t total = 0, visited = 0;
                 for (auto it = fs::recursive_directory_iterator(p, fs::directory_options::skip_permission_denied, ec);
                      it != fs::recursive_directory_iterator() && !stop; it.increment(ec)) {
                     if (ec) break;
-                    if (it->is_regular_file(ec)) total += it->file_size(ec);
+                    if (++visited > spec.max_files) {
+                        res.truncated = true;
+                        break;
+                    }
+                    ++res.files_visited;
+                    if (it->is_directory(ec) && it.depth() >= spec.max_depth) it.disable_recursion_pending();
+                    else if (it->is_regular_file(ec)) total += it->file_size(ec);
                 }
                 if (seen.insert(p).second) res.found.push_back(ArtifactInfo{p, total, r.id});
             }

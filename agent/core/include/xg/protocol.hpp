@@ -35,7 +35,7 @@ std::optional<BatchAck> parse_batch_ack(const std::string& body, std::string* er
 
 struct Command {
     std::string id;     // server-generated, used for ack
-    std::string type;   // policy_updated, message, kill, set_indicator, rescan, isolate_notice, ping
+    std::string type;   // policy_updated, message, kill, rescan, isolate_notice, ping, flush
     json args;
 };
 /// Validates and parses a command received over the WebSocket channel.

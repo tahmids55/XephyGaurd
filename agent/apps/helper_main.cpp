@@ -1,14 +1,18 @@
 // xephyguard-helper: runs inside each logged-in user session. Collects what only the session can see
 // (focused window, clipboard sizes, key timing on Windows), shows the transparency indicator and
 // student notices, and forwards everything to the service over authenticated local IPC.
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 
 #include "xg/interfaces.hpp"
+#include "xg/crypto.hpp"
+#include "xg/ipc_framing.hpp"
 #include "xg/ipc_messages.hpp"
 #include "xg/keystats.hpp"
 #include "xg/log.hpp"
@@ -18,141 +22,6 @@
 
 #ifdef _WIN32
 #include <windows.h>
-namespace {
-void set_user_taskmgr_disabled(bool disabled) {
-    HKEY hk = nullptr;
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
-                        0, nullptr, 0, KEY_SET_VALUE, nullptr, &hk, nullptr) == ERROR_SUCCESS) {
-        if (disabled) {
-            DWORD one = 1;
-            RegSetValueExW(hk, L"DisableTaskMgr", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&one), sizeof(one));
-        } else {
-            RegDeleteValueW(hk, L"DisableTaskMgr");
-        }
-        RegCloseKey(hk);
-    }
-}
-
-void notify_wininet_proxy_changed() {
-    using InternetSetOptionWFn = BOOL(WINAPI*)(void*, DWORD, void*, DWORD);
-    if (HMODULE lib = LoadLibraryW(L"wininet.dll")) {
-        auto fn = reinterpret_cast<InternetSetOptionWFn>(reinterpret_cast<void*>(GetProcAddress(lib, "InternetSetOptionW")));
-        if (fn) {
-            constexpr DWORD kSettingsChanged = 39;  // INTERNET_OPTION_SETTINGS_CHANGED
-            constexpr DWORD kRefresh = 37;          // INTERNET_OPTION_REFRESH
-            fn(nullptr, kSettingsChanged, nullptr, 0);
-            fn(nullptr, kRefresh, nullptr, 0);
-        }
-        FreeLibrary(lib);
-    }
-    SendNotifyMessageW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, reinterpret_cast<LPARAM>(L"Internet Settings"));
-}
-
-void set_user_proxy_pac(const std::string& pac_url) {
-    static std::mutex mu;
-    static std::string applied_pac;
-    std::lock_guard lk(mu);
-    if (pac_url == applied_pac) return;
-
-    const wchar_t* subkey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
-    auto to_wide = [](const std::string& s) -> std::wstring {
-        if (s.empty()) return {};
-        int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-        if (n <= 1) return {};
-        std::wstring out(size_t(n - 1), L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, out.data(), n);
-        return out;
-    };
-
-    if (!pac_url.empty()) {
-        const std::wstring wurl = to_wide(pac_url);
-        if (wurl.empty()) return;
-        HKEY hk = nullptr;
-        if (RegCreateKeyExW(HKEY_CURRENT_USER, subkey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &hk, nullptr) ==
-            ERROR_SUCCESS) {
-            RegSetValueExW(hk, L"AutoConfigURL", 0, REG_SZ, reinterpret_cast<const BYTE*>(wurl.c_str()),
-                           DWORD((wurl.size() + 1) * sizeof(wchar_t)));
-            RegCloseKey(hk);
-            applied_pac = pac_url;
-            notify_wininet_proxy_changed();
-        }
-        return;
-    }
-
-    if (!applied_pac.empty()) {
-        const std::wstring expected = to_wide(applied_pac);
-        HKEY hk = nullptr;
-        if (RegOpenKeyExW(HKEY_CURRENT_USER, subkey, 0, KEY_QUERY_VALUE | KEY_SET_VALUE, &hk) == ERROR_SUCCESS) {
-            wchar_t buf[1024] = {};
-            DWORD type = 0;
-            DWORD bytes = sizeof(buf);
-            if (RegQueryValueExW(hk, L"AutoConfigURL", nullptr, &type, reinterpret_cast<BYTE*>(buf), &bytes) ==
-                    ERROR_SUCCESS &&
-                type == REG_SZ && expected == buf) {
-                RegDeleteValueW(hk, L"AutoConfigURL");
-            }
-            RegCloseKey(hk);
-        }
-        applied_pac.clear();
-        notify_wininet_proxy_changed();
-    }
-}
-
-struct TaskMgrGuard {
-    ~TaskMgrGuard() {
-        set_user_taskmgr_disabled(false);
-        set_user_proxy_pac({});
-    }
-};
-}  // namespace
-#else
-#include <fcntl.h>
-#include <sys/wait.h>
-#include <unistd.h>
-namespace {
-void run_gsettings(const char* key, const char* val) {
-    pid_t pid = ::fork();
-    if (pid == 0) {
-        int devnull = ::open("/dev/null", O_RDWR);
-        if (devnull >= 0) {
-            ::dup2(devnull, 0);
-            ::dup2(devnull, 1);
-            ::dup2(devnull, 2);
-            ::close(devnull);
-        }
-        ::execlp("gsettings", "gsettings", "set", "org.gnome.system.proxy", key, val, static_cast<char*>(nullptr));
-        _exit(127);
-    }
-    if (pid > 0) {
-        int status = 0;
-        ::waitpid(pid, &status, 0);
-    }
-}
-
-void set_user_proxy_pac(const std::string& pac_url) {
-    static std::mutex mu;
-    static std::string applied_pac;
-    std::lock_guard lk(mu);
-    if (pac_url == applied_pac) return;
-    if (!std::getenv("DBUS_SESSION_BUS_ADDRESS")) {
-        applied_pac = pac_url;
-        return;
-    }
-    if (!pac_url.empty()) {
-        run_gsettings("autoconfig-url", pac_url.c_str());
-        run_gsettings("mode", "auto");
-        applied_pac = pac_url;
-    } else if (!applied_pac.empty()) {
-        run_gsettings("mode", "none");
-        run_gsettings("autoconfig-url", "");
-        applied_pac.clear();
-    }
-}
-
-struct TaskMgrGuard {
-    ~TaskMgrGuard() { set_user_proxy_pac({}); }
-};
-}  // namespace
 #endif
 
 using namespace xg;
@@ -228,14 +97,21 @@ struct LastCopyInfo {
 struct HelperState {
     std::recursive_mutex mu;
     bool want_window = false, want_clipboard = false, want_keys = false;
+    bool screen_on = false;  // screen streaming armed: the window monitor must run to feed the privacy mask
     bool window_on = false, clipboard_on = false, keys_on = false;
     std::string mode = "always_on";
+    bool full_titles = false;  // title_capture=full: file names from titles may label copy/paste (I-AGENT-9)
     std::string indicator_base = "Monitored by XephyGuard";
     std::string indicator_mode = "always_on";
     std::string last_app;
     std::string last_title;
     std::string last_file;
     LastCopyInfo last_copy;
+    // Foreground window for the screen privacy mask only: kept in memory, never sent (ETHICS.md). Separate from
+    // last_app/last_title, which exist only while window collection is on.
+    std::mutex mask_mu;
+    bool mask_known = false;
+    std::string mask_app, mask_title;
 };
 
 int count_monitors() {
@@ -269,8 +145,16 @@ bool linux_screen_ready() {
 
 int helper_main() {
     log::init("", log::Level::info, true);
-    TaskMgrGuard taskmgr_guard;
     auto plat = make_helper_platform();
+    // Undo per-user settings (Task Manager lockdown, PAC) when the helper exits.
+    struct SettingsGuard {
+        IHelperSystem* sys;
+        ~SettingsGuard() {
+            if (!sys) return;
+            sys->set_taskmgr_disabled(false);
+            sys->set_user_proxy({});
+        }
+    } settings_guard{plat->system.get()};
     HelperState st;
     KeyStatsAggregator keys(5);
     std::mutex keys_mu;
@@ -379,20 +263,30 @@ int helper_main() {
 
     auto apply_config = [&] {
         std::lock_guard lk(st.mu);
-        if (plat->window && st.want_window != st.window_on) {
-            if (st.want_window)
+        const bool need_window = st.want_window || st.screen_on;
+        if (plat->window && need_window != st.window_on) {
+            if (need_window)
                 st.window_on = plat->window->start([&](const WindowInfo& w) {
                     {
+                        std::lock_guard lk3(st.mask_mu);
+                        st.mask_known = true;
+                        st.mask_app = w.app;
+                        st.mask_title = w.title;
+                    }
+                    {
                         std::lock_guard lk2(st.mu);
+                        if (!st.want_window) return;  // running only for the screen mask
                         st.last_app = w.app;
                         st.last_title = w.title;
-                        st.last_file = extract_active_file(w.app, w.title);
+                        st.last_file = st.full_titles ? extract_active_file(w.app, w.title) : std::string{};
                     }
                     send({{"t", "window"}, {"app", w.app}, {"title", w.title}, {"pid", w.pid}});
                 });
             else {
                 plat->window->stop();
                 st.window_on = false;
+                std::lock_guard lk3(st.mask_mu);
+                st.mask_known = false;
             }
         }
         if (plat->clipboard && st.want_clipboard != st.clipboard_on) {
@@ -461,37 +355,39 @@ int helper_main() {
               {"live", can_live},
               {"delta_tiles", can_live},
               {"monitors", count_monitors()},
-              {"secure_desktop", secure_desk}});
+              {"secure_desktop", secure_desk},
+              {"ipc_stream", can_live}});  // frames go to the service, which relays them (DECISIONS #24)
     };
 
     ScreenStreamer screen_streamer;
+    // Fail-safe: until the window monitor has reported a window the streamer masks the picture (screen Step 11).
+    screen_streamer.set_window_source([&st]() -> std::optional<ScreenWindow> {
+        std::lock_guard lk(st.mask_mu);
+        if (!st.mask_known) return std::nullopt;
+        return ScreenWindow{st.mask_app, st.mask_title};
+    });
+    // The helper only captures and encodes: frames go to the service over IPC and the service alone talks to
+    // the gateway with its mTLS cert (DECISIONS #24). The helper never sees a gateway credential and never
+    // reads agent.toml (I-AGENT-2). Settings come only from the service.
+    uint32_t screen_stream_id = 0;
+    auto send_frame = [&](std::string_view f) { return ipc::send_screen_frame(*plat->ipc, f); };
     auto check_screen_stream = [&]() {
-        bool ok = false;
-        std::string err;
-        Config cfg = Config::load(default_config_path(), &ok, &err);
-        if (!ok) return;
-        cfg_screen_enabled.store(cfg.screen_enabled);
-        const bool allow_screen = cfg.screen_enabled && linux_screen_ready();
-        if (!allow_screen) {
-            if (screen_streamer.is_running()) screen_streamer.stop();
-            return;
-        }
-        if (screen_streamer.is_running()) return;
-        if (!cfg.ccc_host.empty() && !cfg.pc_id.empty()) {
-            uint32_t pc_id = 0;
-            try { pc_id = static_cast<uint32_t>(std::stoul(cfg.pc_id)); } catch (...) {}
-            if (pc_id > 0) {
-                screen_streamer.start(cfg.ccc_host, pc_id, cfg.screen_port, cfg.screen_path,
-                                      cfg.screen_tls || cfg.screen_port == 443, cfg.screen_token, cfg.ca_file,
-                                      on_viewing_changed);
-            }
-        }
+        if (screen_stream_id == 0 || !cfg_screen_enabled.load() || !linux_screen_ready()) return;
+        if (!screen_streamer.is_running()) screen_streamer.start(screen_stream_id, send_frame, on_viewing_changed);
     };
-    check_screen_stream();
 
+    int64_t next_cost_ms = 0;
     while (true) {
+        screen_streamer.tick();  // lease lapsed -> stop capturing
+        // Streaming cost for the heartbeat (screen Step 57): every 10 s while viewed, numbers only.
+        if (viewing_active.load() && plat->ipc->connected() && steady_ms() >= next_cost_ms) {
+            const ScreenCost c = screen_streamer.cost();
+            send({{"t", "screen_cost"}, {"cpu_pct", c.cpu_pct}, {"level", c.level}});
+            next_cost_ms = steady_ms() + 10000;
+        }
         if (!plat->ipc->connected()) {
             if (was_connected) plat->ui->set_indicator("XephyGuard service not reachable", "always_on");
+            screen_streamer.on_link_lost();
             was_connected = false;
             if (plat->ipc->connect(endpoint)) {
                 was_connected = true;
@@ -515,56 +411,68 @@ int helper_main() {
             if (j.is_discarded()) continue;
             const std::string t = j.value("t", "");
             if (t == "config") {
-                const std::string host = j.value("ccc_host", "");
                 const std::string pc_id_str = j.value("pc_id", "");
                 bool s_enabled = kDefaultScreenEnabled;
                 if (j.contains("screen") && j["screen"].is_object()) {
                     s_enabled = j["screen"].value("enabled", s_enabled);
                 }
                 cfg_screen_enabled.store(s_enabled);
-                if (!host.empty() && !pc_id_str.empty()) {
-                    uint32_t pc_id = 0;
-                    try { pc_id = static_cast<uint32_t>(std::stoul(pc_id_str)); } catch (...) {}
-                    if (pc_id > 0) {
-                        uint16_t s_port = 8082;
-                        std::string s_path = "/agent";
-                        bool s_tls = false;
-                        std::string s_tok;
-                        std::string s_ca;
-                        if (j.contains("screen") && j["screen"].is_object()) {
-                            const auto& sc = j["screen"];
-                            s_port = sc.value("port", uint16_t(8082));
-                            s_path = sc.value("path", std::string("/agent"));
-                            s_tls = sc.value("tls", false);
-                            s_ca = sc.value("ca_file", std::string());
-                            s_tok = sc.value("agent_token", std::string());
-                        }
-                        if (s_enabled && linux_screen_ready()) {
-                            screen_streamer.start(host, pc_id, s_port, s_path, s_tls || s_port == 443, s_tok, s_ca,
-                                                  on_viewing_changed);
-                        } else if (screen_streamer.is_running()) {
-                            screen_streamer.stop();
-                        }
+                if (j.contains("screen") && j["screen"].is_object()) {
+                    // The service sends the whole list on every config; a malformed one masks everything.
+                    std::vector<MaskRule> rules;
+                    bool bad = false;
+                    const auto& pr = j["screen"].value("privacy_rules", json::array());
+                    if (!pr.is_array() || pr.size() > 128) bad = true;
+                    else for (const auto& r : pr) {
+                        auto ok_str = [&](const char* k) { return !r.contains(k) || r[k].is_string(); };
+                        if (!r.is_object() || !ok_str("process") || !ok_str("title_regex")) { bad = true; break; }
+                        MaskRule m{r.value("process", std::string{}), r.value("title_regex", std::string{})};
+                        if (m.app.empty() && m.title_regex.empty()) { bad = true; break; }
+                        rules.push_back(std::move(m));
                     }
+                    if (bad) rules = {MaskRule{{}, ".*"}};  // match every title
+                    screen_streamer.set_mask_rules(std::move(rules));
+                    // Encoder settings: the service already validated them; anything odd keeps the default.
+                    const auto& sc = j["screen"];
+                    ScreenEncoding enc;
+                    if (sc.contains("codec") && sc["codec"].is_string()) enc.webp = sc["codec"].get<std::string>() == "webp";
+                    if (sc.contains("quality") && sc["quality"].is_number_integer())
+                        enc.quality = static_cast<int>(std::clamp<int64_t>(sc["quality"].get<int64_t>(), 10, 100));
+                    if (sc.contains("webp_method") && sc["webp_method"].is_number_integer())
+                        enc.webp_method = static_cast<int>(std::clamp<int64_t>(sc["webp_method"].get<int64_t>(), 0, 6));
+                    screen_streamer.set_encoding(enc);
+                    if (sc.contains("cpu_budget_pct") && sc["cpu_budget_pct"].is_number())
+                        screen_streamer.set_cpu_budget_pct(sc["cpu_budget_pct"].get<double>());  // clamped 1..100
+                }
+                uint32_t pc_id = 0;
+                try { pc_id = static_cast<uint32_t>(std::stoul(pc_id_str)); } catch (...) {}
+                if (pc_id > 0 && s_enabled && linux_screen_ready()) {
+                    if (pc_id != screen_stream_id) screen_streamer.stop();
+                    screen_stream_id = pc_id;
+                    screen_streamer.start(pc_id, send_frame, on_viewing_changed);
+                } else if (screen_streamer.is_running()) {
+                    screen_streamer.stop();
                 }
                 send_screen_caps(s_enabled);
                 {
                     std::lock_guard lk(st.mu);
                     const auto c = j.value("collect", json::object());
                     st.want_window = c.value("window", false);
+                    st.screen_on = pc_id > 0 && s_enabled && linux_screen_ready();
                     st.want_clipboard = c.value("clipboard", false);
                     st.want_keys = c.value("keys", false);
                     st.mode = j.value("mode", "always_on");
-#ifdef _WIN32
-                    set_user_taskmgr_disabled(st.mode == "test");
-#endif
-                    if (j.contains("proxy_pac_url") && j["proxy_pac_url"].is_string()) {
-                        set_user_proxy_pac(j["proxy_pac_url"].get<std::string>());
+                    st.full_titles = j.contains("title_capture") && j["title_capture"].is_string() &&
+                                     j["title_capture"].get<std::string>() == "full";
+                    if (!st.full_titles) st.last_file.clear();
+                    if (plat->system) plat->system->set_taskmgr_disabled(st.mode == "test");  // no-op on Linux
+                    if (j.contains("proxy_pac_url") && j["proxy_pac_url"].is_string() && plat->system) {
+                        plat->system->set_user_proxy(j["proxy_pac_url"].get<std::string>());
                     }
                 }
                 apply_config();
             } else if (t == "clear_proxy_pac") {
-                set_user_proxy_pac({});
+                if (plat->system) plat->system->set_user_proxy({});
             } else if (t == "indicator") {
                 {
                     std::lock_guard lk(st.mu);
@@ -575,6 +483,16 @@ int helper_main() {
                 refresh_indicator();
             } else if (t == "notify") {
                 plat->ui->notify(j.value("title", "XephyGuard"), j.value("body", ""), j.value("urgent", false));
+            } else if (t == "screen_lease") {
+                // The CCC holds a live-view lease for ttl_s seconds; capture runs only inside it (screen Step 15).
+                const int64_t ttl = j.value("ttl_s", int64_t{0});
+                if (ttl > 0) screen_streamer.grant_lease(static_cast<int>(std::min<int64_t>(ttl, 120)));
+            } else if (t == "screen_rx") {
+                // One gateway control message relayed by the service (Ack / KeyframeReq / Status).
+                if (j.contains("data") && j["data"].is_string()) {
+                    if (auto b = crypto::base64_decode(j["data"].get<std::string>()); b && b->size() <= 1024)
+                        screen_streamer.on_gateway_message(*b);
+                }
             } else if (t == "paste_probe") {
                 handle_paste_chord(false);
             }

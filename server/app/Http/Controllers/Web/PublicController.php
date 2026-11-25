@@ -1,19 +1,36 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
 use App\Models\Lab;
+use App\Models\Pc;
 use App\Models\Setting;
 use App\Services\CertificateAuthority;
+use App\Services\NoticeText;
+use App\Services\PolicyService;
+use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 
-/** Unauthenticated pages: the student notice, the CA certificate and the agent install scripts. */
+/**
+ * Unauthenticated pages: the student notice, the CA certificate and the agent install scripts.
+ * The share* actions (F102) are routed behind auth + role:instructor, not public.
+ */
 class PublicController extends Controller
 {
     public function notice()
     {
-        return view('public.notice', ['text' => Setting::get('notice_text'), 'lab' => Lab::query()->first()]);
+        return view('public.notice', ['text' => NoticeText::text(), 'features' => NoticeText::features(), 'lab' => Lab::query()->first()]);
+    }
+
+    /** F26 demo dataset: served only when APP_ENV=local, 404 everywhere else (S-50). */
+    public function demoData()
+    {
+        abort_unless(app()->environment('local'), 404);
+
+        return response()->file(resource_path('demo/data.js'), ['Content-Type' => 'application/javascript']);
     }
 
     public function caCert(): Response
@@ -75,7 +92,6 @@ class PublicController extends Controller
 
         return response()->view('public.downloads', [
             'ccc' => $ccc,
-            'key' => $lab?->enrollKey(),
             'fingerprint' => $ca->exists() ? $ca->fingerprint() : null,
             'setupFile' => $setupFile,
             'files' => $files,
@@ -86,9 +102,6 @@ class PublicController extends Controller
     {
         abort_unless(preg_match('/^[A-Za-z0-9._-]+\.(deb|rpm|msi|exe|bat|sha256)$/', $file), 404);
         $path = storage_path('app/public/downloads/'.$file);
-        if (! is_file($path) && $file === 'start-screen-stream.bat') {
-            return $this->dynamicScreenStreamBat();
-        }
         if (! is_file($path) && preg_match('/^xephyguard-agent_latest_([A-Za-z0-9]+)\.(deb|rpm)$/', $file, $m)) {
             $matches = glob(storage_path('app/public/downloads/xephyguard-agent_*_'.$m[1].'.'.$m[2])) ?: [];
             if ($matches !== []) {
@@ -112,16 +125,21 @@ class PublicController extends Controller
     }
 
     /** Dynamic Proxy Auto-Config (PAC) script for proxy_only lab PCs. */
-    public function proxyPac(\Illuminate\Http\Request $request): Response
+    public function proxyPac(Request $request): Response
     {
-        $mode = (string) \App\Models\Setting::get('network_mode', config('xephyguard.network_mode', 'gateway'));
-        $host = (string) (\App\Models\Setting::get('ccc_ip') ?: $request->getHost());
+        $mode = (string) Setting::get('network_mode', config('xephyguard.network_mode', 'gateway'));
+        $host = (string) (Setting::get('ccc_ip') ?: $request->getHost());
         $port = (int) config('xephyguard.proxy_port', 8080);
 
         if ($mode !== 'proxy_only' || $host === '' || $host === 'localhost') {
             $js = "function FindProxyForURL(url, host) {\n  return \"DIRECT\";\n}\n";
         } else {
-            $safeHost = addcslashes($host, "\\\"");
+            $safeHost = addcslashes($host, '\\"');
+            // A PC in a Test session (or isolated) gets no DIRECT fallback: if the proxy is unreachable its
+            // browser fails closed instead of going straight to the Internet (plan alternative F97).
+            $pc = Pc::query()->whereNull('retired_at')->where('ip', $request->ip())->first();
+            $strict = $pc && ($pc->isolated || app(PolicyService::class)->effective($pc)['profile']->mode === 'test');
+            $fallback = $strict ? '' : '; DIRECT';
             $js = <<<JS
 function FindProxyForURL(url, host) {
   if (isPlainHostName(host) ||
@@ -133,7 +151,7 @@ function FindProxyForURL(url, host) {
       host === "{$safeHost}") {
     return "DIRECT";
   }
-  return "PROXY {$safeHost}:{$port}; DIRECT";
+  return "PROXY {$safeHost}:{$port}{$fallback}";
 }
 
 JS;
@@ -142,45 +160,6 @@ JS;
         return response($js, 200, [
             'Content-Type' => 'application/x-ns-proxy-autoconfig; charset=utf-8',
             'Cache-Control' => 'no-store, max-age=0',
-        ]);
-    }
-
-    private function dynamicScreenStreamBat(): Response
-    {
-        $ccc = $this->resolveCccHost();
-        $gwUrl = (string) config('services.screen_gateway.url', '');
-        $port = (int) config('services.screen_gateway.port', 8082);
-        $prefix = rtrim((string) config('services.screen_gateway.path', '/screen-gw'), '/');
-        $parsed = $gwUrl !== '' ? (parse_url($gwUrl) ?: []) : [];
-        $scheme = strtolower((string) ($parsed['scheme'] ?? ''));
-        if ($parsed !== []) {
-            if (! empty($parsed['host']) && ! in_array($parsed['host'], ['127.0.0.1', 'localhost'], true)) {
-                $ccc = $parsed['host'];
-            }
-            if (! empty($parsed['port'])) {
-                $port = (int) $parsed['port'];
-            } elseif ($scheme === 'https' || $scheme === 'wss') {
-                $port = 443;
-            }
-        }
-        $tls = $port === 443 || $port === 8443 || in_array($scheme, ['https', 'wss'], true);
-        $path = $tls ? (($prefix !== '' ? $prefix : '/screen-gw').'/agent') : '/agent';
-        $scheme = request()->isSecure() ? 'wss' : 'ws';
-        $script = "@echo off\r\n"
-            ."set \"XG_CCC_HOST={$ccc}\"\r\n"
-            ."set \"XG_SCREEN_PORT={$port}\"\r\n"
-            ."set \"XG_SCREEN_PATH={$path}\"\r\n"
-            ."set /p STREAM_ID=\"Enter Stream / PC ID (blank to auto-read agent.toml or 1): \"\r\n"
-            ."if \"%STREAM_ID%\"==\"\" (\r\n"
-            ."  \"%~dp0xgagent.exe\" --host \"%XG_CCC_HOST%\" --port \"%XG_SCREEN_PORT%\"\r\n"
-            .") else (\r\n"
-            ."  \"%~dp0xgagent.exe\" --host \"%XG_CCC_HOST%\" --port \"%XG_SCREEN_PORT%\" --stream-id \"%STREAM_ID%\"\r\n"
-            .")\r\n"
-            ."rem Server endpoint base: {$scheme}://{$ccc}:{$port}\r\n";
-
-        return response($script, 200, [
-            'Content-Type' => 'application/octet-stream',
-            'Content-Disposition' => 'attachment; filename="start-screen-stream.bat"',
         ]);
     }
 
@@ -198,7 +177,8 @@ JS;
         $text = (string) request()->input('text', '');
         $cmd = (bool) request()->boolean('cmd');
         $at = now()->format('H:i');
-        $by = auth()->user()?->name ?: 'Instructor';
+        // The route requires auth + role:instructor, so there is always a real, named user.
+        $by = (string) request()->user()->name;
         $last = "Today {$at} by {$by}";
         Setting::put('shared_clipboard', mb_substr($text, 0, 65000));
         Setting::put('shared_clipboard_at', $last);

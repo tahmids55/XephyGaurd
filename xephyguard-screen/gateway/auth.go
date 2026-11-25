@@ -1,11 +1,10 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,18 +13,24 @@ import (
 )
 
 var (
-	ErrMissingToken       = errors.New("missing authorization token")
-	ErrReplayedToken      = errors.New("replayed JWT token rejected (jti reused)")
-	ErrInvalidAlgorithm   = errors.New("invalid signing algorithm (only HS256 allowed)")
-	ErrMissingCert        = errors.New("missing mTLS client certificate")
-	ErrInvalidClaims      = errors.New("invalid token claims")
+	ErrMissingToken        = errors.New("missing authorization token")
+	ErrReplayedToken       = errors.New("replayed JWT token rejected (jti reused)")
+	ErrInvalidAlgorithm    = errors.New("invalid signing algorithm (only HS256 allowed)")
+	ErrMissingCert         = errors.New("missing mTLS client certificate")
+	ErrInvalidClaims       = errors.New("invalid token claims")
 	ErrTokenExpiredOrEarly = errors.New("token expired or not yet valid")
+	ErrInvalidMode         = errors.New("invalid view mode")
 )
+
+// validModes are the view modes a lease may grant (server ViewTokenController).
+var validModes = map[string]bool{"live": true, "snapshot": true, "wall": true}
 
 type ViewerClaims struct {
 	jwt.RegisteredClaims
 	StudentID    uint32 `json:"student_id"`
 	LabSessionID uint32 `json:"lab_session_id"`
+	PCID         uint32 `json:"pc_id"`
+	AuditID      uint64 `json:"audit_id"`
 	StreamID     uint32 `json:"stream_id"`
 	Mode         string `json:"mode"`
 }
@@ -57,7 +62,7 @@ func (tv *TokenValidator) cleanupExpiredLocked(now time.Time) {
 	}
 }
 
-func (tv *TokenValidator) AuthViewer(r *http.Request) (uint32, error) {
+func (tv *TokenValidator) AuthViewer(r *http.Request) (ViewerGrant, error) {
 	tokenStr := ""
 
 	// Check Authorization header: Bearer <token>
@@ -66,13 +71,15 @@ func (tv *TokenValidator) AuthViewer(r *http.Request) (uint32, error) {
 		tokenStr = strings.TrimPrefix(authHeader, "Bearer ")
 	}
 
-	// Check query string ?token=...
-	if tokenStr == "" {
-		tokenStr = r.URL.Query().Get("token")
-	}
+	// A token in the URL query is not accepted: URLs end up in proxy logs and browser history (screen Step 40).
+	// Browsers send the token as the first WebSocket message instead (RelayServer.readViewerAuth).
+	return tv.ValidateToken(tokenStr)
+}
 
+// ValidateToken checks a viewer lease token (signature, claims, single use) and returns its grant.
+func (tv *TokenValidator) ValidateToken(tokenStr string) (ViewerGrant, error) {
 	if tokenStr == "" {
-		return 0, ErrMissingToken
+		return ViewerGrant{}, ErrMissingToken
 	}
 
 	claims := &ViewerClaims{}
@@ -82,14 +89,21 @@ func (tv *TokenValidator) AuthViewer(r *http.Request) (uint32, error) {
 			return nil, fmt.Errorf("%w: got %v", ErrInvalidAlgorithm, t.Header["alg"])
 		}
 		return tv.config.JWTSecret, nil
-	}, jwt.WithIssuer(tv.config.Issuer), jwt.WithAudience(tv.config.Audience))
+	}, jwt.WithIssuer(tv.config.Issuer), jwt.WithAudience(tv.config.Audience), jwt.WithExpirationRequired())
 
 	if err != nil {
-		return 0, err
+		return ViewerGrant{}, err
 	}
 
 	if !token.Valid || claims.ID == "" {
-		return 0, ErrInvalidClaims
+		return ViewerGrant{}, ErrInvalidClaims
+	}
+	// The stream is the PC (server sets both); no fallback to student_id.
+	if claims.StreamID == 0 || claims.PCID == 0 || claims.StreamID != claims.PCID {
+		return ViewerGrant{}, ErrInvalidClaims
+	}
+	if !validModes[claims.Mode] {
+		return ViewerGrant{}, ErrInvalidMode
 	}
 
 	now := time.Now()
@@ -101,35 +115,19 @@ func (tv *TokenValidator) AuthViewer(r *http.Request) (uint32, error) {
 	tv.cleanupExpiredLocked(now)
 
 	if exp, exists := tv.used[claims.ID]; exists && now.Before(exp) {
-		return 0, ErrReplayedToken
+		return ViewerGrant{}, ErrReplayedToken
 	}
 
-	expiresAt := now.Add(5 * time.Minute)
-	if claims.ExpiresAt != nil {
-		expiresAt = claims.ExpiresAt.Time
-	}
+	expiresAt := claims.ExpiresAt.Time
 	tv.used[claims.ID] = expiresAt
 
-	streamID := claims.StreamID
-	if streamID == 0 {
-		streamID = claims.StudentID
+	g := ViewerGrant{StreamID: claims.StreamID, PCID: claims.PCID, Mode: claims.Mode, Exp: expiresAt,
+		AuditID: claims.AuditID, LabSessionID: uint64(claims.LabSessionID)}
+	if uid, err := strconv.ParseUint(claims.Subject, 10, 64); err == nil {
+		g.UserID = uid
 	}
-
-	return streamID, nil
-}
-
-func (tv *TokenValidator) AuthAgent(r *http.Request) (string, error) {
-	// If mTLS client certificate is present
-	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
-		cert := r.TLS.PeerCertificates[0]
-		h := sha256.Sum256(cert.Raw)
-		return hex.EncodeToString(h[:]), nil
+	if claims.IssuedAt != nil {
+		g.IssuedAt = claims.IssuedAt.Time
 	}
-
-	// Fallback for dev / proxy header if explicitly forwarded
-	if clientFP := r.Header.Get("X-Agent-Cert-Fingerprint"); clientFP != "" {
-		return clientFP, nil
-	}
-
-	return "", ErrMissingCert
+	return g, nil
 }

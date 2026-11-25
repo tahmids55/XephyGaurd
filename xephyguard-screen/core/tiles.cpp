@@ -115,6 +115,14 @@ void TileTracker::force_all_pending() {
   }
 }
 
+void TileTracker::add_pending(const std::vector<uint32_t>& indices) {
+  const uint32_t total = static_cast<uint32_t>(cols_ * rows_);
+  for (uint32_t i : indices) {
+    if (i < total && std::find(pending_indices_.begin(), pending_indices_.end(), i) == pending_indices_.end())
+      pending_indices_.push_back(i);
+  }
+}
+
 int TileTracker::cols() const {
   return cols_;
 }

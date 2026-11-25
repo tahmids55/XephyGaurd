@@ -10,7 +10,59 @@
 #include <fstream>
 #include <sstream>
 
+#ifndef _WIN32
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include <cerrno>
+#else
+#include <windows.h>
+#include <aclapi.h>
+#include <sddl.h>
+#endif
+
 namespace xg {
+
+#ifdef _WIN32
+namespace {
+// Owner-only on Windows: SYSTEM and Administrators full control, inheritance from ProgramData cut off
+// (the installer grants Users read there, I-AGENT-2).
+constexpr const wchar_t* kSecretSddl = L"D:P(A;;FA;;;SY)(A;;FA;;;BA)";
+
+std::wstring widen(const std::string& s) {
+    if (s.empty()) return {};
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0);
+    std::wstring w(size_t(n > 0 ? n : 0), L'\0');
+    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), n);
+    return w;
+}
+
+struct SecretSd {
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    SecretSd() { ConvertStringSecurityDescriptorToSecurityDescriptorW(kSecretSddl, SDDL_REVISION_1, &sd, nullptr); }
+    ~SecretSd() { if (sd) LocalFree(sd); }
+    SecretSd(const SecretSd&) = delete;
+    SecretSd& operator=(const SecretSd&) = delete;
+};
+}  // namespace
+#endif
+
+bool protect_secret_file(const std::string& path) {
+#ifndef _WIN32
+    return ::chmod(path.c_str(), 0600) == 0;
+#else
+    SecretSd s;
+    if (!s.sd) return false;
+    BOOL present = FALSE, defaulted = FALSE;
+    PACL dacl = nullptr;
+    if (!GetSecurityDescriptorDacl(s.sd, &present, &dacl, &defaulted) || !present) return false;
+    std::wstring w = widen(path);
+    return SetNamedSecurityInfoW(w.data(), SE_FILE_OBJECT,
+                                 DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr,
+                                 dacl, nullptr) == ERROR_SUCCESS;
+#endif
+}
 
 std::string to_lower(std::string_view s) {
     std::string out(s);
@@ -122,21 +174,105 @@ std::string read_file(const std::string& path, bool* ok) {
     return ss.str();
 }
 
-bool write_file_atomic(const std::string& path, const std::string& content) {
+bool write_file_atomic(const std::string& path, const std::string& content, FileMode mode) {
     namespace fs = std::filesystem;
     std::error_code ec;
     auto parent = fs::path(path).parent_path();
     if (!parent.empty()) fs::create_directories(parent, ec);
-    std::string tmp = path + ".tmp";
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) return false;
-        f << content;
-        if (!f.good()) return false;
+#ifndef _WIN32
+    // Unique temp name, created exclusively (no pre-planted file or symlink is followed) with the final mode,
+    // so a secret is never readable by others, not even between write and rename (I-AGENT-14).
+    const mode_t perm = mode == FileMode::secret ? 0600 : 0644;
+    const std::string tmp = path + ".tmp." + random_hex(6);
+    const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, perm);
+    if (fd < 0) return false;
+    bool ok = ::fchmod(fd, perm) == 0;  // the umask may have narrowed it; never widens beyond `perm`
+    for (size_t off = 0; ok && off < content.size();) {
+        const ssize_t n = ::write(fd, content.data() + off, content.size() - off);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) ok = false;
+        else off += size_t(n);
     }
-    fs::rename(tmp, path, ec);
-    if (ec) { fs::remove(tmp, ec); return false; }
+    ok = ok && ::fsync(fd) == 0;
+    ok = (::close(fd) == 0) && ok;
+    if (!ok || ::rename(tmp.c_str(), path.c_str()) != 0) {
+        ::unlink(tmp.c_str());
+        return false;
+    }
+    if (const int dfd = ::open(parent.empty() ? "." : parent.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC); dfd >= 0) {
+        ::fsync(dfd);
+        ::close(dfd);
+    }
     return true;
+#else
+    // Unique temp created exclusively (CREATE_NEW) and, for secrets, with the protected owner-only DACL from
+    // the first byte; MoveFileEx keeps that DACL on the final name.
+    SecretSd s;
+    SECURITY_ATTRIBUTES sa{sizeof sa, mode == FileMode::secret ? s.sd : nullptr, FALSE};
+    if (mode == FileMode::secret && !s.sd) return false;
+    const std::wstring tmp = widen(path + ".tmp." + random_hex(6));
+    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, &sa, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    bool ok = true;
+    for (size_t off = 0; ok && off < content.size();) {
+        DWORD n = 0;
+        const DWORD want = DWORD(std::min<size_t>(content.size() - off, 1u << 30));
+        ok = WriteFile(h, content.data() + off, want, &n, nullptr) && n > 0;
+        off += n;
+    }
+    ok = ok && FlushFileBuffers(h);
+    ok = CloseHandle(h) && ok;
+    if (!ok || !MoveFileExW(tmp.c_str(), widen(path).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(tmp.c_str());
+        return false;
+    }
+    (void)ec;
+    return true;
+#endif
+}
+
+bool trusted_pac_url(const std::string& url, const std::string& ccc_host) {
+    constexpr std::string_view kScheme = "https://";
+    if (ccc_host.empty() || url.size() > 2048 || !istarts_with(url, kScheme)) return false;
+    for (unsigned char c : url)
+        if (c <= 0x20 || c >= 0x7f || c == '"' || c == '\\' || c == '@') return false;  // no userinfo/odd bytes
+    const std::string rest = url.substr(kScheme.size());
+    const size_t slash = rest.find('/');
+    if (slash == std::string::npos) return false;
+    std::string authority = rest.substr(0, slash);
+    std::string host = authority;
+    if (!authority.empty() && authority.front() == '[') {  // [v6]:port
+        const size_t close = authority.find(']');
+        if (close == std::string::npos) return false;
+        host = authority.substr(1, close - 1);
+        const std::string tail = authority.substr(close + 1);
+        if (!tail.empty() && (tail[0] != ':' || tail.size() == 1)) return false;
+    } else if (const size_t colon = authority.rfind(':'); colon != std::string::npos) {
+        host = authority.substr(0, colon);
+        const std::string port = authority.substr(colon + 1);
+        if (port.empty() || port.size() > 5 || port.find_first_not_of("0123456789") != std::string::npos) return false;
+    }
+    std::string want = ccc_host;
+    if (want.size() > 2 && want.front() == '[' && want.back() == ']') want = want.substr(1, want.size() - 2);
+    return to_lower(host) == to_lower(want);
+}
+
+std::string make_private_temp_dir(const std::string& prefix) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path base = fs::temp_directory_path(ec);
+    if (ec) return {};
+#ifndef _WIN32
+    std::string tmpl = (base / (prefix + "-XXXXXX")).string();
+    if (!::mkdtemp(tmpl.data())) return {};
+    return tmpl;
+#else
+    for (int i = 0; i < 8; ++i) {
+        const fs::path p = base / (prefix + "-" + random_hex(8));
+        if (fs::create_directory(p, ec)) return p.string();  // false if it already existed
+    }
+    return {};
+#endif
 }
 
 std::string parse_tls_sni(const uint8_t* buf, size_t len) {
@@ -173,10 +309,10 @@ std::string parse_tls_sni(const uint8_t* buf, size_t len) {
     return {};
 }
 
-bool is_ai_telemetry_domain(std::string_view d) {
+bool is_ai_telemetry_domain(std::string_view d, const std::vector<std::string>& patterns) {
     if (d.empty()) return true;
-    return icontains(d, "telemetry") || icontains(d, "exp.individual.") || icontains(d, "exp-tas.com") ||
-           icontains(d, "events.data.microsoft.com") || icontains(d, "applicationinsights");
+    return std::any_of(patterns.begin(), patterns.end(),
+                       [&](const std::string& p) { return !p.empty() && icontains(d, p); });
 }
 
 }  // namespace xg

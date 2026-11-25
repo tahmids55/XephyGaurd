@@ -1,9 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Tests\Feature;
 
 use App\Models\Alert;
-use App\Models\Command;
+use App\Models\Lab;
 use App\Models\Pc;
 use App\Models\Setting;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -43,7 +45,7 @@ class UiRegressionTest extends TestCase
             ->assertSessionHasNoErrors()
             ->assertSessionHas('status', 'Settings saved.');
 
-        $this->assertSame('Lab Updated 51', \App\Models\Lab::current()->name);
+        $this->assertSame('Lab Updated 51', Lab::current()->name);
         $this->assertSame('https://www.google.com/search?q={searchTerms}&udm=14', Setting::get('google_search_url'));
         $logUrls = Setting::get('privacy.log_urls');
         $this->assertTrue((bool) ($logUrls['enabled'] ?? false));
@@ -196,7 +198,8 @@ class UiRegressionTest extends TestCase
             preg_match('/<script type="application\/json" id="xg-page-data">(.*?)<\/script>/s', $guestHtml, $dm);
             $dlData = json_decode($dm[1], true, 512, JSON_THROW_ON_ERROR);
             $this->assertNotEmpty($dlData['cccHost']);
-            $this->assertNotEmpty($dlData['key']);
+            $this->assertArrayNotHasKey('key', $dlData);                 // S-15: no enrollment key on the public page
+            $this->assertStringContainsString('/KEY=<ENROLL_KEY>', $dlData['win']);
             $this->assertNotEmpty($dlData['fp']);
             $this->assertStringContainsString('/CAFP='.$dlData['fp'], $dlData['win']);
             $this->assertStringContainsString('/CCC='.$dlData['cccHost'], $dlData['win']);

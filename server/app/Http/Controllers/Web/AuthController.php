@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
+use App\Models\ScreenViewAudit;
 use App\Services\Audit;
+use App\Services\ScreenGatewayRevoker;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\RateLimiter;
@@ -11,7 +13,10 @@ use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
-    public function show() { return view('auth.login'); }
+    public function show()
+    {
+        return view('auth.login');
+    }
 
     public function login(Request $request)
     {
@@ -35,9 +40,10 @@ class AuthController extends Controller
     public function logout(Request $request)
     {
         if ($user = $request->user()) {
-            \App\Models\ScreenViewAudit::where('instructor_id', $user->id)
+            ScreenViewAudit::where('instructor_id', $user->id)
                 ->whereNull('ended_at')
                 ->update(['ended_at' => now()]);
+            app(ScreenGatewayRevoker::class)->user($user->id);
         }
 
         Audit::log('auth.logout');

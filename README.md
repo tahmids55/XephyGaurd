@@ -24,7 +24,7 @@ reports and research data. Specification: [`XephyGUARD_PROJECT_SPEC.md`](XephyGU
 | `agent/` | C++20 agent + session helper: platform-independent core, Linux and Windows adapters, tests, CPack |
 | `server/` | Laravel 13 CCC: agent API, dashboard, Reverb channels, scheduler, reports |
 | `proxy/` | mitmproxy addon, DNS/nftables policy generator (`xg_netpolicy`), nftables + Unbound templates |
-| `analysis/` | Python scoring service (v1 explainable rules, v2 Isolation Forest), research export |
+| `analysis/` | Python scoring service (v1 explainable rules, v2 Isolation Forest) |
 | `ccc-deploy/` | Docker Compose stack, `install.sh`, `xephyguard-ccc` admin CLI (doctor, backup, update) |
 | `installers/` | `.deb` scripts and systemd units, Windows NSIS installer, Ansible role, GPO notes, browser policies |
 | `eval/` | red-team scenarios + harness, load simulator, metrics/paper tables, live checks |

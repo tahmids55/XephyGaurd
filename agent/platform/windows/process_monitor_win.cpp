@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 #include <cstring>
 #include <unordered_map>
 #include <vector>
@@ -174,6 +175,8 @@ std::string query_user_name(HANDLE h) {
 class ProcessMonitor final : public IProcessMonitor {
 public:
     std::vector<ProcessInfo> snapshot() override {
+        // The agent core is the only caller (DECISIONS #22); the lock keeps the cache safe if that changes.
+        std::lock_guard lk(snap_mu_);
         HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (snap == INVALID_HANDLE_VALUE) return {};
 
@@ -288,8 +291,20 @@ public:
 
     bool watch(std::function<void(const ProcessInfo&)>) override { return false; }
 
-    bool kill(int64_t pid) override {
+    bool kill(int64_t pid, int64_t expected_start) override {
         if (pid <= 4) return false;
+        // Open the process once and check its creation time on that handle: the handle pins the process, so a
+        // reused pid is never terminated (F35).
+        HANDLE h = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, DWORD(pid));
+        if (!h) return false;
+        if (expected_start != 0) {
+            FILETIME c{}, e{}, k{}, u{};
+            const int64_t st = GetProcessTimes(h, &c, &e, &k, &u) ? ((int64_t(c.dwHighDateTime) << 32) | c.dwLowDateTime) : 0;
+            if (st != expected_start) {
+                CloseHandle(h);
+                return false;
+            }
+        }
         // Collect direct child processes first so wrapper CLIs/apps don't leave worker children alive.
         std::vector<DWORD> children;
         HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -303,12 +318,8 @@ public:
             }
             CloseHandle(snap);
         }
-        HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, DWORD(pid));
-        bool killed_main = false;
-        if (h) {
-            killed_main = TerminateProcess(h, 1) != FALSE;
-            CloseHandle(h);
-        }
+        const bool killed_main = TerminateProcess(h, 1) != FALSE;
+        CloseHandle(h);
         for (DWORD child_pid : children) {
             if (HANDLE ch = OpenProcess(PROCESS_TERMINATE, FALSE, child_pid)) {
                 TerminateProcess(ch, 1);
@@ -327,6 +338,7 @@ private:
         uint64_t estats_bytes = 0;
         uint64_t other_io_bytes = 0;
     };
+    std::mutex snap_mu_;  // guards cache_, counters_ and the last-sample fields
     std::unordered_map<int64_t, ProcessInfo> cache_;
     std::unordered_map<int64_t, PidCounters> counters_;
     uint64_t last_sys_ticks_ = 0;

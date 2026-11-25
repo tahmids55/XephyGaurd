@@ -1,3 +1,8 @@
+#include <pthread.h>
+#include <signal.h>
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <cerrno>
 #include <dirent.h>
 #include <pwd.h>
 #include <sys/stat.h>
@@ -10,6 +15,70 @@
 #include "linux_common.hpp"
 
 namespace xg::lnx {
+
+int run_program(const std::vector<std::string>& argv, const std::string& stdin_text) {
+    if (argv.empty() || argv[0].empty() || argv[0][0] != '/') return -1;
+    std::vector<char*> args;
+    for (const auto& a : argv) args.push_back(const_cast<char*>(a.c_str()));
+    args.push_back(nullptr);
+    int in[2];
+    if (::pipe2(in, O_CLOEXEC) != 0) return -1;
+    const pid_t pid = ::fork();
+    if (pid < 0) {
+        ::close(in[0]);
+        ::close(in[1]);
+        return -1;
+    }
+    if (pid == 0) {
+        ::dup2(in[0], 0);
+        if (int devnull = ::open("/dev/null", O_WRONLY); devnull >= 0) {
+            ::dup2(devnull, 1);
+            ::dup2(devnull, 2);
+        }
+        ::execv(args[0], args.data());
+        _exit(127);
+    }
+    ::close(in[0]);
+    // A child that exits early closes the pipe: MSG-less write returns EPIPE (SIGPIPE is ignored by the
+    // service; block it here too so a CLI caller is not killed).
+    sigset_t pipe_set, old_set;
+    sigemptyset(&pipe_set);
+    sigaddset(&pipe_set, SIGPIPE);
+    ::pthread_sigmask(SIG_BLOCK, &pipe_set, &old_set);
+    for (size_t off = 0; off < stdin_text.size();) {
+        const ssize_t n = ::write(in[1], stdin_text.data() + off, stdin_text.size() - off);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        off += size_t(n);
+    }
+    ::close(in[1]);
+    // Drop a SIGPIPE raised by the write above before restoring the mask.
+    timespec zero{0, 0};
+    while (::sigtimedwait(&pipe_set, nullptr, &zero) == SIGPIPE) {}
+    ::pthread_sigmask(SIG_SETMASK, &old_set, nullptr);
+    int status = 0;
+    pid_t r;
+    do r = ::waitpid(pid, &status, 0);
+    while (r < 0 && errno == EINTR);
+    if (r != pid) return -1;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+void ChildReaper::add(pid_t pid) {
+    if (pid <= 0) return;
+    std::lock_guard lk(mu_);
+    pids_.push_back(pid);
+}
+
+size_t ChildReaper::reap() {
+    std::lock_guard lk(mu_);
+    std::erase_if(pids_, [](pid_t p) {
+        const pid_t r = ::waitpid(p, nullptr, WNOHANG);
+        return r == p || (r < 0 && errno == ECHILD);
+    });
+    return pids_.size();
+}
+
 
 std::string read_small(const std::string& path) {
     std::ifstream f(path, std::ios::binary);

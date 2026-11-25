@@ -15,7 +15,9 @@ namespace xg {
 /// (pc_id, boot-independent seq), so re-sending after a crash is harmless.
 class EventQueue final : public IEventSink {
 public:
-    explicit EventQueue(const std::string& db_path, size_t max_rows = 500000);
+    /// Hard caps for long CCC outages: oldest low-value events go first, then the oldest of any type
+    /// except tamper evidence, so a flood cannot fill the disk.
+    explicit EventQueue(const std::string& db_path, size_t max_rows = 500000, size_t max_bytes = 256u * 1024 * 1024);
     ~EventQueue() override;
     EventQueue(const EventQueue&) = delete;
     EventQueue& operator=(const EventQueue&) = delete;
@@ -41,7 +43,9 @@ private:
     std::mutex mu_;
     int64_t next_seq_ = 1;
     size_t max_rows_;
+    size_t max_bytes_;
     size_t pushes_since_cap_ = 0;
+    size_t bytes_since_cap_ = 0;
 };
 
 /// In-memory sink for tests and the helper.

@@ -1,6 +1,7 @@
 #include "xg/isolation.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <utility>
 
 namespace xg::isolation {
@@ -37,9 +38,10 @@ namespace {
 constexpr uint32_t ip(uint32_t a, uint32_t b, uint32_t c, uint32_t d) { return (a << 24) | (b << 16) | (c << 8) | d; }
 }  // namespace
 
-std::vector<std::string> blocked_ipv4_ranges(const std::vector<std::string>& exempt_ips) {
-    // Everything except: 0/8, 10/8, 127/8, 169.254/16, 172.16/12, 192.168/16 and 224.0.0.0+ (multicast/broadcast).
-    std::vector<std::pair<uint32_t, uint32_t>> ranges = {
+namespace {
+// Everything except: 0/8, 10/8, 127/8, 169.254/16, 172.16/12, 192.168/16 and 224.0.0.0+ (multicast/broadcast).
+const std::vector<std::pair<uint32_t, uint32_t>>& public_ipv4() {
+    static const std::vector<std::pair<uint32_t, uint32_t>> r = {
         {ip(1, 0, 0, 0), ip(9, 255, 255, 255)},
         {ip(11, 0, 0, 0), ip(126, 255, 255, 255)},
         {ip(128, 0, 0, 0), ip(169, 253, 255, 255)},
@@ -47,6 +49,28 @@ std::vector<std::string> blocked_ipv4_ranges(const std::vector<std::string>& exe
         {ip(172, 32, 0, 0), ip(192, 167, 255, 255)},
         {ip(192, 169, 0, 0), ip(223, 255, 255, 255)},
     };
+    return r;
+}
+}  // namespace
+
+bool is_public_ip(const std::string& s) {
+    std::string a = s;
+    if (a.rfind("::ffff:", 0) == 0) a = a.substr(7);  // IPv4-mapped IPv6 from tcp6 sockets
+    if (auto v = parse_ipv4(a)) {
+        for (const auto& [lo, hi] : public_ipv4())
+            if (*v >= lo && *v <= hi) return true;
+        return false;
+    }
+    // IPv6 global unicast 2000::/3: the first group, a 4-digit hex number, starts with 2 or 3.
+    const auto colon = a.find(':');
+    if (colon != 4) return false;
+    for (size_t i = 0; i < 4; ++i)
+        if (!std::isxdigit(static_cast<unsigned char>(a[i]))) return false;
+    return a[0] == '2' || a[0] == '3';
+}
+
+std::vector<std::string> blocked_ipv4_ranges(const std::vector<std::string>& exempt_ips) {
+    std::vector<std::pair<uint32_t, uint32_t>> ranges = public_ipv4();
     std::vector<uint32_t> exempt;
     for (const auto& s : exempt_ips)
         if (auto v = parse_ipv4(s)) exempt.push_back(*v);

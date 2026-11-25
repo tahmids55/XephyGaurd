@@ -13,7 +13,7 @@ std::unique_ptr<ServicePlatform> make_service_platform(const Config& cfg) {
     p->network = lnx::make_network_monitor();
     p->isolator = lnx::make_network_isolator();
     p->devices = lnx::make_device_monitor();
-    p->extensions = lnx::make_extension_scanner(p->system.get());
+    p->extensions = lnx::make_extension_scanner();
     p->files = lnx::make_file_watcher();
     p->input = lnx::make_evdev_input();  // root can read evdev: works on X11 and Wayland
     p->gpu = lnx::make_gpu_monitor();
@@ -33,6 +33,7 @@ std::unique_ptr<HelperPlatform> make_helper_platform() {
     p->input = nullptr;  // the root service reads key timing from evdev on Linux
     p->ui = lnx::make_student_ui();
     p->ipc = lnx::make_ipc_client();
+    p->system = lnx::make_helper_system();
     p->probe_clipboard = [](PasteInfo& out) { return lnx::probe_clipboard(out); };
     return p;
 }

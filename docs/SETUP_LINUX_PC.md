@@ -8,7 +8,8 @@ It downloads and verifies the lab CA (fingerprint check), installs the `.deb`, e
 The PC appears as **Pending** on the dashboard → click **Approve** → name the seat on the seat map.
 
 **Manual:** `sudo apt install ./xephyguard-agent_<ver>_amd64.deb` then
-`sudo xephyguard-agent enroll --key <KEY> [--ccc 192.168.10.2] [--ca-fingerprint <sha256>]`.
+`sudo xephyguard-agent enroll --key <KEY> --ca-fingerprint <sha256> [--ccc 192.168.10.2]` (fingerprint from the
+Add-a-PC page; without it enrollment stops unless you pass `--trust-on-first-use` on a network you trust).
 
 **Many PCs:** `installers/ansible` (one inventory file):
 ```bash

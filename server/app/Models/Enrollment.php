@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -9,9 +11,24 @@ class Enrollment extends Model
 {
     protected $fillable = ['lab_id', 'hostname', 'machine_uid', 'os', 'os_version', 'macs', 'ip', 'agent_version', 'csr_pem',
         'poll_token_hash', 'status', 'pc_id', 'cert_pem', 'issued_token', 'decided_by', 'decided_at'];
+
     protected $hidden = ['csr_pem', 'poll_token_hash', 'issued_token'];
+
     protected $casts = ['macs' => 'array', 'decided_at' => 'datetime', 'issued_token' => 'encrypted'];
 
-    public function lab(): BelongsTo { return $this->belongsTo(Lab::class); }
-    public function pc(): BelongsTo { return $this->belongsTo(Pc::class); }
+    public function lab(): BelongsTo
+    {
+        return $this->belongsTo(Lab::class);
+    }
+
+    public function pc(): BelongsTo
+    {
+        return $this->belongsTo(Pc::class);
+    }
+
+    /** A PC that only looks like this machine (same hostname or MAC, not the same machine_uid). */
+    public function conflictPc(): BelongsTo
+    {
+        return $this->belongsTo(Pc::class, 'conflict_pc_id');
+    }
 }
