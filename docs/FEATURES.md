@@ -539,7 +539,7 @@ on `private-pc.<id>` (`S/Events/AgentCommand.php`) and acknowledged in the next 
   `evidence.auto_screenshot` (default off) and severity ≥ `evidence.min_severity` (default `high`), at most 1 per PC per 30 s.
 - **Code:** context: `S/Observers/AlertSnapshotRecorder.php` (`#[ObservedBy]` on `Alert`), `S/Models/AlertSnapshot.php`;
   request: `S/Observers/AutoScreenshotRequester.php`, `PrivacySettings::autoScreenshot`; upload:
-  `S/Http/Controllers/Agent/EvidenceUploadController.php`; agent: `agent/core/src/agent.cpp` (command, nonce, upload),
+  `S/Http/Controllers/Agent/EvidenceUploadController.php`; admin toggle: `AdminController::saveAutoScreenshot`, `admin/settings.blade.php`; agent: `agent/core/src/agent.cpp` (command, nonce, upload),
   `ScreenStreamer::evidence_shot` in `agent/apps/screen_streamer.cpp` (helper capture); UI: `AlertController::show/snapshot`,
   `alerts/_details-modal.blade.php`. Fast path (step 8): an agent `rule_hit` with the `alert` action at/above
   `screen.evidence_min_severity` asks the helper itself and sends `evidence_nonce`; the CCC records it as a `local`
@@ -550,7 +550,7 @@ on `private-pc.<id>` (`S/Events/AgentCommand.php`) and acknowledged in the next 
 - **Status:** context snapshot working (`AlertSnapshotTest`: latest process list, events and net of the last 120 s, sha256
   tamper check; purged with raw data). Screenshot request working server side (`AutoScreenshotRequestTest`: settings
   `evidence.auto_screenshot` / `evidence.min_severity`, `evidence_snapshot` command with a single-use nonce after commit,
-  policy `screen.auto_evidence`, notice sentence); no admin toggle in the UI yet. Upload `POST /api/agent/v1/evidence` working (`AutoEvidenceUploadTest`: nonce
+  policy `screen.auto_evidence`, notice sentence). Admin toggle working (`AdminEvidenceSettingsTest`: Settings → Privacy, switch + minimum severity low–critical, admin only, each change audited as `evidence.settings.change` with from/to; UI JS not run in a browser). Upload `POST /api/agent/v1/evidence` working (`AutoEvidenceUploadTest`: nonce
   single use, other PC / expired / non-JPEG refused, masked reply audited, encrypted at rest). Agent side built and unit-tested with fake capture (command, single reply, upload; helper: mask
   check before and after the capture, ≤ 1920 px, JPEG ≤ 4 MiB); never run end to end on a real X11 desktop; Windows
   syntax-checked in CI only. Alert detail UI working server side (`AlertEvidenceViewTest`): context opens on request

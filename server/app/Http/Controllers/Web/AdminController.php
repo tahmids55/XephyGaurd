@@ -55,6 +55,7 @@ class AdminController extends Controller
             $values["title_capture_$m"] = PrivacySettings::titleCaptureSetting($m);
         }
         $values['log_urls'] = PrivacySettings::logUrls();
+        $values['auto_screenshot'] = PrivacySettings::autoScreenshot();
         $values['inspect_hosts'] = implode("\n", Setting::get('inspect_hosts', NetworkPolicyWriter::DEFAULT_INSPECT_HOSTS));
         $values['google_hide_selectors'] = implode("\n", Setting::get('google_hide_selectors', []));
 
@@ -73,7 +74,9 @@ class AdminController extends Controller
             'title_capture_test' => 'required|in:off,app_only,full', 'log_urls' => 'nullable|boolean', 'log_queries' => 'nullable|boolean',
             'inspect_hosts' => 'nullable|string|max:5000', 'google_hide_selectors' => 'nullable|string|max:5000',
             'screen_cpu_budget_pct' => 'nullable|integer|min:1|max:100',
+            'evidence_auto_screenshot' => 'nullable|boolean', 'evidence_min_severity' => 'nullable|in:low,medium,high,critical',
         ]);
+        $this->saveAutoScreenshot((bool) ($d['evidence_auto_screenshot'] ?? false), $d['evidence_min_severity'] ?? null);
         foreach (['lab_name', 'network_mode', 'ccc_ip', 'lab_subnet', 'retention_days_raw', 'retention_days_reports', 'notice_text', 'paste_alert_chars'] as $k) {
             Setting::put($k, $d[$k]);
         }
@@ -95,6 +98,22 @@ class AdminController extends Controller
         $net->write();
 
         return back()->with('status', 'Settings saved.');
+    }
+
+    /**
+     * F123 auto screenshot on alert (DECISIONS #32): an unchecked box turns it off; a missing severity keeps the
+     * stored one. Every change gets its own audit row with old and new values, so it is easy to find.
+     */
+    private function saveAutoScreenshot(bool $enabled, ?string $minSeverity): void
+    {
+        $old = PrivacySettings::autoScreenshot();
+        $new = ['enabled' => $enabled, 'min_severity' => $minSeverity ?? $old['min_severity']];
+        if ($new === $old) {
+            return;
+        }
+        Setting::put('evidence.auto_screenshot', $new['enabled']);
+        Setting::put('evidence.min_severity', $new['min_severity']);
+        Audit::log('evidence.settings.change', null, ['from' => $old, 'to' => $new]);
     }
 
     public function users()
