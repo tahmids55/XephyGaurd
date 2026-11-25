@@ -709,6 +709,7 @@ document.addEventListener('alpine:init', () => {
     tile: (() => { try { const t = +localStorage.getItem('xg-live-tile'); return [180, 240, 340].includes(t) ? t : 240; } catch (e) { return 240; } })(), screenOnly: false, flagged: false, blur: false, pinned: [], dock: { att: true, feed: true }, feed: [], feedSeen: 0, feedFresh: {}, feedOk: true, feedAt: '', feedPcFilter: 0, feedQuiet: true, progQ: '', progSort: '', progDir: -1,
     messageModal: false, messageTarget: null, messageText: '', showDone: false, closeModal: false, closeName: '', closePid: null, closeStart: null, closeManual: false,
     alertSrcFilter: '',
+    wpmHover: null,
 
     init() {
       const h = location.hash;
@@ -898,6 +899,7 @@ document.addEventListener('alpine:init', () => {
           keyrate: (d.keyrate && d.keyrate.series && d.keyrate.series.length)
             ? d.keyrate.series.map(s => s.keys || 0)
             : base.keyrate,
+          keylabels: (d.keyrate && d.keyrate.series && d.keyrate.series.length) ? (d.keyrate.labels || []) : [],
           pastes: (d.pastes && d.pastes.length)
             ? d.pastes.map(p => ({ time: p.occurred_at, chars: p.chars, lines: p.lines, from: p.source_app || '?', to: p.target_app || '?', code: !!p.looks_like_code }))
             : base.pastes,
@@ -972,6 +974,43 @@ document.addEventListener('alpine:init', () => {
     get pcAlertsShown() {
       const f = this.alertSrcFilter;
       return f ? this.pcAlerts.filter(a => window.xgAlertSource(a).key === f) : this.pcAlerts;
+    },
+    /* Typing tab: words per minute (5 characters = 1 word) per minute, on a continuous time axis.
+       Minutes with no key data count as 0. Without real labels (demo data) the axis is "minutes ago". */
+    get wpm() {
+      const d = this.det, raw = d ? (d.keyrate || []) : [];
+      if (!raw.length) return { n: 0 };
+      const lab = (d.keylabels && d.keylabels.length === raw.length) ? d.keylabels : null;
+      let vals = raw.map(k => Math.round(k / 5)), labels;
+      if (lab) {
+        let prev = -1, off = 0;
+        const mins = lab.map(t => { const [h, m] = String(t).split(':').map(Number); let v = h * 60 + m + off; if (v < prev) { off += 1440; v += 1440; } prev = v; return v; });
+        const first = mins[0], len = Math.min(mins[mins.length - 1] - first + 1, 24 * 60);
+        vals = Array(len).fill(0); labels = Array(len);
+        mins.forEach((m, i) => { if (m - first < len) vals[m - first] = Math.round(raw[i] / 5); });
+        for (let i = 0; i < len; i++) { const t = (first + i) % 1440; labels[i] = String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0'); }
+      } else {
+        labels = vals.map((_, i) => (i === vals.length - 1) ? 'now' : '-' + (vals.length - 1 - i) + 'm');
+      }
+      const n = vals.length, peak = Math.max(...vals);
+      const step = peak <= 20 ? 5 : peak <= 50 ? 10 : peak <= 100 ? 20 : 50;
+      const max = Math.max(step, Math.ceil(peak / step) * step);
+      const x = i => n === 1 ? 50 : i / (n - 1) * 100, y = w => 100 - w / max * 100;
+      const pts = vals.map((w, i) => [x(i), y(w)]);
+      const line = pts.map(p => p[0].toFixed(2) + ',' + p[1].toFixed(2)).join(' ');
+      const yticks = []; for (let t = max; t >= 0; t -= step) yticks.push({ v: t, top: y(t) });
+      const xticks = [...new Set([0, 0.25, 0.5, 0.75, 1].map(f => Math.round(f * (n - 1))))].map(i => ({ label: labels[i], left: x(i) }));
+      const active = vals.filter(v => v > 0);
+      return {
+        n, vals, labels, pts, line, area: (n === 1 ? '50,100 ' : '0,100 ') + line + (n === 1 ? ' 50,100' : ' 100,100'),
+        yticks, xticks, peak, avg: active.length ? Math.round(active.reduce((a, b) => a + b, 0) / active.length) : 0,
+      };
+    },
+    wpmMove(ev) {
+      const w = this.wpm; if (!w.n) return;
+      const r = ev.currentTarget.getBoundingClientRect();
+      const f = Math.min(1, Math.max(0, (ev.clientX - r.left) / Math.max(1, r.width)));
+      this.wpmHover = Math.round(f * (w.n - 1));
     },
     get tabs() {
       const d = this.det; if (!d) return [];

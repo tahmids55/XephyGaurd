@@ -448,8 +448,27 @@
         </section>
 
         <section x-show="tab === 'typing'" x-cloak>
-          <div class="h3">Typing pace</div><p class="muted small">Characters per minute, last 30 minutes. Only pace and pauses are measured, never which keys.</p>
-          <div class="bars"><template x-for="(v, i) in (det ? det.keyrate : [])" :key="i"><i :style="'height:' + Math.min(100, v) + '%'" :title="v + ' per min'"></i></template></div>
+          <div class="h3">Typing speed</div><p class="muted small">Words per minute over time (5 characters = 1 word). Only pace and pauses are measured, never which keys.</p>
+          <div class="wpm-stats" x-show="wpm.n"><span>Average <b x-text="wpm.avg"></b> WPM</span><span>Peak <b x-text="wpm.peak"></b> WPM</span></div>
+          <div class="wpm-chart" x-show="wpm.n">
+            <div class="wpm-y"><template x-for="t in (wpm.yticks || [])" :key="'y' + t.v"><span :style="'top:' + t.top + '%'" x-text="t.v"></span></template></div>
+            <div class="wpm-plot" @mousemove="wpmMove($event)" @mouseleave="wpmHover = null">
+              <template x-for="t in (wpm.yticks || [])" :key="'g' + t.v"><i class="wpm-grid" :style="'top:' + t.top + '%'"></i></template>
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                <polygon class="wpm-area" :points="wpm.area"></polygon>
+                <polyline class="wpm-line" :points="wpm.line"></polyline>
+              </svg>
+              <template x-if="wpmHover !== null && wpm.pts && wpm.pts[wpmHover]">
+                <div>
+                  <i class="wpm-cursor" :style="'left:' + wpm.pts[wpmHover][0] + '%'"></i>
+                  <i class="wpm-dot" :style="'left:' + wpm.pts[wpmHover][0] + '%;top:' + wpm.pts[wpmHover][1] + '%'"></i>
+                  <div class="wpm-tip" :class="wpm.pts[wpmHover][0] > 70 ? 'flip' : ''" :style="'left:' + wpm.pts[wpmHover][0] + '%'"><b x-text="wpm.vals[wpmHover] + ' WPM'"></b> <span x-text="wpm.labels[wpmHover]"></span></div>
+                </div>
+              </template>
+            </div>
+            <div class="wpm-x"><template x-for="(t, i) in (wpm.xticks || [])" :key="'x' + i"><span :style="'left:' + t.left + '%'" x-text="t.label"></span></template></div>
+          </div>
+          <div class="empty-state" x-show="!wpm.n"><b>No typing data yet</b>Typing speed appears here once the student types during a session.</div>
         </section>
 
         <section x-show="tab === 'pastes'" x-cloak style="padding:0">
