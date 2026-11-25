@@ -114,6 +114,7 @@ services:
     env_file: .env.local
     environment:
       SCREEN_GATEWAY_INTERNAL_TOKEN: ${XG_INTERNAL_TOKEN}  # agent cert -> PC lookup on 127.0.0.1:8000
+      SCREEN_GATEWAY_TRUSTED_PROXY: 127.0.0.1  # nginx (same host) passes the verified agent cert from :8443/screen-gw/agent
 
 volumes:
   xg_local_mysql:
