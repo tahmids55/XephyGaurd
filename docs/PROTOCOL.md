@@ -151,6 +151,15 @@ The CCC checks the arguments of every type before storing or sending a command (
 listed above are dropped, invalid ones are refused with 422 (`message`: `text` ≤ 500, `title` ≤ 120; `rescan`: one of
 the listed targets; `isolate_notice`: boolean).
 
+## Auto evidence upload (agent → CCC, F123)
+`POST /api/agent/v1/evidence?nonce=<32 hex>` with the usual agent auth, body = one JPEG (raw bytes, `Content-Type:
+image/jpeg`, ≤ 8 MiB on the CCC, the agent caps at 4 MiB; width and height ≤ 8192). `nonce` is the one from an
+`evidence_snapshot` command sent to this PC in the last 60 s; each nonce is accepted once (first attempt consumes it,
+even a refused image). `?masked=1&nonce=…` with an empty body says the privacy mask hid the screen (audited, no image).
+Replies: `201 {"ok":true,"id":N}`, `200 {"ok":true,"masked":true}`, `403` unknown/expired nonce or another PC's,
+`409` nonce already used, `413` too big, `422` bad nonce format or not a JPEG. Stored like staff evidence (F46):
+`Crypt` blob + sha256, `evidence_captures.source_mode = auto` with `alert_id`/`command_id`; audit `pc.evidence.auto`.
+
 ## Screen relay (agent → CCC)
 `wss://<ccc>:8443/screen-gw/agent`, mTLS required (403 without a verified client cert). Opened by the
 root service only (DECISIONS #24); frames are the screen protocol in `xephyguard-screen/core/protocol.h`.

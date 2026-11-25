@@ -16,6 +16,8 @@ class EvidenceCapture extends Model
         'user',
         'captured_by',
         'screen_view_audit_id',
+        'alert_id',
+        'command_id',
         'monitor',
         'source_mode',
         'file_path',

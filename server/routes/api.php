@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Agent\AgentController;
 use App\Http\Controllers\Agent\EnrollController;
+use App\Http\Controllers\Agent\EvidenceUploadController;
 use App\Http\Controllers\Api\ViewTokenController;
 use App\Http\Controllers\Internal\EvalController;
 use App\Http\Controllers\Internal\NetEventsController;
@@ -17,6 +18,7 @@ Route::prefix('agent/v1')->group(function () {
         Route::get('/policy', [AgentController::class, 'policy']);
         Route::post('/events', [AgentController::class, 'events']);
         Route::post('/broadcasting/auth', [AgentController::class, 'broadcastAuth']);
+        Route::post('/evidence', [EvidenceUploadController::class, 'store']);   // F123
     });
 });
 
