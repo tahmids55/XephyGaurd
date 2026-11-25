@@ -188,12 +188,14 @@ window.xgMix = function (target, ...srcs) {
    The page supplies alertAckOne(a) -> Promise; it marks that one alert reviewed in the page's own list. */
 window.xgAlertDetails = () => ({
   alertModal: false, alertDet: null, alertLoading: false, alertErr: '',
+  alertSnap: null, alertSnapLoading: false, alertSnapErr: '', alertShot: false, alertSnapOpen: false,
   alertSrc(a) { return window.xgAlertSource(a); },
   alertExplain(a) { return window.xgAlertExplain(a); },
   async openAlert(a) {
     if (!a || !a.id) return;
     this.alertDet = { ...a, details: null, session: null, reviews: [] };
     this.alertErr = ''; this.alertLoading = true; this.alertModal = true;
+    this.alertSnap = null; this.alertSnapErr = ''; this.alertShot = false; this.alertSnapOpen = false;
     try {
       const r = await window.xgApi(`/alerts/${a.id}`);
       if (this.alertDet && this.alertDet.id === a.id) {
@@ -204,6 +206,27 @@ window.xgAlertDetails = () => ({
     } finally {
       this.alertLoading = false;
     }
+  },
+  /* F123: frozen context, loaded only when staff open it (each load is audited server side). */
+  async loadAlertSnap() {
+    const d = this.alertDet;
+    if (!d || this.alertSnap || this.alertSnapLoading) return;
+    this.alertSnapErr = ''; this.alertSnapLoading = true;
+    try {
+      const r = await window.xgApi(`/alerts/${d.id}/snapshot`);
+      if (this.alertDet && this.alertDet.id === d.id) this.alertSnap = r;
+    } catch (e) {
+      this.alertSnapErr = e.message || 'Could not load the saved context.';
+    } finally {
+      this.alertSnapLoading = false;
+    }
+  },
+  get alertShotText() {
+    const s = this.alertDet && this.alertDet.screenshot;
+    if (!s) return '';
+    if (s.status === 'masked') return 'The PC did not send a picture: the screen was private (privacy mask) at that moment.';
+    if (s.status === 'requested') return 'A screenshot was asked for; the PC has not sent one (offline, no student session, or still on its way).';
+    return s.can_view ? 'One screenshot was taken by the PC when this alert was raised.' : 'A screenshot was taken. Only instructors can open it.';
   },
   get alertFacts() { return this.alertDet ? window.xgAlertFacts(this.alertDet.details) : []; },
   get alertActions() { return this.alertDet ? window.xgAlertActions(this.alertDet.details) : []; },

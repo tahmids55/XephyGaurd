@@ -26,5 +26,5 @@ What: when an alert is raised, keep evidence at once: (a) a **context snapshot**
 - [x] 4 server: `POST /api/agent/v1/evidence` (nonce, mTLS PC, size/type) → `evidence_captures` (`alert_id`, `source`) + tests.
 - [x] 5 agent core: command parse + pending nonce + helper IPC request/reply (caps) + upload + tests. PROTOCOL.
 - [x] 6 agent helper: one-frame capture + mask check + full-frame JPEG (Linux, fake-capture tests; Windows: CI MinGW syntax check only, never run).
-- [ ] 7 server UI: alert detail shows context + screenshot (audited view).
+- [x] 7 server UI: alert detail shows context + screenshot (audited view).
 - [ ] 8 agent (speed): rule_hit with `alert` action triggers the helper locally, no CCC round trip; server links it.

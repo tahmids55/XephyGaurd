@@ -540,7 +540,8 @@ on `private-pc.<id>` (`S/Events/AgentCommand.php`) and acknowledged in the next 
 - **Code:** context: `S/Observers/AlertSnapshotRecorder.php` (`#[ObservedBy]` on `Alert`), `S/Models/AlertSnapshot.php`;
   request: `S/Observers/AutoScreenshotRequester.php`, `PrivacySettings::autoScreenshot`; upload:
   `S/Http/Controllers/Agent/EvidenceUploadController.php`; agent: `agent/core/src/agent.cpp` (command, nonce, upload),
-  `ScreenStreamer::evidence_shot` in `agent/apps/screen_streamer.cpp` (helper capture); rest planned (docs/plan/evidence.md Steps 7–8).
+  `ScreenStreamer::evidence_shot` in `agent/apps/screen_streamer.cpp` (helper capture); UI: `AlertController::show/snapshot`,
+  `alerts/_details-modal.blade.php`; Step 8 planned (docs/plan/evidence.md).
 - **In/out/side effects:** `alert_snapshots` row (copies of data the CCC already holds + sha256); screenshot as an
   `evidence_captures` row with `alert_id`, `source = auto`, stored like F46; audit on save and every view.
 - **Status:** context snapshot working (`AlertSnapshotTest`: latest process list, events and net of the last 120 s, sha256
@@ -549,7 +550,9 @@ on `private-pc.<id>` (`S/Events/AgentCommand.php`) and acknowledged in the next 
   policy `screen.auto_evidence`, notice sentence); no admin toggle in the UI yet. Upload `POST /api/agent/v1/evidence` working (`AutoEvidenceUploadTest`: nonce
   single use, other PC / expired / non-JPEG refused, masked reply audited, encrypted at rest). Agent side built and unit-tested with fake capture (command, single reply, upload; helper: mask
   check before and after the capture, ≤ 1920 px, JPEG ≤ 4 MiB); never run end to end on a real X11 desktop; Windows
-  syntax-checked in CI only.
+  syntax-checked in CI only. Alert detail UI working server side (`AlertEvidenceViewTest`): context opens on request
+  (`GET /alerts/{id}/snapshot`, audited `alert.snapshot.view`, hash check shown); screenshot status requested / masked /
+  captured, image link instructor+ only, opened on click via audited `evidence.view`; UI JS not run in a browser.
 - **Test:** 1. Turn on `evidence.auto_screenshot`. 2. Trigger a high alert on a PC. 3. The alert shows context and a screenshot.
 
 ---

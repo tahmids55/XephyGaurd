@@ -36,6 +36,42 @@
             <template x-for="(r, i) in (alertDet.reviews || [])" :key="i"><div class="small"><b x-text="r.by || 'Staff'"></b> <span class="muted" x-text="r.at ? new Date(r.at).toLocaleString() : ''"></span><div x-show="r.note" x-text="r.note"></div></div></template>
           </div>
 
+          <div x-show="alertDet.screenshot"><div class="label">Screenshot at alert time</div>
+            <p class="small" style="margin:4px 0" x-text="alertShotText"></p>
+            <template x-if="alertDet.screenshot && alertDet.screenshot.url">
+              <div class="stack">
+                <div><button class="btn" x-show="!alertShot" @click="alertShot = true">Show screenshot</button>
+                  <span class="small muted" x-show="!alertShot">Opening it is recorded in the audit log.</span></div>
+                <template x-if="alertShot"><a :href="alertDet.screenshot.url" target="_blank" rel="noopener"><img :src="alertDet.screenshot.url" alt="Screenshot taken by the PC when the alert was raised" style="max-width:100%;border:1px solid var(--border);border-radius:6px"></a></template>
+                <div class="small muted mono" style="word-break:break-all" x-text="'sha256 ' + alertDet.screenshot.sha256"></div>
+              </div>
+            </template>
+          </div>
+
+          <details x-show="alertDet.has_snapshot" :open="alertSnapOpen" @toggle="alertSnapOpen = $event.target.open; if (alertSnapOpen) loadAlertSnap()"><summary class="small muted" style="cursor:pointer">What the CCC knew at alert time (saved copy; opening is logged)</summary>
+            <div class="stack" style="margin-top:6px">
+              <div class="muted small" x-show="alertSnapLoading">Loading saved context…</div>
+              <div class="small" style="color:var(--alert)" x-show="alertSnapErr" x-text="alertSnapErr"></div>
+              <template x-if="alertSnap"><div class="stack">
+                <span class="chip" :style="alertSnap.intact ? '' : 'color:var(--alert)'" x-text="alertSnap.intact ? 'Unchanged since saved (hash checks out)' : 'Changed after saving: hash does not match, do not rely on it'"></span>
+                <dl class="prop" style="margin:0">
+                  <dt>Saved at</dt><dd x-text="alertSnap.captured_at ? new Date(alertSnap.captured_at).toLocaleString() : '—'"></dd>
+                  <dt>Active app</dt><dd x-text="(alertSnap.pc && alertSnap.pc.active_app) || '—'"></dd>
+                  <dt>PC mode</dt><dd x-text="(alertSnap.pc && alertSnap.pc.mode) || '—'"></dd>
+                  <dt>Programs running</dt><dd x-text="alertSnap.processes ? alertSnap.processes.count : 'No process list yet'"></dd>
+                </dl>
+                <div class="small mono" style="word-break:break-word" x-show="alertSnap.processes && alertSnap.processes.names.length" x-text="alertSnap.processes && alertSnap.processes.names.join(', ')"></div>
+                <div x-show="alertSnap.events.length"><div class="label">PC events in the 2 minutes before</div>
+                  <ul style="margin:4px 0 0;padding-left:18px"><template x-for="(e, i) in alertSnap.events" :key="'e' + i"><li class="small"><span class="muted" x-text="e.at ? new Date(e.at).toLocaleTimeString() : ''"></span> <b x-text="e.type"></b> <span class="mono" style="word-break:break-all" x-text="e.summary"></span></li></template></ul>
+                </div>
+                <div x-show="alertSnap.net.length"><div class="label">Network in the 2 minutes before</div>
+                  <ul style="margin:4px 0 0;padding-left:18px"><template x-for="(n, i) in alertSnap.net" :key="'n' + i"><li class="small"><span class="muted" x-text="n.at ? new Date(n.at).toLocaleTimeString() : ''"></span> <span class="mono" style="word-break:break-all" x-text="(n.host || '') + (n.path || '')"></span> <span x-text="[n.action, n.category].filter(Boolean).join(', ')"></span></li></template></ul>
+                </div>
+                <div class="small muted mono" style="word-break:break-all" x-text="'sha256 ' + alertSnap.sha256"></div>
+              </div></template>
+            </div>
+          </details>
+
           <details><summary class="small muted" style="cursor:pointer">Technical details</summary>
             <dl class="prop" style="margin:6px 0 0">
               <dt>Rule</dt><dd class="mono" x-text="alertDet.rule || '—'"></dd>

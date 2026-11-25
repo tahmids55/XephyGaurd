@@ -48,6 +48,7 @@ Route::group([], function () {
             Route::get('/alerts.html', [AlertController::class, 'index'])->name('alerts.html');
             Route::post('/alerts/ack-batch', [AlertController::class, 'acknowledgeBatch'])->name('alerts.ack_batch');
             Route::get('/alerts/{alert}', [AlertController::class, 'show'])->whereNumber('alert')->name('alerts.show');
+            Route::get('/alerts/{alert}/snapshot', [AlertController::class, 'snapshot'])->whereNumber('alert')->name('alerts.snapshot');
             Route::post('/alerts/{alert}/ack', [AlertController::class, 'acknowledge'])->name('alerts.ack');
 
             Route::get('/sessions', [SessionController::class, 'index'])->name('sessions.index');
