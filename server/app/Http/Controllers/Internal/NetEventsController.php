@@ -78,7 +78,9 @@ class NetEventsController extends Controller
                     $seenAlertKeys[$dedupKey] = true;
                     $dup = Alert::query()->where('pc_id', $pc->id)->where('lab_session_id', $sid)
                         ->where('rule_id', $ruleId)->where('title', $title)
-                        ->where('occurred_at', '>', $at->subMinutes(30))->exists();
+                        ->where('occurred_at', '>', $at->subMinutes(30))
+                        ->whereNull('acknowledged_at')  // high: a reviewed alert does not suppress a repeat
+                        ->exists();
                     if (! $dup) {
                         $alert = Alert::create([
                             'pc_id' => $pc->id, 'lab_session_id' => $sid, 'rule_id' => $ruleId,

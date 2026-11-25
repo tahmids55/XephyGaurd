@@ -209,9 +209,12 @@ class EventIngestor
                 }
                 $title = ($d['description'] ?? 'Rule matched').': '.($str('subject', 120) ?? '');
                 // An agent restart resets its local de-duplication; do not raise the same alert twice.
+                // High/critical: once reviewed, a repeat raises a new alert (the reviewed one no longer suppresses it).
                 $dup = Alert::query()->where('pc_id', $pc->id)->where('lab_session_id', $sid)
                     ->where('rule_id', $str('rule_id') ?? 'rule')->where('title', mb_substr($title, 0, 200))
-                    ->where('occurred_at', '>', $at->subMinutes(30))->exists();
+                    ->where('occurred_at', '>', $at->subMinutes(30))
+                    ->when(in_array($sev, ['high', 'critical'], true), fn ($q) => $q->whereNull('acknowledged_at'))
+                    ->exists();
                 if ($dup) {
                     return null;
                 }

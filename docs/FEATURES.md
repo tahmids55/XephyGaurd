@@ -439,7 +439,9 @@ on `private-pc.<id>` (`S/Events/AgentCommand.php`) and acknowledged in the next 
 
 ### F39. Alert creation from events
 - **What:** rule hits, tamper events, paste over a size threshold, network events and machine
-  silence become alerts, deduplicated.
+  silence become alerts, deduplicated (same PC, session, rule and title within 30 min). A reviewed
+  high/critical alert no longer suppresses a repeat: the next hit raises a new alert. Medium/low stay
+  suppressed for the window.
 - **Trigger:** agent `POST /api/agent/v1/events` (batches); proxy `POST /api/internal/net-events`.
 - **Code:** `S/Services/EventIngestor.php::ingest`, `refreshLiveScore`; `S/Models/Alert.php`.
 - **In/out/side effects:** writes `events`, `alerts`, `key_stats`, `paste_events`, `net_events`;
