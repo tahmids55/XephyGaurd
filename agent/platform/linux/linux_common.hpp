@@ -104,6 +104,12 @@ std::unique_ptr<IWindowMonitor> make_window_monitor();
 std::unique_ptr<IClipboardMonitor> make_clipboard_monitor();
 std::unique_ptr<IStudentUi> make_student_ui();
 std::unique_ptr<IHelperSystem> make_helper_system();
+/// Helper-only: "x11" or "wayland" for uid's live graphical logind session(s) in `dir` (KEY=VALUE files),
+/// preferring active ones; "" when there is none or the types are mixed.
+std::string logind_graphical_type(uint32_t uid, const std::string& dir = "/run/systemd/sessions");
+/// True when the helper's inherited XDG_SESSION_TYPE disagrees with logind: a stale environment left by an
+/// earlier login in the same systemd user manager. Never true when logind gives no clear answer.
+bool session_env_stale(const char* env_type, const std::string& logind_type);
 /// Helper-only: measure the current CLIPBOARD content (features only). Used for paste probes.
 bool probe_clipboard(PasteInfo& out);
 

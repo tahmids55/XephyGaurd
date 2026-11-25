@@ -931,6 +931,10 @@ and queues events in a local SQLite queue (`A/core/src/event_queue*`), sent in b
 `xephyguard-helper` runs in the student's desktop session (user level) and talks to the agent over
 IPC (`A/platform/linux/ipc_unix.cpp`, `A/platform/windows/ipc_pipe_win.cpp`; messages `config`,
 `notify`, `indicator`, `paste_probe`, `clear_proxy_pac`).
+Linux: under systemd it checks every 5 s that its inherited `XDG_SESSION_TYPE` matches the user's logind session and,
+if not (environment left by an earlier login, e.g. Wayland then X11 in the same user manager), exits so `Restart=always`
+starts it with the current environment (`lnx::session_env_stale`; test `Linux helper detects a session environment
+left by an earlier login`; the restart itself seen once by hand, the auto-exit not run on a desktop yet).
 
 ### F93. Notifications and messages
 - **What:** shows staff messages and warnings (desktop notification; on Windows also a modal box).

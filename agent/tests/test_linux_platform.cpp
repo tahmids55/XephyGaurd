@@ -513,4 +513,35 @@ TEST_CASE("Linux browser policy blocks AI extensions in Test mode and keeps admi
     std::filesystem::remove_all(root);
 }
 
+TEST_CASE("Linux helper detects a session environment left by an earlier login", "[linux][helper]") {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / ("xg-sess-" + xg::random_hex(4));
+    fs::create_directories(dir);
+    auto put = [&](const std::string& id, const std::string& body) { std::ofstream(dir / id) << body; };
+    const std::string d = dir.string();
+
+    CHECK(xg::lnx::logind_graphical_type(1000, d).empty());  // no sessions: no answer
+    put("92", "UID=1000\nUSER=s\nACTIVE=1\nSTATE=active\nTYPE=x11\nCLASS=user\n");
+    put("92.ref", "");
+    put("7", "UID=1000\nUSER=s\nACTIVE=0\nSTATE=closing\nTYPE=wayland\nCLASS=user\n");  // old login, closing
+    put("8", "UID=1001\nUSER=o\nACTIVE=1\nSTATE=active\nTYPE=wayland\nCLASS=user\n");   // other user
+    put("c1", "UID=1000\nACTIVE=1\nSTATE=active\nTYPE=wayland\nCLASS=greeter\n");        // not a user session
+    CHECK(xg::lnx::logind_graphical_type(1000, d) == "x11");
+    CHECK(xg::lnx::logind_graphical_type(1001, d) == "wayland");
+
+    // The bug: helper inherited "wayland" from the earlier login while logind says x11.
+    CHECK(xg::lnx::session_env_stale("wayland", "x11"));
+    CHECK(xg::lnx::session_env_stale(nullptr, "x11"));
+    CHECK_FALSE(xg::lnx::session_env_stale("x11", "x11"));
+    CHECK_FALSE(xg::lnx::session_env_stale("wayland", ""));  // logind unclear: never restart
+
+    put("93", "UID=1000\nUSER=s\nACTIVE=0\nSTATE=online\nTYPE=wayland\nCLASS=user\n");  // inactive 2nd login
+    CHECK(xg::lnx::logind_graphical_type(1000, d) == "x11");                                // active one wins
+    put("94", "UID=1000\nUSER=s\nACTIVE=1\nSTATE=active\nTYPE=wayland\nCLASS=user\n");
+    CHECK(xg::lnx::logind_graphical_type(1000, d).empty());                                 // mixed: no answer
+    put("95", "UID=1000\nACTIVE=1\nSTATE=active\nTYPE=tty\nCLASS=user\n");             // console ignored
+    CHECK(xg::lnx::logind_graphical_type(1000, d).empty());
+    fs::remove_all(dir);
+}
+
 #endif  // _WIN32
