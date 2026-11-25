@@ -57,6 +57,10 @@ drops entries that would make the agent reject the policy (bad type, over 256 by
 shown; measured in docs/EVALUATION.md M4-5). All optional; a missing or invalid value keeps the default and never rejects
 the policy. The service passes them to the helper in `config.screen`; a view in progress keeps its settings. The server
 does not send them yet (agent defaults apply).
+`policy.screen.auto_evidence` (bool, sent only when `true`; F123): an admin enabled automatic screenshots on serious
+alerts and the PC is not in Always-on mode. Without it the agent refuses `evidence_snapshot`.
+`policy.screen.evidence_min_severity` (`low`|`medium`|`high`|`critical`, sent with `auto_evidence`; plan step 8): a
+`rule_hit` whose actions include `alert` at or above it may ask the helper at once, without waiting for the command.
 `policy.screen.cpu_budget_pct` (number 1..100, default 8, optional, invalid keeps the default) is the CPU budget of the
 helper's capture/encode thread in percent of one core; the governor lowers fps (floor 2) then quality to stay under it.
 Passed in `config.screen` like the above, applied at once (also to a running view). The server sends it only after an
@@ -106,7 +110,7 @@ and a listed field with the wrong type, is dropped before storage; strings are c
 | `agent_stopping` | `reason` [32], `uptime_s` (clean shutdown announcement) |
 | `process_start` / `process_stop` | `pid, ppid, exe` [256], `rss_mb, rule_id` (stop: `pid, rule_id`) — only for processes matching signatures; no command lines |
 | `process_snapshot` | `hash, count, total_running, added[], removed[]` (≤ 200 executable names each), `list[]` (≤ 250 × `pid, ppid, exe, name, user` [32], `rss_mb, cpu_pct, net_kbps, net_conns, start, rule_id`; `start` = OS start tick that identifies the process together with `pid`) |
-| `rule_hit` | `rule_id, severity` [16], `category` [32], `description` [512], `subject` [512], `actions[]` (≤ 8), `result` {`kill` {`pid, killed, reason`}}, `context`, `mode` [16], `session_id, user`. `context` keys: `exe, pid, user, port, adapter, driver, initial, default_routes, class, vendor, model, process, domain, remote_ip, remote_port, sent_kb, recv_kb, signal, ide, extension, version, activity, path` [512], `size_mb, rule_id, app, title` [256], `ai_site`. Tunnel flags (`category: tunnel`, rule id from `web.tunnel`, sessions only): context `process, pid, remote_ip, remote_port, signal: tcp_destination`, never closed by the agent |
+| `rule_hit` | `rule_id, severity` [16], `category` [32], `description` [512], `subject` [512], `actions[]` (≤ 8), `result` {`kill` {`pid, killed, reason`}}, `context`, `mode` [16], `session_id, user`, `evidence_nonce` (32 lowercase hex, optional: the agent already asked its helper for an auto screenshot of this hit, F123 fast path). `context` keys: `exe, pid, user, port, adapter, driver, initial, default_routes, class, vendor, model, process, domain, remote_ip, remote_port, sent_kb, recv_kb, signal, ide, extension, version, activity, path` [512], `size_mb, rule_id, app, title` [256], `ai_site`. Tunnel flags (`category: tunnel`, rule id from `web.tunnel`, sessions only): context `process, pid, remote_ip, remote_port, signal: tcp_destination`, never closed by the agent |
 | `listening_port` | `port, address, process` [128], `pid, rule_id, probed` |
 | `window_focus` | `app` [64], `title` [256] (filtered by policy: off / app_only / full; the server drops a title the PC's effective `title_capture` does not allow, also `rule_hit.context.title`, and below `full` the " (file)" part of paste/copy targets), `ai_site` [128] |
 | `paste` / `copy` | `chars, lines, code, score, src` [128], `dst` [128], `user` |
@@ -141,11 +145,24 @@ signs the agent's own channel. Event name `command`, data `{id, type, args}`:
 | `rescan` | `what` ∈ processes, network, ports, devices, extensions, artifacts, all (the dashboard sends `processes` when none is chosen; the agent treats a missing `what` as `all`) | immediate scan: `processes` = process scan + `process_snapshot`; `network`/`ports` = port, adapter and AI-traffic scan (the known-port cache is cleared); `devices` = USB/device scan (`network` also includes it); `extensions` = extension + artifact scan; `artifacts` = local-model artifact scan; `all` = everything. The agent also accepts the aliases `installed` (= `extensions`) and `browser` (= `ports`); other values do nothing and still get `ok` |
 | `ping`, `flush` | – | flush the queue now |
 | `screen_lease` | `ttl_s` (1..3600, the agent's cap; the CCC sends the viewer lease, default 30) | the CCC has a live-view lease on this PC for `ttl_s` more seconds; sent with every screen token and every renewal. The agent captures the screen only while a lease is active (screen Step 15) |
+| `process_lease` | `ttl_s` (1..60, the agent's cap; values outside are ignored) | the dashboard's Programs tab is open on this PC: send `process_snapshot` every 2 s (instead of `intervals.snapshot_s`) for `ttl_s` more seconds and flush the queue after each. A new grant sends one snapshot at once; a renewal inside the lease only extends it. Same fields as the regular snapshot. Ignored (`ignored`) when the policy does not collect processes |
+| `evidence_snapshot` | `alert_id` (int ≥ 1), `nonce` (32 lowercase hex) | F123 (DECISIONS #32): a serious alert was raised on this PC; take one screenshot now and upload it with this `nonce`. The CCC sends it only when `policy.screen.auto_evidence` is true, at most once per PC per 30 s. The agent refuses a missing/non-integer `alert_id` or a nonce that is not 32 lowercase hex. Result `ok` `{requested:true}` once the active session's helper was asked, else `ignored` `{reason}`: `disabled` (policy flag off, or screen disabled in the agent config), `busy` (a request is open), `rate_limited` (agent also keeps 30 s between requests), `no_helper` (no helper of the active session advertised `evidence` in `screen_caps`). The nonce stays in the service (the helper gets only `{"t":"evidence_snap","max_width":1920,"quality":70,"max_bytes":4194304}`); the helper must answer within 10 s with one evidence JPEG IPC record (binary type `0x02`, ≤ 4 MiB), `{"t":"evidence_masked"}` (privacy mask before or after the capture, unknown window, secure desktop) or `{"t":"evidence_failed","reason":...}` (`screen_unavailable`, `capture_unavailable`, `capture_failed`, `scale_failed`, `encode_failed`, `too_large`, `send_failed`). The service accepts one reply from that helper only, checks JPEG SOI/EOI and size, then uploads once (below); a late, foreign or non-JPEG reply uploads nothing and the nonce expires. A policy that turns the flag off cancels an open request |
 
 Every command is acknowledged with a `command_result` event.
 The CCC checks the arguments of every type before storing or sending a command (`CommandBus`, S-30): arguments not
 listed above are dropped, invalid ones are refused with 422 (`message`: `text` ≤ 500, `title` ≤ 120; `rescan`: one of
 the listed targets; `isolate_notice`: boolean).
+
+## Auto evidence upload (agent → CCC, F123)
+`POST /api/agent/v1/evidence?nonce=<32 hex>` with the usual agent auth, body = one JPEG (raw bytes, `Content-Type:
+image/jpeg`, ≤ 8 MiB on the CCC, the agent caps at 4 MiB; width and height ≤ 8192). `nonce` is the one from an
+`evidence_snapshot` command sent to this PC in the last 60 s, or the `evidence_nonce` of a `rule_hit` from this PC whose
+alert passed the same guards in the last 60 s (the CCC then records an `evidence_snapshot` command row with status
+`local` and pushes nothing; the agent uploads only after the batch with that `rule_hit` was accepted); each nonce is accepted once (first attempt consumes it,
+even a refused image). `?masked=1&nonce=…` with an empty body says the privacy mask hid the screen (audited, no image).
+Replies: `201 {"ok":true,"id":N}`, `200 {"ok":true,"masked":true}`, `403` unknown/expired nonce or another PC's,
+`409` nonce already used, `413` too big, `422` bad nonce format or not a JPEG. Stored like staff evidence (F46):
+`Crypt` blob + sha256, `evidence_captures.source_mode = auto` with `alert_id`/`command_id`; audit `pc.evidence.auto`.
 
 ## Screen relay (agent → CCC)
 `wss://<ccc>:8443/screen-gw/agent`, mTLS required (403 without a verified client cert). Opened by the

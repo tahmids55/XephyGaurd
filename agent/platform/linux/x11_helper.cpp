@@ -593,6 +593,10 @@ bool probe_clipboard(PasteInfo& out) {
             if (data) XFree(data);
         }
     }
+    // Owner of the selection at paste time: the source when the copy itself was missed. No active-window
+    // fallback here, the active window is the paste target.
+    if (Window owner = XGetSelectionOwner(d, XInternAtom(d, "CLIPBOARD", False)); owner != None)
+        out.source_app = window_app(d, owner, pid_atom);
     Window win = XCreateSimpleWindow(d, DefaultRootWindow(d), 0, 0, 1, 1, 0, 0, 0);
     const bool ok = measure_clipboard(d, win, out, 500);
     XDestroyWindow(d, win);

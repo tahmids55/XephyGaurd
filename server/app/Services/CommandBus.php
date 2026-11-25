@@ -19,7 +19,7 @@ use Illuminate\Validation\ValidationException;
  */
 class CommandBus
 {
-    public const TYPES = ['policy_updated', 'message', 'kill', 'isolate_notice', 'rescan', 'ping', 'flush', 'screen_lease'];
+    public const TYPES = ['policy_updated', 'message', 'kill', 'isolate_notice', 'rescan', 'ping', 'flush', 'screen_lease', 'process_lease', 'evidence_snapshot'];
 
     public const RESCAN_TARGETS = ['processes', 'network', 'ports', 'devices', 'extensions', 'artifacts', 'all'];
 
@@ -37,6 +37,9 @@ class CommandBus
             'ping' => [],
             'flush' => [],
             'screen_lease' => ['ttl_s' => 'required|integer|min:1|max:3600'],   // the agent's own cap
+            'process_lease' => ['ttl_s' => 'required|integer|min:1|max:60'],    // the agent's own cap
+            // F123: sent only by AutoScreenshotRequester; the nonce is single-use proof for the upload.
+            'evidence_snapshot' => ['alert_id' => 'required|integer|min:1', 'nonce' => ['required', 'string', 'regex:/^[0-9a-f]{32}$/']],
         ];
     }
 

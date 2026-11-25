@@ -172,6 +172,48 @@ TEST_CASE("protocol batch and command validation") {
     // The indicator follows the policy (mode + notice); there is no separate command for it.
     CHECK_FALSE(protocol::parse_command({{"id", "c3"}, {"type", "set_indicator"}, {"args", json::object()}}));
     CHECK(protocol::parse_command({{"id", 42}, {"type", "kill"}, {"args", {{"pid", 5}}}})->id == "42");
+    // The CCC's live-view lease must pass the allow-list, or the helper never captures.
+    CHECK(protocol::parse_command({{"id", "c4"}, {"type", "screen_lease"}, {"args", {{"ttl_s", 30}}}}));
+    CHECK(protocol::parse_command({{"id", "c5"}, {"type", "process_lease"}, {"args", {{"ttl_s", 20}}}}));
+}
+
+TEST_CASE("evidence_snapshot command needs an alert id and a 32 lowercase hex nonce (F123)") {
+    const std::string nonce(32, 'a');
+    auto cmd = [](json args) { return protocol::parse_command({{"id", "e1"}, {"type", "evidence_snapshot"}, {"args", args}}); };
+    CHECK(cmd({{"alert_id", 9}, {"nonce", "0123456789abcdef0123456789abcdef"}}));
+    CHECK_FALSE(cmd({{"nonce", nonce}}));
+    CHECK_FALSE(cmd({{"alert_id", 0}, {"nonce", nonce}}));
+    CHECK_FALSE(cmd({{"alert_id", "9"}, {"nonce", nonce}}));
+    CHECK_FALSE(cmd({{"alert_id", 9}}));
+    CHECK_FALSE(cmd({{"alert_id", 9}, {"nonce", std::string(32, 'A')}}));        // uppercase
+    CHECK_FALSE(cmd({{"alert_id", 9}, {"nonce", std::string(31, 'a')}}));
+    CHECK_FALSE(cmd({{"alert_id", 9}, {"nonce", nonce.substr(0, 31) + "&"}}));  // never reaches the URL
+    CHECK(protocol::evidence_upload_path(nonce, false) == "/api/agent/v1/evidence?nonce=" + nonce);
+    CHECK(protocol::evidence_upload_path(nonce, true) == "/api/agent/v1/evidence?nonce=" + nonce + "&masked=1");
+}
+
+TEST_CASE("policy screen.auto_evidence is on only for a literal true (F123)") {
+    CHECK_FALSE(Policy::from_json({{"mode", "test"}}).screen_auto_evidence);
+    CHECK(Policy::from_json({{"mode", "test"}, {"screen", {{"auto_evidence", true}}}}).screen_auto_evidence);
+    CHECK_FALSE(Policy::from_json({{"mode", "test"}, {"screen", {{"auto_evidence", "true"}}}}).screen_auto_evidence);
+    CHECK_FALSE(Policy::from_json({{"mode", "test"}, {"screen", {{"auto_evidence", 1}}}}).screen_auto_evidence);
+    const auto p = Policy::from_json({{"mode", "test"}, {"screen", {{"auto_evidence", true}}}});
+    CHECK(Policy::from_json(p.to_json()).screen_auto_evidence);
+}
+
+TEST_CASE("policy screen.evidence_min_severity: low..critical, anything else keeps high (plan step 8)") {
+    auto sev = [](const json& v) {
+        return Policy::from_json({{"mode", "test"}, {"screen", {{"evidence_min_severity", v}}}}).screen_evidence_min_severity;
+    };
+    CHECK(Policy::from_json({{"mode", "test"}}).screen_evidence_min_severity == Severity::high);
+    CHECK(sev("medium") == Severity::medium);
+    CHECK(sev("critical") == Severity::critical);
+    CHECK(sev("info") == Severity::high);
+    CHECK(sev("HIGHEST") == Severity::high);
+    CHECK(sev(2) == Severity::high);
+    auto p = Policy::default_for(Mode::test);
+    p.screen_evidence_min_severity = Severity::low;
+    CHECK(Policy::from_json(p.to_json()).screen_evidence_min_severity == Severity::low);
 }
 
 TEST_CASE("server JSON with wrong types never throws (I-AGENT-13)") {
@@ -524,4 +566,68 @@ TEST_CASE("PAC URLs are only trusted as https on the CCC host (F97)") {
     CHECK_FALSE(trusted_pac_url("https://192.168.10.2:80x/p.pac", "192.168.10.2"));
     CHECK_FALSE(trusted_pac_url("https://192.168.10.2/p\".pac", "192.168.10.2"));
     CHECK_FALSE(trusted_pac_url("https://192.168.10.2/proxy.pac", ""));
+}
+
+TEST_CASE("copy source: focused file attached only to the same app") {
+    const FocusLabel focus{"code", "main.cpp"};
+    PasteInfo pi;
+    pi.source_app = "code";
+    CHECK(resolve_copy_source(pi, focus) == "code (main.cpp)");
+    pi.source_app = "chrome";  // owner differs from the focused editor: no file from the editor
+    CHECK(resolve_copy_source(pi, focus) == "chrome");
+    pi.source_app = "";  // owner unknown: the focused window copied
+    CHECK(resolve_copy_source(pi, focus) == "code (main.cpp)");
+    CHECK(resolve_copy_source(pi, FocusLabel{}) == "");
+}
+
+TEST_CASE("paste route: source from matching copy, owner, or unknown") {
+    CopyRecord last{"chrome", 812, 31, true, 0.8, 1000};
+    PasteInfo pi;
+    pi.chars = 812;
+    pi.lines = 31;
+    pi.target_app = "code";
+    auto r = resolve_paste_route(pi, FocusLabel{"code", "a.py"}, last);
+    CHECK(r.src == "chrome");
+    CHECK(r.dst == "code (a.py)");
+
+    // Focus state lags: the app focused at paste time wins, and gets no stale file.
+    r = resolve_paste_route(pi, FocusLabel{"chrome", ""}, last);
+    CHECK(r.dst == "code");
+    r = resolve_paste_route(pi, FocusLabel{"firefox", "x.cpp"}, last);
+    CHECK(r.dst == "code");
+
+    // Clipboard changed since the recorded copy: the owner at paste time, never the older copy.
+    pi.chars = 40;
+    pi.lines = 1;
+    pi.source_app = "gedit";
+    CHECK(resolve_paste_route(pi, FocusLabel{}, last).src == "gedit");
+    pi.source_app = "";
+    CHECK(resolve_paste_route(pi, FocusLabel{}, last).src == "");
+
+    // Copy and paste inside one editor keep both file labels.
+    CopyRecord same{"code (a.cpp)", 10, 2, false, 0, 0};
+    PasteInfo p2;
+    p2.chars = 10;
+    p2.lines = 2;
+    p2.source_app = "code";
+    p2.target_app = "code";
+    r = resolve_paste_route(p2, FocusLabel{"code", "b.cpp"}, same);
+    CHECK(r.src == "code (a.cpp)");
+    CHECK(r.dst == "code (b.cpp)");
+}
+
+TEST_CASE("clipboard manager re-owning the last copy is not a new copy") {
+    CopyRecord last{"code (main.cpp)", 120, 5, true, 0.7, 10'000};
+    PasteInfo pi;
+    pi.is_copy = true;
+    pi.chars = 120;
+    pi.lines = 5;
+    pi.source_app = "gpaste-daemon";
+    CHECK(is_clipboard_reown(pi, last, 10'300));
+    CHECK_FALSE(is_clipboard_reown(pi, last, 13'000));  // too late: a real copy
+    pi.source_app = "code";                              // same app copying again
+    CHECK_FALSE(is_clipboard_reown(pi, last, 10'300));
+    pi.source_app = "gpaste-daemon";
+    pi.chars = 121;                                      // different content
+    CHECK_FALSE(is_clipboard_reown(pi, last, 10'300));
 }

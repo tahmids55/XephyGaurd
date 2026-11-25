@@ -42,10 +42,13 @@ class DashboardTest extends TestCase
         app(SessionManager::class)->stop($s);
         app(SessionManager::class)->start($lab, $this->profile('Practice: AI allowed, logged'), 'CS102');
         $this->actingAs($admin);
-        foreach (['/', '/alerts', '/sessions', '/enroll', '/profiles', '/reports', "/reports/{$s->id}", '/roster', '/signatures',
+        foreach (['/', '/alerts', '/sessions', '/enroll', '/profiles', '/timetable', '/reports', "/reports/{$s->id}", '/roster', '/signatures',
             '/health', '/settings', '/users', '/audit', '/notice'] as $url) {
             $this->get($url)->assertOk();
         }
+        // timetable and profiles are separate pages with their own sidebar entries
+        $this->get('/timetable')->assertSee('Add a class')->assertDontSee('Save profile')->assertSee('href="'.route('profiles.index').'"', false);
+        $this->get('/profiles')->assertSee('Save profile')->assertDontSee('Add a class')->assertSee('href="'.route('timetable.index').'"', false);
         $this->getJson("/pcs/{$pc->id}")->assertOk()->assertJsonStructure(['pc', 'timeline', 'keyrate']);
         $this->get('/ca.crt')->assertOk()->assertSee('BEGIN CERTIFICATE');
         $this->get('/install/linux.sh')->assertOk()->assertSee('xephyguard-agent enroll');

@@ -7,6 +7,8 @@
 #include <vector>
 
 #include "agent_state.h"
+#include "downscale.h"
+#include "still_jpeg.h"
 
 #if defined(_WIN32)
 #include "win_dxgi_capture.h"
@@ -212,6 +214,63 @@ void ScreenStreamer::stop() {
     impl_->stop_capture_locked();
     impl_->sm.reset();
     impl_->stream_id = 0;
+}
+
+EvidenceShot ScreenStreamer::evidence_shot(const EvidenceRequest& req) {
+    using Kind = EvidenceShot::Kind;
+    const int max_w = std::clamp(req.max_width, 320, 3840);
+    const int quality = std::clamp(req.quality, 30, 95);
+    const size_t max_bytes = std::clamp<size_t>(req.max_bytes, 64 * 1024, 4 * 1024 * 1024);
+    CaptureFactory factory;
+    std::shared_ptr<PrivacyFilter> filter;
+    {
+        std::lock_guard lk(impl_->mu);  // copies only: the capture below runs without the streamer lock
+        factory = impl_->factory;
+        filter = make_filter(impl_->window_source, impl_->mask_rules);
+    }
+    auto ms = [] {
+        return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now().time_since_epoch()).count());
+    };
+    if (filter->check_masked(ms())) return {Kind::masked, {}, {}};
+    auto cap = factory ? factory() : nullptr;
+    if (!cap || !cap->initialize() || !cap->start()) return {Kind::failed, {}, "capture_unavailable"};
+    if (cap->all_screens_view()) cap->select_monitor(kAllScreens);  // the whole desktop, every monitor
+    cap->request_full();
+    Frame f;
+    CaptureStatus st = CaptureStatus::Error;
+    for (int i = 0; i < 5; ++i) {  // a fresh capture normally returns the whole screen at once
+        st = cap->capture(f);
+        if (st != CaptureStatus::NoChange) break;
+        cap->wait_for_change(50);
+        cap->request_full();
+    }
+    cap->stop();
+    if (st == CaptureStatus::SecureDesktop || (st == CaptureStatus::Ok && f.secure_desktop))
+        return {Kind::masked, {}, {}};
+    if (st != CaptureStatus::Ok || f.width <= 0 || f.height <= 0 || f.stride < f.width * 4 ||
+        f.bgra.size() < static_cast<size_t>(f.stride) * static_cast<size_t>(f.height))
+        return {Kind::failed, {}, "capture_failed"};
+    // The window may have changed while the screen was read: check again, the picture is dropped if masked now.
+    if (filter->check_masked(ms())) return {Kind::masked, {}, {}};
+
+    std::vector<uint8_t> scaled;
+    const uint8_t* px = f.bgra.data();
+    int w = f.width, h = f.height, stride = f.stride;
+    if (w > max_w) {
+        int sh = 0;
+        scaled = downscale_box(f, max_w, &sh);
+        if (scaled.empty() || sh <= 0) return {Kind::failed, {}, "scale_failed"};
+        px = scaled.data();
+        w = max_w;
+        h = sh;
+        stride = max_w * 4;
+    }
+    std::string jpeg = encode_still_jpeg(px, w, h, stride, quality);
+    if (jpeg.size() > max_bytes) jpeg = encode_still_jpeg(px, w, h, stride, 30);  // busy screen: one smaller try
+    if (jpeg.empty()) return {Kind::failed, {}, "encode_failed"};
+    if (jpeg.size() > max_bytes) return {Kind::failed, {}, "too_large"};
+    return {Kind::jpeg, std::move(jpeg), {}};
 }
 
 bool ScreenStreamer::is_running() const {

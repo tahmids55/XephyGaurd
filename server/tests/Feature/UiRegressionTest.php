@@ -118,6 +118,56 @@ class UiRegressionTest extends TestCase
         $this->assertTrue($retiredAlerts[0]['pcRetired']);
     }
 
+    public function test_alert_details_json_returns_reported_context_and_review_history(): void
+    {
+        Queue::fake();
+        $lab = $this->bootLab();
+        $pc = Pc::create(['lab_id' => $lab->id, 'name' => 'PC-07', 'hostname' => 'pc07', 'ip' => '192.168.10.27',
+            'os' => 'Ubuntu 24.04', 'macs' => ['aa:bb:cc:00:00:07']]);
+        $alert = Alert::create([
+            'pc_id' => $pc->id, 'rule_id' => 'net.browser_ai', 'severity' => 'high', 'category' => 'browser_ai',
+            'title' => 'AI web service stream (chatgpt.com): chrome', 'user' => 'student1', 'occurred_at' => now()->subMinute(),
+            'details' => ['rule_id' => 'net.browser_ai', 'subject' => 'chrome', 'actions' => ['log', 'alert'],
+                'context' => ['process' => 'chrome', 'domain' => 'chatgpt.com']],
+        ]);
+
+        $this->get('/alerts/'.$alert->id)->assertRedirect('/login');
+
+        $admin = $this->user('admin');
+        $this->actingAs($admin)->getJson('/alerts/'.$alert->id)->assertOk()
+            ->assertJson(['id' => $alert->id, 'pc' => 'PC-07', 'category' => 'browser_ai', 'acked' => false,
+                'details' => ['context' => ['domain' => 'chatgpt.com']], 'reviews' => []]);
+
+        $this->actingAs($admin)->postJson('/alerts/'.$alert->id.'/ack', ['comment' => 'Checked, closed tab'])->assertOk();
+        $this->actingAs($admin)->getJson('/alerts/'.$alert->id)->assertOk()
+            ->assertJson(['acked' => true, 'by' => 'Admin', 'reviews' => [['by' => 'Admin', 'note' => 'Checked, closed tab']]]);
+
+        $this->actingAs($admin)->getJson('/alerts/999999')->assertNotFound();
+    }
+
+    public function test_alerts_page_and_needs_attention_carry_category_and_details_popup(): void
+    {
+        Queue::fake();
+        $lab = $this->bootLab();
+        $pc = Pc::create(['lab_id' => $lab->id, 'name' => 'PC-08', 'hostname' => 'pc08', 'ip' => '192.168.10.28',
+            'os' => 'Ubuntu 24.04', 'macs' => ['aa:bb:cc:00:00:08']]);
+        Alert::create(['pc_id' => $pc->id, 'rule_id' => 'net.vpn_adapter', 'severity' => 'high', 'category' => 'network',
+            'title' => 'VPN adapter up', 'user' => 'student2', 'occurred_at' => now()->subMinute()]);
+
+        $admin = $this->user('admin');
+        $res = $this->actingAs($admin)->get('/alerts')->assertOk();
+        preg_match('/<script type="application\/json" id="xg-page-data">(.*?)<\/script>/s', $res->getContent(), $m);
+        $data = json_decode(html_entity_decode($m[1] ?? '{}'), true);
+        $this->assertSame('network', $data['items'][0]['cat'] ?? null);
+        $res->assertSee('aria-label="Alert details"', false)->assertSee('openAlert(xgNewest(r.items))', false);
+        $res->assertSee('aria-label="Selected alerts"', false)->assertSee('@click="ackPicked()"', false)
+            ->assertSee('pick(r, $event.target.checked)', false);
+
+        $this->actingAs($admin)->get('/')->assertOk()
+            ->assertSee('aria-label="Alert details"', false)->assertSee('openAlert(xgNewest(g.items))', false)
+            ->assertDontSee('@click.stop="openAlert(a)">Details</button>', false);
+    }
+
     public function test_alerts_open_filter_and_json_acknowledge_handle_retired_pcs(): void
     {
         Queue::fake();

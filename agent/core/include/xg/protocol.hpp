@@ -18,6 +18,7 @@ inline constexpr const char* kPolicyPath = "/api/agent/v1/policy";
 inline constexpr const char* kEventsPath = "/api/agent/v1/events";
 inline constexpr const char* kBroadcastAuthPath = "/api/agent/v1/broadcasting/auth";
 inline constexpr const char* kCommandAckPrefix = "/api/agent/v1/commands/";
+inline constexpr const char* kEvidencePath = "/api/agent/v1/evidence";  // F123 auto screenshot upload
 
 struct BatchAck {
     int64_t ack_seq = 0;
@@ -40,6 +41,11 @@ struct Command {
 };
 /// Validates and parses a command received over the WebSocket channel.
 std::optional<Command> parse_command(const json& j, std::string* err = nullptr);
+
+/// `evidence_snapshot` nonce: exactly 32 lowercase hex characters.
+bool valid_evidence_nonce(const std::string& nonce);
+/// Path + query of the evidence upload; the nonce must be valid (it is put into the URL).
+std::string evidence_upload_path(const std::string& nonce, bool masked);
 
 /// Clock offset estimate: server time minus local midpoint of the request.
 inline int64_t clock_offset(int64_t local_send_ms, int64_t local_recv_ms, int64_t server_ms) {

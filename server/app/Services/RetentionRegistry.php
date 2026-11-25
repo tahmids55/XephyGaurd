@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\Alert;
+use App\Models\AlertSnapshot;
 use App\Models\Command;
 use App\Models\Event;
 use App\Models\EvidenceCapture;
@@ -44,6 +45,7 @@ final class RetentionRegistry
             'paste_events' => [PasteEvent::class, 'occurred_at', self::RAW, null],
             'net_events' => [NetEvent::class, 'occurred_at', self::RAW, null],
             'commands' => [Command::class, 'created_at', self::RAW, null],
+            'alert_snapshots' => [AlertSnapshot::class, 'captured_at', self::RAW, null],   // copies of raw data (F123)
             'evidence_captures' => [EvidenceCapture::class, 'occurred_at', self::RAW, 'file_path'],
             'alerts' => [Alert::class, 'occurred_at', self::REPORT, null],
             'scores' => [Score::class, 'created_at', self::REPORT, null],

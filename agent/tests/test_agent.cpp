@@ -330,6 +330,199 @@ TEST_CASE("screen_lease command: a positive ttl is accepted, a missing or zero t
     CHECK(r[2].data.at("status") == "ignored");
 }
 
+namespace {
+// F123: the active session (alice, uid 1000) has a helper on conn 5 that can take an evidence screenshot.
+struct EvidenceRig {
+    Harness h;
+    std::vector<EvidenceUpload> uploads;
+    IIpcServer::Peer alice{5, 1000, 4242, "alice"};
+    const std::string nonce = "0123456789abcdef0123456789abcdef";
+    static std::string jpeg() { return std::string("\xff\xd8\xff\xe0", 4) + std::string(100, 'x') + "\xff\xd9"; }
+
+    explicit EvidenceRig(bool enabled = true) {
+        h.agent->set_evidence_out_for_tests([this](EvidenceUpload u) { uploads.push_back(std::move(u)); });
+        auto pol = Policy::default_for(Mode::test);
+        pol.screen_auto_evidence = enabled;
+        h.agent->apply_policy(pol);
+        h.agent->on_helper_message(alice, R"({"t":"screen_caps","evidence":true})");
+    }
+    void connect(const IIpcServer::Peer& p) {
+        h.agent->post(msg::HelperConn{p, true});
+        h.agent->drain();
+    }
+    std::string request(const std::string& id = "e1") {
+        h.agent->handle_command({id, "evidence_snapshot", {{"alert_id", 7}, {"nonce", nonce}}});
+        const auto r = h.of(ev::command_result).back().data;
+        return r.at("status") == "ok" ? "ok" : r.at("detail").at("reason").get<std::string>();
+    }
+    size_t snaps_to(uint64_t conn) {
+        std::lock_guard lk(h.ipc->mu);
+        size_t n = 0;
+        for (const auto& [c, l] : h.ipc->sent) if (c == conn && l.find("\"evidence_snap\"") != std::string::npos) ++n;
+        return n;
+    }
+};
+}  // namespace
+
+TEST_CASE("evidence_snapshot: refused unless the policy enables it; no nonce goes to the helper (F123)") {
+    EvidenceRig off(false);
+    off.connect(off.alice);
+    CHECK(off.request() == "disabled");
+    CHECK(off.snaps_to(5) == 0);
+
+    EvidenceRig r;
+    r.connect(r.alice);
+    CHECK(r.request() == "ok");
+    REQUIRE(r.snaps_to(5) == 1);
+    std::lock_guard lk(r.h.ipc->mu);
+    CHECK(r.h.ipc->sent.back().second.find(r.nonce) == std::string::npos);  // the nonce stays in the service
+}
+
+TEST_CASE("evidence_snapshot: the asked helper's JPEG is uploaded once with the nonce (F123)") {
+    EvidenceRig r;
+    r.connect(r.alice);
+    REQUIRE(r.request() == "ok");
+    CHECK_FALSE(r.h.agent->offer_evidence_record({6, 1000, 1, "alice"}, EvidenceRig::jpeg()));  // other conn
+    CHECK(r.h.agent->offer_evidence_record(r.alice, EvidenceRig::jpeg()));
+    CHECK_FALSE(r.h.agent->offer_evidence_record(r.alice, EvidenceRig::jpeg()));  // one record per request
+    r.h.agent->drain();
+    REQUIRE(r.uploads.size() == 1);
+    CHECK(r.uploads[0].nonce == r.nonce);
+    CHECK_FALSE(r.uploads[0].masked);
+    CHECK(r.uploads[0].jpeg == EvidenceRig::jpeg());
+    CHECK(r.request("e2") == "rate_limited");  // at most one per 30 s, also on the agent
+}
+
+TEST_CASE("evidence_snapshot: masked reply uploads a notice without an image; bad replies upload nothing (F123)") {
+    SECTION("masked") {
+        EvidenceRig r;
+        r.connect(r.alice);
+        REQUIRE(r.request() == "ok");
+        r.h.agent->on_helper_message({6, 1000, 1, "alice"}, R"({"t":"evidence_masked"})");  // not the asked helper
+        CHECK(r.uploads.empty());
+        r.h.agent->on_helper_message(r.alice, R"({"t":"evidence_masked"})");
+        REQUIRE(r.uploads.size() == 1);
+        CHECK(r.uploads[0].masked);
+        CHECK(r.uploads[0].jpeg.empty());
+        CHECK_FALSE(r.h.agent->offer_evidence_record(r.alice, EvidenceRig::jpeg()));  // request is closed
+    }
+    SECTION("not a JPEG") {
+        EvidenceRig r;
+        r.connect(r.alice);
+        REQUIRE(r.request() == "ok");
+        REQUIRE(r.h.agent->offer_evidence_record(r.alice, "GIF89a not a jpeg"));
+        r.h.agent->drain();
+        CHECK(r.uploads.empty());
+    }
+    SECTION("helper failed, then a busy check") {
+        EvidenceRig r;
+        r.connect(r.alice);
+        REQUIRE(r.request() == "ok");
+        CHECK(r.request("e2") == "busy");
+        r.h.agent->on_helper_message(r.alice, R"({"t":"evidence_failed","reason":"no display"})");
+        CHECK(r.uploads.empty());
+        CHECK_FALSE(r.h.agent->offer_evidence_record(r.alice, EvidenceRig::jpeg()));
+    }
+    SECTION("helper disconnects before replying") {
+        EvidenceRig r;
+        r.connect(r.alice);
+        REQUIRE(r.request() == "ok");
+        r.h.agent->post(msg::HelperConn{r.alice, false});
+        r.h.agent->drain();
+        CHECK_FALSE(r.h.agent->offer_evidence_record(r.alice, EvidenceRig::jpeg()));
+    }
+    SECTION("policy turns the flag off before the reply") {
+        EvidenceRig r;
+        r.connect(r.alice);
+        REQUIRE(r.request() == "ok");
+        r.h.agent->apply_policy(Policy::default_for(Mode::test));
+        CHECK_FALSE(r.h.agent->offer_evidence_record(r.alice, EvidenceRig::jpeg()));
+        r.h.agent->on_helper_message(r.alice, R"({"t":"evidence_masked"})");
+        CHECK(r.uploads.empty());
+    }
+}
+
+TEST_CASE("evidence_snapshot: only a capable helper of the active session is asked (F123)") {
+    EvidenceRig r;
+    const IIpcServer::Peer bob{8, 1001, 99, "bob"};  // logged in but not the active session
+    r.connect(bob);
+    r.h.agent->on_helper_message(bob, R"({"t":"screen_caps","evidence":true})");
+    CHECK(r.request() == "no_helper");  // alice's caps arrived before her connection was known
+    r.connect(r.alice);
+    r.h.agent->on_helper_message(r.alice, R"({"t":"screen_caps","evidence":false})");
+    CHECK(r.request("e2") == "no_helper");
+    CHECK(r.snaps_to(8) == 0);
+}
+
+TEST_CASE("evidence fast path: an alert rule hit asks the helper at once and sends the nonce with the event (step 8)") {
+    EvidenceRig r;
+    r.connect(r.alice);
+    r.h.agent->handle_rule_hit(RuleHit{"proc.ollama", "local_model", "Ollama", Severity::medium}, "ollama", json::object());
+    CHECK_FALSE(r.h.of(ev::rule_hit).back().data.contains("evidence_nonce"));  // below the default min (high)
+    CHECK(r.snaps_to(5) == 0);
+
+    r.h.agent->handle_rule_hit(RuleHit{"proc.lmstudio", "local_model", "LM Studio", Severity::high}, "lms", json::object());
+    const auto d = r.h.of(ev::rule_hit).back().data;
+    REQUIRE(d.contains("evidence_nonce"));
+    const auto nonce = d.at("evidence_nonce").get<std::string>();
+    CHECK(protocol::valid_evidence_nonce(nonce));
+    REQUIRE(r.snaps_to(5) == 1);
+    {
+        std::lock_guard lk(r.h.ipc->mu);
+        CHECK(r.h.ipc->sent.back().second.find(nonce) == std::string::npos);  // the nonce stays in the service
+    }
+    REQUIRE(r.h.agent->offer_evidence_record(r.alice, EvidenceRig::jpeg()));
+    r.h.agent->drain();
+    REQUIRE(r.uploads.size() == 1);
+    CHECK(r.uploads[0].nonce == nonce);
+    CHECK(r.uploads[0].after_events);   // sent only after the CCC stored this rule_hit
+    CHECK(r.request("e9") == "rate_limited");  // the CCC's command is refused inside the 30 s gap
+
+    r.h.agent->handle_rule_hit(RuleHit{"proc.jan", "local_model", "Jan", Severity::critical}, "jan", json::object());
+    CHECK_FALSE(r.h.of(ev::rule_hit).back().data.contains("evidence_nonce"));  // rate-limited: no nonce
+    CHECK(r.snaps_to(5) == 1);
+}
+
+TEST_CASE("evidence fast path: nothing when the policy flag is off or the rule does not alert (step 8)") {
+    EvidenceRig off(false);
+    off.connect(off.alice);
+    off.h.agent->handle_rule_hit(RuleHit{"proc.ollama", "local_model", "Ollama", Severity::critical}, "o", json::object());
+    CHECK_FALSE(off.h.of(ev::rule_hit).back().data.contains("evidence_nonce"));
+    CHECK(off.snaps_to(5) == 0);
+
+    EvidenceRig r;
+    r.connect(r.alice);
+    auto pol = Policy::default_for(Mode::test);
+    pol.screen_auto_evidence = true;
+    pol.rule_actions["proc.ollama"] = {Action::log};
+    r.h.agent->apply_policy(pol);
+    r.h.agent->handle_rule_hit(RuleHit{"proc.ollama", "local_model", "Ollama", Severity::critical}, "o", json::object());
+    CHECK_FALSE(r.h.of(ev::rule_hit).back().data.contains("evidence_nonce"));
+    CHECK(r.snaps_to(5) == 0);
+}
+
+TEST_CASE("process_lease command: a grant sends a snapshot at once, a renewal does not, bad ttls are ignored") {
+    Harness h;
+    h.procs->procs = {{1, 0, "/sbin/init", "init", "", "root", 0, 1}};
+    h.agent->apply_policy(Policy::default_for(Mode::always_on));
+    const auto before = h.of(ev::process_snapshot).size();
+    h.agent->handle_command({"p1", "process_lease", {{"ttl_s", 20}}});
+    CHECK(h.of(ev::process_snapshot).size() == before + 1);
+    h.agent->handle_command({"p2", "process_lease", {{"ttl_s", 20}}});  // renewal inside the lease
+    CHECK(h.of(ev::process_snapshot).size() == before + 1);
+    h.agent->handle_command({"p3", "process_lease", {{"ttl_s", 0}}});
+    h.agent->handle_command({"p4", "process_lease", {{"ttl_s", 61}}});  // over the agent's cap
+    h.agent->handle_command({"p5", "process_lease", json::object()});
+    const auto r = h.of(ev::command_result);
+    REQUIRE(r.size() >= 5);
+    const auto n = r.size();
+    CHECK(r[n - 5].data.at("status") == "ok");
+    CHECK(r[n - 4].data.at("status") == "ok");
+    CHECK(r[n - 3].data.at("status") == "ignored");
+    CHECK(r[n - 2].data.at("status") == "ignored");
+    CHECK(r[n - 1].data.at("status") == "ignored");
+}
+
 TEST_CASE("policy screen.privacy_rules parse, round-trip, and a malformed list rejects the policy") {
     const json ok = {{"screen", {{"privacy_rules", json::array({{{"process", "keepassxc"}}, {{"title_regex", "bank|private"}}})}}}};
     std::string err;

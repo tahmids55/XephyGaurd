@@ -137,6 +137,10 @@ class PolicyService
             'screen' => array_filter([
                 'privacy_rules' => app(ScreenPrivacyRules::class)->rules(),
                 'cpu_budget_pct' => ($b = Setting::get('screen.cpu_budget_pct')) !== null ? (int) $b : null,
+                // F123: the agent refuses evidence_snapshot unless this is true (never in Always-on).
+                'auto_evidence' => ($auto = $mode !== 'always_on' && PrivacySettings::autoScreenshot()['enabled']) ? true : null,
+                // Plan step 8: with it the agent asks its helper itself on an `alert` rule_hit at/above this severity.
+                'evidence_min_severity' => $auto ? PrivacySettings::autoScreenshot()['min_severity'] : null,
             ], fn ($v) => $v !== null && $v !== []),
             'suppress_ai_overview' => (bool) ($profile->network['google_udm14'] ?? false),
             'google_search_url' => Setting::get('google_search_url'),

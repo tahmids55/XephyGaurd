@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
 use App\Models\Alert;
+use App\Models\Event;
 use App\Models\Lab;
 use App\Models\LabSession;
 use App\Models\Pc;
@@ -39,23 +40,60 @@ class DashboardController extends Controller
                 'agent_version' => $p->agent?->version,
             ]),
             'profiles' => Profile::query()->orderBy('mode')->get(['id', 'name', 'mode']),
-            'recentAlerts' => Alert::query()->whereNull('acknowledged_at')
-                ->with(['pc:id,name,retired_at', 'acknowledger:id,name'])
-                ->latest('occurred_at')->limit(500)->get()
-                ->concat(
-                    Alert::query()->whereNotNull('acknowledged_at')
-                        ->with(['pc:id,name,retired_at', 'acknowledger:id,name'])
-                        ->latest('acknowledged_at')->limit(30)->get()
-                )
-                ->map(fn ($a) => $a->broadcastPayload() + [
-                    'pc_retired' => $a->pc?->retired_at !== null,
-                    'occurred_at_iso' => $a->occurred_at?->toIso8601String(),
-                    'ago_min' => $a->occurred_at ? max(0, (int) $a->occurred_at->diffInMinutes(now())) : 0,
-                    'acked' => $a->acknowledged_at !== null,
-                    'by' => $a->acknowledger?->name ?? '',
-                    'note' => $a->comment ?? '',
-                ]),
+            'recentAlerts' => $this->recentAlerts(),
         ]);
+    }
+
+    /**
+     * Live lab feed, polled by the dashboard: seat tiles, alerts and a lab-wide event timeline.
+     * Same data and role as the seat map + inspector; nothing new is collected.
+     */
+    public function feed(): JsonResponse
+    {
+        $lab = Lab::current();
+        $session = LabSession::activeFor($lab->id);
+        $pcs = Pc::query()->active()->where('lab_id', $lab->id)->get();
+        $names = $pcs->pluck('name', 'id');
+        $since = $session?->started_at ?? now()->subHours(24);
+        $events = $pcs->isEmpty() ? collect() : Event::query()->whereIn('pc_id', $pcs->pluck('id'))
+            ->where('occurred_at', '>=', $since)
+            ->whereNotIn('type', self::FEED_SKIP)
+            ->latest('occurred_at')->latest('id')->limit(80)
+            ->get(['id', 'pc_id', 'type', 'occurred_at', 'data', 'user']);
+
+        return response()->json([
+            'tiles' => $pcs->map(fn ($p) => $p->tile() + ['capabilities' => $p->capabilities])->values(),
+            'alerts' => $this->recentAlerts(),
+            'events' => $events->map(fn ($e) => [
+                'id' => $e->id, 'pc_id' => $e->pc_id, 'pc' => $names[$e->pc_id] ?? ('PC-'.$e->pc_id),
+                'type' => $e->type, 'at' => $e->occurred_at->format('H:i:s'), 'user' => $e->user,
+                'summary' => InspectorQueries::summarize($e->type, $e->data ?? []),
+            ])->values(),
+        ]);
+    }
+
+    /** Noisy or bulk event types left out of the lab-wide feed (still in the per-PC inspector). */
+    private const FEED_SKIP = ['key_stats', 'heartbeat', 'process_snapshot', 'extension_scan', 'artifact_scan', 'window_focus', 'process_stop'];
+
+    /** Open alerts (newest 500) plus the 30 most recently reviewed, in the dashboard's payload shape. */
+    private function recentAlerts()
+    {
+        return Alert::query()->whereNull('acknowledged_at')
+            ->with(['pc:id,name,retired_at', 'acknowledger:id,name'])
+            ->latest('occurred_at')->limit(500)->get()
+            ->concat(
+                Alert::query()->whereNotNull('acknowledged_at')
+                    ->with(['pc:id,name,retired_at', 'acknowledger:id,name'])
+                    ->latest('acknowledged_at')->limit(30)->get()
+            )
+            ->map(fn ($a) => $a->broadcastPayload() + [
+                'pc_retired' => $a->pc?->retired_at !== null,
+                'occurred_at_iso' => $a->occurred_at?->toIso8601String(),
+                'ago_min' => $a->occurred_at ? max(0, (int) $a->occurred_at->diffInMinutes(now())) : 0,
+                'acked' => $a->acknowledged_at !== null,
+                'by' => $a->acknowledger?->name ?? '',
+                'note' => $a->comment ?? '',
+            ])->values();
     }
 
     /** Detail drawer: timeline, processes, network log, key-rate chart, paste log. */

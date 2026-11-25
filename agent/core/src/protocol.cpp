@@ -45,7 +45,8 @@ std::optional<BatchAck> parse_batch_ack(const std::string& body, std::string* er
 std::optional<Command> parse_command(const json& j, std::string* err) {
     static const std::regex id_re("^[A-Za-z0-9_-]{1,64}$");
     static const std::vector<std::string> known = {"policy_updated", "message", "kill", "isolate_notice",
-                                                   "rescan", "ping", "flush"};
+                                                   "rescan", "ping", "flush", "screen_lease",
+                                                   "process_lease", "evidence_snapshot"};
     if (!j.is_object()) { if (err) *err = "command not an object"; return std::nullopt; }
     Command c;
     c.id = j.contains("id") ? (j["id"].is_string() ? j["id"].get<std::string>() : j["id"].dump()) : "";
@@ -67,7 +68,26 @@ std::optional<Command> parse_command(const json& j, std::string* err) {
         if (err) *err = "kill needs pid or exe";
         return std::nullopt;
     }
+    if (c.type == "evidence_snapshot") {
+        const auto& a = c.args;
+        if (!a.contains("alert_id") || !a["alert_id"].is_number_integer() || a["alert_id"].get<int64_t>() < 1 ||
+            !a.contains("nonce") || !a["nonce"].is_string() || !valid_evidence_nonce(a["nonce"].get<std::string>())) {
+            if (err) *err = "evidence_snapshot needs alert_id >= 1 and a 32-hex nonce";
+            return std::nullopt;
+        }
+    }
     return c;
+}
+
+bool valid_evidence_nonce(const std::string& nonce) {
+    if (nonce.size() != 32) return false;
+    for (const char ch : nonce)
+        if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'))) return false;
+    return true;
+}
+
+std::string evidence_upload_path(const std::string& nonce, bool masked) {
+    return std::string(kEvidencePath) + "?nonce=" + nonce + (masked ? "&masked=1" : "");
 }
 
 }  // namespace xg::protocol

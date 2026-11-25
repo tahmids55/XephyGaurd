@@ -15,7 +15,18 @@ class ProfileController extends Controller
 {
     public function index()
     {
+        return $this->page('profiles');
+    }
+
+    public function timetable()
+    {
+        return $this->page('timetable');
+    }
+
+    private function page(string $page)
+    {
         return view('profiles.index', [
+            'page' => $page,
             'profiles' => Profile::query()->orderBy('mode')->orderBy('name')->get(),
             'entries' => TimetableEntry::query()->with('profile')->orderBy('weekday')->orderBy('start_time')->get(),
         ]);

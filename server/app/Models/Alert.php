@@ -2,11 +2,16 @@
 
 namespace App\Models;
 
+use App\Observers\AlertSnapshotRecorder;
+use App\Observers\AutoScreenshotRequester;
+use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Facades\DB;
 
+#[ObservedBy([AlertSnapshotRecorder::class, AutoScreenshotRequester::class])]
 class Alert extends Model
 {
     protected $fillable = ['pc_id', 'lab_session_id', 'event_id', 'rule_id', 'severity', 'category', 'title', 'details',
@@ -29,6 +34,11 @@ class Alert extends Model
     public function acknowledger(): BelongsTo
     {
         return $this->belongsTo(User::class, 'acknowledged_by');
+    }
+
+    public function snapshot(): HasOne
+    {
+        return $this->hasOne(AlertSnapshot::class);
     }
 
     public function reviews(): HasMany
@@ -63,7 +73,7 @@ class Alert extends Model
     {
         return [
             'id' => $this->id, 'pc_id' => $this->pc_id, 'pc' => $this->pc?->name, 'rule_id' => $this->rule_id,
-            'severity' => $this->severity, 'title' => $this->title, 'user' => $this->user,
+            'category' => $this->category, 'severity' => $this->severity, 'title' => $this->title, 'user' => $this->user,
             'occurred_at' => $this->occurred_at?->format('H:i:s'), 'session_id' => $this->lab_session_id,
         ];
     }

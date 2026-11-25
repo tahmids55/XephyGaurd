@@ -40,11 +40,14 @@ struct ArtifactsScanned { ArtifactScanResult result; };
 /// A local port answered an LLM API path (probe worker, F74). `rule` is the port rule that required the probe,
 /// if any; otherwise the generic LLM API rule applies.
 struct ProbeDone { ListeningSocket sock; std::string path; std::optional<RuleHit> rule; };
+/// The evidence JPEG record from the helper that was asked for it (F123). Size checked by the IPC framing.
+struct EvidenceJpeg { IIpcServer::Peer peer; std::string jpeg; };
 }  // namespace msg
 
 using AgentMessage = std::variant<msg::ProcessExec, msg::NetworkChanged, msg::DeviceEvent, msg::HelperLine,
                                   msg::HelperConn, msg::FileEvent, msg::KeyEvent, msg::CommandMsg, msg::PolicyFetched,
-                                  msg::AckReceived, msg::EnrollApproved, msg::ArtifactsScanned, msg::ProbeDone>;
+                                  msg::AckReceived, msg::EnrollApproved, msg::ArtifactsScanned, msg::ProbeDone,
+                                  msg::EvidenceJpeg>;
 
 /// Everything the uplink and realtime threads may read. Published by the core, never mutated in place.
 struct UplinkView {

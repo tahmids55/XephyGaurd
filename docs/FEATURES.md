@@ -30,7 +30,7 @@ Paths are relative to the repo root. `S/` = `server/app/`, `A/` = `agent/`.
 5. [Sessions, profiles and timetable](#5-sessions-profiles-and-timetable) — F27–F33
 6. [Commands to PCs](#6-commands-to-pcs) — F34–F38
 7. [Alerts and review](#7-alerts-and-review) — F39–F42
-8. [Screen viewing and evidence](#8-screen-viewing-and-evidence) — F43–F47
+8. [Screen viewing and evidence](#8-screen-viewing-and-evidence) — F43–F47, F123
 9. [Scoring, reports and research](#9-scoring-reports-and-research) — F48–F53
 10. [Roster and consent](#10-roster-and-consent) — F54–F57
 11. [Signatures and blocklists](#11-signatures-and-blocklists) — F58–F63
@@ -271,21 +271,37 @@ Paths are relative to the repo root. `S/` = `server/app/`, `A/` = `agent/`.
 
 ### F23. Live lab seat map
 - **What:** grid of seats with online/offline status, colour by open alerts and live score,
-  updated live over Reverb.
-- **Trigger:** `GET /` (+ `/index.html`). Assistant and up. Events `PcUpdated`, `AlertRaised`,
+  updated live over Reverb. Right panel: alerts for all PCs + live timeline for all PCs
+  (polls `GET /lab/feed` every 5 s; skips heartbeats, window titles, process stops).
+  Needs attention items show the plain-language line and "Detected by" chip; clicking an item opens the alert details popup of
+  the newest alert in the group (same as F24); buttons Open PC and Mark reviewed.
+- **Trigger:** `GET /` (+ `/index.html`), `GET /lab/feed`. Assistant and up. Events `PcUpdated`, `AlertRaised`,
   `SessionChanged` on `lab.{id}`.
 - **Code:** `S/Http/Controllers/Web/DashboardController.php::index`, `resources/views/dashboard/live.blade.php`,
   `resources/js/app.js`, `S/Events/*`.
-- **Status:** working (`dashboard_includes_all_52_unacknowledged_alerts_including_retired_pcs`,
-  `dashboard_reconciles_stale_live_score_when_no_open_alerts_exist`).
+- **Status:** working (`feed_returns_tiles_alerts_and_events_for_all_pcs`, `dashboard_includes_all_52_unacknowledged_alerts_including_retired_pcs`,
+  `dashboard_reconciles_stale_live_score_when_no_open_alerts_exist`, `alerts_page_and_needs_attention_carry_category_and_details_popup`).
 - **Test:** 1. Open `/` with one PC online. 2. Stop the agent: the seat goes offline within ~15 s.
 
-### F24. PC inspector (9 tabs)
-- **What:** per-PC detail: processes, extensions/installed AI, network/ports/adapters, USB devices,
-  copy/paste, browser tabs, events timeline, screen, alerts.
-- **Trigger:** `GET /pcs/{pc}` (JSON for the drawer). Assistant and up.
+### F24. PC inspector (13 tabs, popup)
+- **What:** centered popup opened by clicking a seat; per-PC detail: overview (props + counts), processes, extensions/installed AI, network (adapters + ports), DNS log (gateway DNS & proxy log), USB devices (each its own tab),
+  copy/paste, Traffic (AI traffic, plus All traffic: every proxy net_event this session grouped by host + result
+  Allowed / Blocked / AI with request count and last/first seen, host names only; allowed hosts only exist while
+  `privacy.log_urls` is on, otherwise a note or a "Site logging is off" empty state), Browser tabs (focused browser windows only, per `browsers` in web.yaml; one row
+  per browser + title with last/first seen and count; "Active" = the PC's latest focus and the PC is online), events timeline, screen, alerts. Opening the popup on an online X11 PC starts Live
+  (audited; the student sees the viewing indicator) so Overview and Screen show the live screen first; a PC without
+  live capability gets one snapshot. Live runs on Overview and Screen, stops on other tabs or when the popup closes, and resumes on
+  return to Overview or Screen.
+  Programs tab: search box (name, title, rule) and click-to-sort on Program, CPU, Memory, Network (client-side);
+  while open it holds a process lease (`POST /pcs/{pc}/process-lease`, agent snapshot every 2 s, DECISIONS #31)
+  and re-reads `GET /pcs/{pc}` every 2 s, so the list updates like a task manager.
+  Alerts tab: plain-language line per alert, "Detected by" column (Program, Browser / website, Code editor, Network,
+  USB device, Files on disk, Container / VM, Open port, XephyGuard agent; from rule prefix + category) with filter pills,
+  and a Details popup (`GET /alerts/{alert}`: what the PC reported, what the agent did, session, review history,
+  rule id under "Technical details") with Mark reviewed.
+- **Trigger:** `GET /pcs/{pc}` (JSON for the popup), `GET /alerts/{alert}` (alert details JSON). Assistant and up.
 - **Code:** `DashboardController::pc` (also marks some data as seen).
-- **Status:** working (`copy_from_chrome_and_paste_in_vscode_updates_dashboard`,
+- **Status:** working (`copy_from_chrome_and_paste_in_vscode_updates_dashboard`, `alert_details_json_returns_reported_context_and_review_history`,
   `every_screen_renders_for_admin`). ⚠PRIV shows window/tab titles and file names (F75, F79).
 - **Test:** 1. Click a seat. 2. Open each tab and check it has data.
 
@@ -350,7 +366,7 @@ Paths are relative to the repo root. `S/` = `server/app/`, `A/` = `agent/`.
 
 ### F31. Timetable
 - **What:** sessions start and stop on a weekly schedule.
-- **Trigger:** `POST /timetable`, `POST /timetable/{entry}/toggle`, `DELETE /timetable/{entry}`
+- **Trigger:** page `GET /timetable` (+ `.html`, own sidebar entry, Alt+4; Profiles is Alt+0); `POST /timetable`, `POST /timetable/{entry}/toggle`, `DELETE /timetable/{entry}`
   (instructor and up); cron F107.
 - **Code:** `ProfileController` (`saveEntry`, `toggleEntry`, `deleteEntry`), `SessionManager::timetableTick`.
 - **In/out/side effects:** writes `timetable_entries`; starts/stops `lab_sessions`.
@@ -433,13 +449,19 @@ on `private-pc.<id>` (`S/Events/AgentCommand.php`) and acknowledged in the next 
 - **Test:** 1. Start a Test session. 2. Open an AI app on a PC. 3. An alert appears on `/alerts`.
 
 ### F40. Alerts list and filters
+- **What:** severity, session and unreviewed filters, search, group repeats; each row has the plain-language line and
+  "Detected by" chip, with "Detected by" filter pills (client-side, current page) and the alert details popup
+  (`GET /alerts/{alert}`, same as F24) from the expanded row or any grouped item.
 - **Trigger:** `GET /alerts` (+ `.html`). Assistant and up.
 - **Code:** `S/Http/Controllers/Web/AlertController.php::index`.
-- **Status:** working (`alerts_open_filter_and_json_acknowledge_handle_retired_pcs`).
+- **Status:** working (`alerts_open_filter_and_json_acknowledge_handle_retired_pcs`,
+  `alerts_page_and_needs_attention_carry_category_and_details_popup`).
 - **Test:** 1. Open `/alerts`. 2. Filter "open": only unacknowledged alerts.
 
 ### F41. Acknowledge alerts (single and batch)
-- **What:** staff mark alerts reviewed, with a comment; the seat turns green again.
+- **What:** staff mark alerts reviewed, with a comment; the seat turns green again. On `/alerts`, checkboxes
+  select unreviewed rows (a grouped row selects all its items; "Select all shown"; a filter change clears the
+  selection) and "Mark N as reviewed" sends them in one batch with an optional note.
 - **Trigger:** `POST /alerts/{alert}/ack`, `POST /alerts/ack-batch` (up to 500 IDs).
 - **Code:** `AlertController::acknowledge`, `acknowledgeBatch`.
 - **Status:** working (`acknowledging_all_alerts_turns_seat_green_and_resets_live_score`).
@@ -509,6 +531,32 @@ on `private-pc.<id>` (`S/Events/AgentCommand.php`) and acknowledged in the next 
   and `xgbench`.
 - **Status:** retired. Screen streaming is only through the helper-embedded streamer (F43).
 - **Test:** none; nothing to test.
+
+### F123. Auto evidence snapshot on alert ⚠PRIV ⚠SEC
+- **What:** when an alert is raised the CCC keeps evidence at once: a context snapshot (always) and, if the policy
+  turns it on, one screenshot taken by the PC itself (DECISIONS #32, docs/plan/evidence.md).
+- **Trigger:** any `Alert` created (EventIngestor, NetEventsController, SessionManager). Screenshot only with policy
+  `evidence.auto_screenshot` (default off) and severity ≥ `evidence.min_severity` (default `high`), at most 1 per PC per 30 s.
+- **Code:** context: `S/Observers/AlertSnapshotRecorder.php` (`#[ObservedBy]` on `Alert`), `S/Models/AlertSnapshot.php`;
+  request: `S/Observers/AutoScreenshotRequester.php`, `PrivacySettings::autoScreenshot`; upload:
+  `S/Http/Controllers/Agent/EvidenceUploadController.php`; admin toggle: `AdminController::saveAutoScreenshot`, `admin/settings.blade.php`; agent: `agent/core/src/agent.cpp` (command, nonce, upload),
+  `ScreenStreamer::evidence_shot` in `agent/apps/screen_streamer.cpp` (helper capture); UI: `AlertController::show/snapshot`,
+  `alerts/_details-modal.blade.php`. Fast path (step 8): an agent `rule_hit` with the `alert` action at/above
+  `screen.evidence_min_severity` asks the helper itself and sends `evidence_nonce`; the CCC records it as a `local`
+  command (same guards, nothing pushed) and the uplink uploads after that event's ack (`Agent::request_evidence`,
+  `Uplink::send_evidence`; agent tests run, uplink ordering not run against a real CCC).
+- **In/out/side effects:** `alert_snapshots` row (copies of data the CCC already holds + sha256); screenshot as an
+  `evidence_captures` row with `alert_id`, `source = auto`, stored like F46; audit on save and every view.
+- **Status:** context snapshot working (`AlertSnapshotTest`: latest process list, events and net of the last 120 s, sha256
+  tamper check; purged with raw data). Screenshot request working server side (`AutoScreenshotRequestTest`: settings
+  `evidence.auto_screenshot` / `evidence.min_severity`, `evidence_snapshot` command with a single-use nonce after commit,
+  policy `screen.auto_evidence`, notice sentence). Admin toggle working (`AdminEvidenceSettingsTest`: Settings → Privacy, switch + minimum severity low–critical, admin only, each change audited as `evidence.settings.change` with from/to; UI JS not run in a browser). Upload `POST /api/agent/v1/evidence` working (`AutoEvidenceUploadTest`: nonce
+  single use, other PC / expired / non-JPEG refused, masked reply audited, encrypted at rest). Agent side built and unit-tested with fake capture (command, single reply, upload; helper: mask
+  check before and after the capture, ≤ 1920 px, JPEG ≤ 4 MiB); never run end to end on a real X11 desktop; Windows
+  syntax-checked in CI only. Alert detail UI working server side (`AlertEvidenceViewTest`): context opens on request
+  (`GET /alerts/{id}/snapshot`, audited `alert.snapshot.view`, hash check shown); screenshot status requested / masked /
+  captured, image link instructor+ only, opened on click via audited `evidence.view`; UI JS not run in a browser.
+- **Test:** 1. Turn on `evidence.auto_screenshot`. 2. Trigger a high alert on a PC. 3. The alert shows context and a screenshot.
 
 ---
 
@@ -761,8 +809,11 @@ and queues events in a local SQLite queue (`A/core/src/event_queue*`), sent in b
   clipboard text leaves the function (`paste.cpp`).
 - **Events:** `paste`, `copy`; alert when over `paste_alert_chars`.
 - **Code:** `A/core/src/paste.cpp`, helper `paste_probe`; `EventIngestor`.
-- **Status:** working (`clipboard text is reduced to features`,
-  `copy_from_chrome_and_paste_in_vscode_updates_dashboard`). ⚠PRIV file names leak into
+- **Routing:** paste source = last copy if its size matches the clipboard, else the clipboard owner at
+  paste time, else unknown; target = app focused at paste time. A clipboard manager re-owning the last
+  copy is ignored (`resolve_paste_route`, `is_clipboard_reown` in `paste.cpp`).
+- **Status:** working (`clipboard text is reduced to features`, `paste route: source from matching copy,
+  owner, or unknown`, `copy_from_chrome_and_paste_in_vscode_updates_dashboard`). ⚠PRIV file names leak into
   copy/paste events (`docs/HISTORY.md` batch 2).
 - **Test:** 1. Copy 2,000 chars from a browser into an editor. 2. A paste event with size and apps shows.
 
@@ -1247,6 +1298,7 @@ From `server/database/migrations/`.
 | `signature_versions` | signed bundles and which is active |
 | `events` | raw agent events (purged after `retention_days_raw`) |
 | `alerts` | alerts with severity, reasons, acknowledgement |
+| `alert_snapshots` | context frozen when an alert is raised (canonical JSON + sha256, F123; raw retention) |
 | `key_stats` | keystroke timing windows |
 | `paste_events` | paste features |
 | `net_events` | proxy/DNS observations |

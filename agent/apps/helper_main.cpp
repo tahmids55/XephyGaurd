@@ -16,6 +16,7 @@
 #include "xg/ipc_messages.hpp"
 #include "xg/keystats.hpp"
 #include "xg/log.hpp"
+#include "xg/paste.hpp"
 #include "xg/util.hpp"
 #include "xg/config.hpp"
 #include "screen_streamer.hpp"
@@ -79,21 +80,6 @@ static std::string extract_active_file(std::string_view /*app*/, std::string_vie
     return "";
 }
 
-static std::string format_app_with_file(const std::string& app, const std::string& file) {
-    if (app.empty()) return file;
-    if (file.empty()) return app;
-    return app + " (" + file + ")";
-}
-
-struct LastCopyInfo {
-    std::string source_app;
-    uint64_t chars = 0;
-    uint64_t lines = 0;
-    bool looks_like_code = false;
-    double code_score = 0.0;
-    int64_t timestamp_ms = 0;
-};
-
 struct HelperState {
     std::recursive_mutex mu;
     bool want_window = false, want_clipboard = false, want_keys = false;
@@ -106,7 +92,7 @@ struct HelperState {
     std::string last_app;
     std::string last_title;
     std::string last_file;
-    LastCopyInfo last_copy;
+    CopyRecord last_copy;
     // Foreground window for the screen privacy mask only: kept in memory, never sent (ETHICS.md). Separate from
     // last_app/last_title, which exist only while window collection is on.
     std::mutex mask_mu;
@@ -162,46 +148,31 @@ int helper_main() {
     auto send = [&](const json& j) { plat->ipc->send(ipc::line(j)); };
 
     auto report_paste = [&](PasteInfo pi, bool is_copy) {
-        std::string src = pi.source_app;
+        std::string src;
         std::string dst;
-        uint64_t chars = pi.chars;
-        uint64_t lines = pi.lines;
-        bool code = pi.looks_like_code;
-        double score = pi.code_score;
-
         {
             std::lock_guard lk(st.mu);
+            const FocusLabel focus{st.last_app, st.last_file};
             if (is_copy) {
-                std::string app_label = format_app_with_file(st.last_app, st.last_file);
-                if (src.empty()) {
-                    src = !app_label.empty() ? app_label : pi.target_app;
-                } else if (!st.last_file.empty() && src.find('(') == std::string::npos) {
-                    src = format_app_with_file(src, st.last_file);
-                }
-                if (chars > 0 || lines > 0) {
-                    st.last_copy.source_app = src;
-                    st.last_copy.chars = chars;
-                    st.last_copy.lines = lines;
-                    st.last_copy.looks_like_code = code;
-                    st.last_copy.code_score = score;
-                    st.last_copy.timestamp_ms = now_ms();
-                }
+                if (is_clipboard_reown(pi, st.last_copy, now_ms())) return;  // a clipboard manager, not the user
+                src = resolve_copy_source(pi, focus);
+                if (pi.chars > 0 || pi.lines > 0)
+                    st.last_copy = CopyRecord{src, pi.chars, pi.lines, pi.looks_like_code, pi.code_score, now_ms()};
             } else {
-                std::string app_label = format_app_with_file(st.last_app, st.last_file);
-                dst = !app_label.empty() ? app_label : pi.target_app;
-                if (src.empty() || (src == dst && !st.last_copy.source_app.empty() && st.last_copy.source_app != dst)) {
-                    src = st.last_copy.source_app;
-                } else if (src == st.last_app && !st.last_copy.source_app.empty()) {
-                    src = st.last_copy.source_app;
+                if (pi.chars == 0 && pi.lines == 0 && st.last_copy.chars > 0) {
+                    pi.chars = st.last_copy.chars;
+                    pi.lines = st.last_copy.lines;
+                    pi.looks_like_code = st.last_copy.looks_like_code;
+                    pi.code_score = st.last_copy.code_score;
                 }
-                if (chars == 0 && st.last_copy.chars > 0) {
-                    chars = st.last_copy.chars;
-                    lines = st.last_copy.lines;
-                    code = st.last_copy.looks_like_code;
-                    score = st.last_copy.code_score;
-                }
+                const PasteRoute route = resolve_paste_route(pi, focus, st.last_copy);
+                src = route.src;
+                dst = route.dst;
             }
         }
+        const uint64_t chars = pi.chars, lines = pi.lines;
+        const bool code = pi.looks_like_code;
+        const double score = pi.code_score;
 
         if (chars == 0 && lines == 0) {
             return;
@@ -247,7 +218,7 @@ int helper_main() {
                 PasteInfo fallback_pi;
                 {
                     std::lock_guard lk(st.mu);
-                    fallback_pi.source_app = st.last_copy.source_app;
+                    fallback_pi.source_app = st.last_copy.source;
                     fallback_pi.chars = st.last_copy.chars;
                     fallback_pi.lines = st.last_copy.lines;
                     fallback_pi.looks_like_code = st.last_copy.looks_like_code;
@@ -356,7 +327,8 @@ int helper_main() {
               {"delta_tiles", can_live},
               {"monitors", count_monitors()},
               {"secure_desktop", secure_desk},
-              {"ipc_stream", can_live}});  // frames go to the service, which relays them (DECISIONS #24)
+              {"ipc_stream", can_live},  // frames go to the service, which relays them (DECISIONS #24)
+              {"evidence", can_live}});  // one masked-aware screenshot on a serious alert (F123)
     };
 
     ScreenStreamer screen_streamer;
@@ -493,6 +465,26 @@ int helper_main() {
                     if (auto b = crypto::base64_decode(j["data"].get<std::string>()); b && b->size() <= 1024)
                         screen_streamer.on_gateway_message(*b);
                 }
+            } else if (t == "evidence_snap") {
+                // One screenshot for a serious alert (F123, DECISIONS #32). The service holds the nonce and does the
+                // upload; the helper only answers with one JPEG record, evidence_masked or evidence_failed.
+                if (!cfg_screen_enabled.load() || !linux_screen_ready()) {
+                    send({{"t", "evidence_failed"}, {"reason", "screen_unavailable"}});
+                    continue;
+                }
+                EvidenceRequest req;  // evidence_shot() clamps; a missing or odd field keeps the default
+                auto int_field = [&](const char* k, int64_t def) {
+                    return j.contains(k) && j[k].is_number_integer() ? j[k].get<int64_t>() : def;
+                };
+                req.max_width = static_cast<int>(std::clamp<int64_t>(int_field("max_width", req.max_width), 1, 1 << 16));
+                req.quality = static_cast<int>(std::clamp<int64_t>(int_field("quality", req.quality), 1, 100));
+                req.max_bytes = static_cast<size_t>(std::clamp<int64_t>(
+                    int_field("max_bytes", static_cast<int64_t>(req.max_bytes)), 1, static_cast<int64_t>(ipc::kMaxEvidenceJpeg)));
+                const EvidenceShot shot = screen_streamer.evidence_shot(req);
+                if (shot.kind == EvidenceShot::Kind::jpeg && ipc::send_evidence_jpeg(*plat->ipc, shot.jpeg)) continue;
+                if (shot.kind == EvidenceShot::Kind::masked) send({{"t", "evidence_masked"}});
+                else send({{"t", "evidence_failed"},
+                           {"reason", shot.kind == EvidenceShot::Kind::jpeg ? "send_failed" : shot.reason}});
             } else if (t == "paste_probe") {
                 handle_paste_chord(false);
             }

@@ -195,6 +195,8 @@ public:
     /// start(); without a handler frames are dropped. Called on the IPC thread: must not block for long.
     using FrameHandler = std::function<void(const Peer&, std::string&& frame)>;
     virtual void set_frame_handler(FrameHandler h) { (void)h; }
+    /// Receives evidence JPEG records (F123; type and size already checked). Same rules as the frame handler.
+    virtual void set_evidence_handler(FrameHandler h) { (void)h; }
 };
 
 class IIpcClient {

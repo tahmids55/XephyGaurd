@@ -110,7 +110,7 @@ class EvidenceController extends Controller
         if (! hash_equals((string) $capture->sha256, hash('sha256', $bytes))) {
             abort(409, 'Evidence file does not match its recorded hash.');
         }
-        Audit::log('evidence.view', $capture, ['evidence_id' => $capture->id, 'pc_id' => $capture->pc_id]);
+        Audit::log('evidence.view', $capture, ['evidence_id' => $capture->id, 'pc_id' => $capture->pc_id, 'alert_id' => $capture->alert_id]);
 
         return response($bytes, 200, [
             'Content-Type' => $capture->mime_type,

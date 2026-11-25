@@ -77,6 +77,173 @@ window.xgApi = async function (url, opts = {}) {
   return ct.includes('application/json') ? res.json() : res.text();
 };
 
+/* ---------- Alerts in plain language (teacher view) ---------- */
+/* Where an alert came from: rule-id prefix first, then the agent's category. Labels only; rules stay in data/. */
+window.xgAlertSource = function (a) {
+  const rule = String((a && (a.rule || a.rule_id)) || ''), cat = String((a && (a.cat || a.category)) || '');
+  const S = {
+    program: { key: 'program', label: 'Program', icon: 'i-terminal' },
+    browser: { key: 'browser', label: 'Browser / website', icon: 'i-globe' },
+    editor: { key: 'editor', label: 'Code editor', icon: 'i-grid' },
+    network: { key: 'network', label: 'Network', icon: 'i-wifi' },
+    device: { key: 'device', label: 'USB device', icon: 'i-key' },
+    files: { key: 'files', label: 'Files on disk', icon: 'i-report' },
+    vm: { key: 'vm', label: 'Container / VM', icon: 'i-layers' },
+    port: { key: 'port', label: 'Open port', icon: 'i-radio' },
+    agent: { key: 'agent', label: 'XephyGuard agent', icon: 'i-shield' },
+    other: { key: 'other', label: 'Other', icon: 'i-info' }
+  };
+  const p = rule.split('.')[0];
+  if (cat === 'browser_ai' || rule === 'net.browser_ai' || p === 'web' && cat !== 'tunnel') return S.browser;
+  if (cat === 'ide_ai_backend' || cat === 'ai_extension' || cat === 'extension' || p === 'ext' || rule === 'net.ide_ai') return S.editor;
+  if (p === 'tamper' || cat === 'tamper') return S.agent;
+  if (p === 'dev' || cat === 'device') return S.device;
+  if (p === 'file' || cat === 'local_model') return S.files;
+  if (p === 'vm' || cat === 'virtualization') return S.vm;
+  if (p === 'port') return S.port;
+  if (p === 'net' || cat === 'network' || cat === 'tunnel') return S.network;
+  if (p === 'proc' || ['ai_desktop', 'ai_editor', 'cli_agent', 'local_llm', 'bypass'].includes(cat)) return S.program;
+  return S.other;
+};
+/* One sentence a teacher can read without knowing rule ids. */
+window.xgAlertExplain = function (a) {
+  const rule = String((a && (a.rule || a.rule_id)) || ''), cat = String((a && (a.cat || a.category)) || '');
+  const byCat = {
+    ai_desktop: 'An AI chat app is open on this PC.',
+    ai_editor: 'A code editor with built-in AI is running.',
+    cli_agent: 'An AI coding assistant is running in a terminal.',
+    local_llm: 'A program that runs an AI model offline on this PC is running.',
+    bypass: 'A tool that can get around the lab network rules is running.',
+    browser_ai: 'A browser on this PC is talking to an AI website.',
+    ide_ai_backend: 'A code editor is talking to an AI service.',
+    ai_extension: 'A code editor is talking to an AI service.',
+    extension: 'An AI extension is installed in a code editor.',
+    local_model: 'AI model files were found on this PC’s disk.',
+    virtualization: 'A container or virtual machine is running. Programs inside it are harder to see.',
+    tunnel: 'A program opened a hidden connection (tunnel) out of the lab network.',
+    device: 'A USB device was plugged in.'
+  };
+  const byRule = {
+    'net.wifi_new': 'A Wi-Fi adapter turned on. The PC could join a phone hotspot and skip the lab network.',
+    'net.vpn_adapter': 'A VPN or tunnel adapter is active. Traffic through it can skip the lab network rules.',
+    'net.tether_usb': 'A phone is sharing its internet over USB. The PC can skip the lab network.',
+    'net.second_route': 'The PC has a second way to the internet that skips the lab gateway.',
+    'net.usb_ethernet': 'A USB network adapter or mobile modem is connected.',
+    'dev.usb_storage': 'A USB storage device (pen drive, card reader or phone) was plugged in.'
+  };
+  if (byRule[rule]) return byRule[rule];
+  if (rule.startsWith('tamper.')) return 'The monitoring agent reported a change to itself or its settings (possible tampering).';
+  if (rule.startsWith('port.')) return 'A program is listening on a network port that AI tools use.';
+  return byCat[cat] || 'XephyGuard matched one of its rules on this PC.';
+};
+window.xgSevMeaning = {
+  critical: 'Critical — check this PC now.',
+  high: 'High — strong sign of AI use or a way around the rules.',
+  medium: 'Medium — worth a look.',
+  low: 'Low — usually harmless; listed for the record.',
+  info: 'Info — for the record only.'
+};
+/* Readable rows from the stored event (already allow-listed by the server at ingest). Unknown keys are skipped. */
+window.xgAlertFacts = function (d) {
+  d = d || {};
+  const c = (d.context && typeof d.context === 'object') ? d.context : {};
+  const L = [
+    ['app', 'Program'], ['process', 'Program'], ['exe', 'Program file'], ['pid', 'Process ID'], ['title', 'Window title'],
+    ['domain', 'Website / service'], ['ai_site', 'AI site'], ['remote_ip', 'Remote address'], ['remote_port', 'Remote port'],
+    ['sent_kb', 'Sent (KB)'], ['recv_kb', 'Received (KB)'], ['port', 'Port'], ['adapter', 'Network adapter'], ['driver', 'Driver'],
+    ['default_routes', 'Internet routes'], ['ide', 'Editor'], ['extension', 'Extension'], ['version', 'Version'],
+    ['activity', 'Activity'], ['path', 'File path'], ['size_mb', 'Size (MB)'], ['class', 'Device type'], ['vendor', 'Vendor ID'],
+    ['model', 'Device'], ['signal', 'Detected by'], ['user', 'OS user']
+  ];
+  const seen = new Set(), out = [];
+  const add = (k, label, v) => {
+    if (v === null || v === undefined || v === '' || typeof v === 'object') return;
+    if (seen.has(label + '|' + v)) return;
+    seen.add(label + '|' + v); out.push({ k: label, v: String(v) });
+  };
+  if (d.subject) add('subject', 'Matched', d.subject);
+  L.forEach(([k, label]) => add(k, label, c[k] !== undefined ? c[k] : (['model', 'vendor', 'class'].includes(k) ? d[k] : undefined)));
+  if (d.kind) add('kind', 'Tamper type', d.kind);
+  if (d.detail) add('detail', 'Detail', d.detail);
+  if (c.initial || d.initial) add('initial', 'When', 'Already present when the agent started');
+  return out;
+};
+/* What the agent did on the PC (policy actions), in words. */
+window.xgAlertActions = function (d) {
+  d = d || {};
+  const words = { log: 'Logged', warn: 'Warned the student on screen', kill: 'Tried to close the program', alert: 'Sent this alert', isolate: 'Cut the PC off the network' };
+  const acts = Array.isArray(d.actions) ? d.actions.map(x => words[x] || x) : [];
+  const k = d.result && d.result.kill;
+  if (k) acts.push(k.killed ? 'Program was closed' : ('Program was not closed' + (k.reason ? ' (' + k.reason + ')' : '')));
+  return acts;
+};
+/* Newest alert of a group (smallest age); the Details button opens that one. */
+window.xgNewest = items => (items || []).reduce((m, a) => (!m || a.ago < m.ago ? a : m), null);
+/* Copy props incl. getters (a plain spread would evaluate the getters once). */
+window.xgMix = function (target, ...srcs) {
+  srcs.forEach(s => Object.defineProperties(target, Object.getOwnPropertyDescriptors(s)));
+  return target;
+};
+/* Alert details popup state, shared by Live lab (PC popup, Needs attention) and /alerts.
+   The page supplies alertAckOne(a) -> Promise; it marks that one alert reviewed in the page's own list. */
+window.xgAlertDetails = () => ({
+  alertModal: false, alertDet: null, alertLoading: false, alertErr: '',
+  alertSnap: null, alertSnapLoading: false, alertSnapErr: '', alertShot: false, alertSnapOpen: false,
+  alertSrc(a) { return window.xgAlertSource(a); },
+  alertExplain(a) { return window.xgAlertExplain(a); },
+  async openAlert(a) {
+    if (!a || !a.id) return;
+    this.alertDet = { ...a, details: null, session: null, reviews: [] };
+    this.alertErr = ''; this.alertLoading = true; this.alertModal = true;
+    this.alertSnap = null; this.alertSnapErr = ''; this.alertShot = false; this.alertSnapOpen = false;
+    try {
+      const r = await window.xgApi(`/alerts/${a.id}`);
+      if (this.alertDet && this.alertDet.id === a.id) {
+        this.alertDet = { ...this.alertDet, ...r, cat: r.category || a.cat || '', rule: r.rule_id || a.rule, sev: r.severity || a.sev };
+      }
+    } catch (e) {
+      this.alertErr = e.message || 'Could not load the alert details.';
+    } finally {
+      this.alertLoading = false;
+    }
+  },
+  /* F123: frozen context, loaded only when staff open it (each load is audited server side). */
+  async loadAlertSnap() {
+    const d = this.alertDet;
+    if (!d || this.alertSnap || this.alertSnapLoading) return;
+    this.alertSnapErr = ''; this.alertSnapLoading = true;
+    try {
+      const r = await window.xgApi(`/alerts/${d.id}/snapshot`);
+      if (this.alertDet && this.alertDet.id === d.id) this.alertSnap = r;
+    } catch (e) {
+      this.alertSnapErr = e.message || 'Could not load the saved context.';
+    } finally {
+      this.alertSnapLoading = false;
+    }
+  },
+  get alertShotText() {
+    const s = this.alertDet && this.alertDet.screenshot;
+    if (!s) return '';
+    if (s.status === 'masked') return 'The PC did not send a picture: the screen was private (privacy mask) at that moment.';
+    if (s.status === 'requested') return 'A screenshot was asked for; the PC has not sent one (offline, no student session, or still on its way).';
+    return s.can_view ? 'One screenshot was taken by the PC when this alert was raised.' : 'A screenshot was taken. Only instructors can open it.';
+  },
+  get alertFacts() { return this.alertDet ? window.xgAlertFacts(this.alertDet.details) : []; },
+  get alertActions() { return this.alertDet ? window.xgAlertActions(this.alertDet.details) : []; },
+  get alertWhen() {
+    const d = this.alertDet;
+    if (!d) return '';
+    if (!d.occurred_at) return d.at || '';
+    try { return new Date(d.occurred_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' }); } catch (e) { return d.at || ''; }
+  },
+  async ackAlertFromModal() {
+    const d = this.alertDet;
+    if (!d) return;
+    const a = await this.alertAckOne(d);
+    if (a && a.acked && this.alertDet && this.alertDet.id === d.id) this.alertDet = { ...this.alertDet, acked: true, by: a.by };
+  }
+});
+
 /* ---------- Binary Screen Protocol (0x5847) & TileCanvas ---------- */
 (function () {
   const TILE_SIZE = 64;
@@ -348,7 +515,8 @@ window.xgApi = async function (url, opts = {}) {
       ctx.textBaseline = 'middle';
       const label = pc.status === 'offline' ? 'No signal'
         : (pc.session === 'wayland' ? 'Wayland session (capture disabled)'
-        : (pc.status === 'idle' ? 'Signed out / idle' : 'Click Live or Take snapshot'));
+        : (pc.status === 'idle' ? 'Signed out / idle'
+        : (c.dataset && c.dataset.wait === '1' ? 'Loading screen…' : 'Click Live or Take snapshot')));
       ctx.fillText(label, w / 2, h / 2);
       return;
     }
@@ -427,7 +595,7 @@ window.xgGroup = function (list) {
   const map = new Map();
   list.forEach(a => {
     const k = a.pcId + '|' + a.rule;
-    if (!map.has(k)) map.set(k, { key: k, pcId: a.pcId, pc: a.pc, pcRetired: !!a.pcRetired, user: a.user, rule: a.rule, sev: a.sev, title: a.title, at: a.at, ago: a.ago, items: [] });
+    if (!map.has(k)) map.set(k, { key: k, pcId: a.pcId, pc: a.pc, pcRetired: !!a.pcRetired, user: a.user, rule: a.rule, cat: a.cat || '', sev: a.sev, title: a.title, at: a.at, ago: a.ago, items: [] });
     const g = map.get(k); g.items.push(a);
     if ((rank[a.sev] || 0) > (rank[g.sev] || 0)) g.sev = a.sev;
     if (a.ago < g.ago) { g.ago = a.ago; g.at = a.at; g.title = a.title; }
@@ -466,6 +634,21 @@ document.addEventListener('alpine:init', () => {
   });
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (Alpine.store('theme').mode === 'system') apply('system'); });
 
+  /* ---------- Sidebar (rail) expand / collapse ---------- */
+  Alpine.store('rail', {
+    wide: document.documentElement.dataset.rail === 'wide',
+    toggle() {
+      this.wide = !this.wide;
+      document.documentElement.dataset.rail = this.wide ? 'wide' : 'narrow';
+      try { localStorage.setItem('xg-rail', this.wide ? 'wide' : 'narrow'); } catch (e) {}
+    }
+  });
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'b' && !e.target.closest('input,textarea,select,[contenteditable]')) {
+      e.preventDefault(); Alpine.store('rail').toggle();
+    }
+  });
+
   /* ---------- Toasts & copy ---------- */
   Alpine.store('toasts', {
     items: [],
@@ -493,7 +676,8 @@ document.addEventListener('alpine:init', () => {
       ];
       if (canInstructor) {
         nav.push(
-          { g: 'Go to', t: 'Timetable and profiles', icon: 'calendar', href: '/profiles', k: 'Alt+4' },
+          { g: 'Go to', t: 'Timetable', icon: 'calendar', href: '/timetable', k: 'Alt+4' },
+          { g: 'Go to', t: 'Profiles', icon: 'layers', href: '/profiles', k: 'Alt+0' },
           { g: 'Go to', t: 'Roster', icon: 'users', href: '/roster', k: 'Alt+5' }
         );
       }
@@ -534,8 +718,8 @@ document.addEventListener('alpine:init', () => {
   }));
 
   /* ---------- Live lab ---------- */
-  Alpine.data('labView', () => ({
-    view: 'map',
+  Alpine.data('labView', () => window.xgMix({
+    view: (() => { try { return localStorage.getItem('xg-live-view') === 'wall' ? 'wall' : 'map'; } catch (e) { return 'map'; } })(),
     cols: (window.XG_LIVE && (window.XG_LIVE.cols || (window.XG_LIVE.lab && window.XG_LIVE.lab.cols))) || 6,
     rows: (window.XG_LIVE && (window.XG_LIVE.rows || (window.XG_LIVE.lab && window.XG_LIVE.lab.rows))) || 4,
     editing: false, dragId: null, dropKey: null,
@@ -545,8 +729,10 @@ document.addEventListener('alpine:init', () => {
     activePcId: null, inspector: false, tab: 'screen', screenMode: 'snapshot', monitor: 0, screenMonitors: [], screenMonitorActive: 0, screenAllScreens: false, snapT: 4200, snapAt: '',
     screenStreaming: false, screenHasFrame: false, screenStatus: '', screenAuditId: null, screenViewer: null, screenRenewTimer: null,
     wallStreams: {},
-    tile: 240, flagged: false, blur: false, pinned: [], dock: { att: true, props: true, list: true }, pcFilter: 'all',
+    tile: (() => { try { const t = +localStorage.getItem('xg-live-tile'); return [180, 240, 340].includes(t) ? t : 240; } catch (e) { return 240; } })(), screenOnly: false, flagged: false, blur: false, pinned: [], dock: { att: true, feed: true }, feed: [], feedSeen: 0, feedFresh: {}, feedOk: true, feedAt: '', feedPcFilter: 0, feedQuiet: true, progQ: '', progSort: '', progDir: -1,
     messageModal: false, messageTarget: null, messageText: '', showDone: false, closeModal: false, closeName: '', closePid: null, closeStart: null, closeManual: false,
+    alertSrcFilter: '',
+    wpmHover: null,
 
     init() {
       const h = location.hash;
@@ -554,12 +740,17 @@ document.addEventListener('alpine:init', () => {
       const m = h.match(/pc=(\d+)/); if (m) this.select(+m[1]);
       if (this.view === 'wall') this.$nextTick(() => this.syncWallStreams());
       this._timer = setInterval(() => {
-        if (document.hidden || !this.inspector || this.tab !== 'screen' || !this.$refs.live) return;
+        if (document.hidden || !this.inspector || !this.$refs.live) return;
+        if (this.tab === 'overview') { this.paintOverview(); return; }
+        if (this.tab !== 'screen') return;
         if (!this.screenHasFrame) {
           xgDraw(this.$refs.live, this.active, this.screenMode === 'live' ? performance.now() : this.snapT, this.monitor);
         }
       }, 110);
+      // Programs tab acts like a task manager: hold a process lease (agent sends a snapshot every 2 s) and re-read every 2 s.
+      this._progTimer = setInterval(() => this.progTick(), 2000);
       this.$watch('view', v => {
+        try { localStorage.setItem('xg-live-view', v); } catch (e) {}
         if (v === 'wall' && !this.inspector) this.$nextTick(() => this.syncWallStreams());
         else this.stopWallStreams();
       });
@@ -576,15 +767,76 @@ document.addEventListener('alpine:init', () => {
           if (this.view === 'wall') this.$nextTick(() => this.syncWallStreams());
         }
       });
-      this.$watch('tab', t => {
-        this.$nextTick(() => this.paintLive());
-        if (t !== 'screen' && this.screenStreaming) this.stopScreen();
+      this.$watch('tab', (t, prev) => {
+        this.$nextTick(() => { this.paintLive(); this.paintOverview(); });
+        if (t === 'programs') this.progTick();
+        const shows = x => x === 'screen' || x === 'overview';
+        // Coming back to Overview or Screen from another tab resumes Live.
+        if (shows(t) && !shows(prev)) this.$nextTick(() => this.autoLive());
+        if (!shows(t) && this.screenStreaming) {
+          // Live keeps running on Overview (it mirrors the Screen canvas); other tabs stop it but keep the last frame.
+          const had = this.screenHasFrame;
+          this.stopScreen(had);
+          if (had) { this.screenMode = 'snapshot'; this.snapAt = new Date().toTimeString().slice(0, 8); }
+        }
       });
       this.$watch('monitor', () => this.paintLive());
+      if (document.getElementById('xg-live-data')) {
+        this.pollFeed();
+        this._feedTimer = setInterval(() => { if (!document.hidden && !this.editing) this.pollFeed(); }, 5000);
+      }
+    },
+    /* Live feed: tiles, alerts and lab-wide timeline for every PC, polled from /lab/feed. */
+    async pollFeed() {
+      if (this._feedBusy) return; this._feedBusy = true;
+      try {
+        const d = await window.xgApi('/lab/feed');
+        if (!d) return;
+        (d.tiles || []).forEach(t => this.applyTile(t.id, t));
+        if (Array.isArray(d.alerts)) this.alerts = d.alerts.map(a => this.mapAlert(a));
+        const ev = (d.events || []).map(e => ({ ...e, sev: this.feedSev(e) }));
+        const top = ev.reduce((m, e) => Math.max(m, e.id), 0);
+        const fresh = {};
+        if (this.feedSeen) ev.forEach(e => { if (e.id > this.feedSeen) fresh[e.id] = true; });
+        this.feedFresh = fresh; this.feedSeen = Math.max(this.feedSeen, top); this.feed = ev;
+        this.feedOk = true; this.feedAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      } catch (e) {
+        this.feedOk = false;
+      } finally { this._feedBusy = false; }
+    },
+    mapAlert(a) {
+      return { id: a.id, pcId: a.pc_id, pc: a.pc || ('PC-' + a.pc_id), pcRetired: !!a.pc_retired, user: a.user || '—', sev: a.severity || 'medium',
+        title: a.title || a.rule_id, rule: a.rule_id || '', cat: a.category || '', at: a.occurred_at || '', ago: Number(a.ago_min || 0), acked: !!a.acked, by: a.by || '', note: a.note || '' };
+    },
+    feedSev(e) {
+      if (e.type === 'rule_hit' || e.type === 'tamper') return 'high';
+      if (e.type === 'listening_port' || e.type === 'device' || e.type === 'net_adapter') return 'medium';
+      if (e.type === 'paste' || e.type === 'copy') return 'low';
+      return '';
+    },
+    get feedShown() {
+      return this.feed.filter(e => (!this.feedPcFilter || e.pc_id === this.feedPcFilter) && (!this.feedQuiet || e.type !== 'process_start' || this.feedSev(e)));
     },
     paintLive() {
       if (this.$refs.live && !this.screenHasFrame) {
+        this.$refs.live.dataset.wait = this.screenStreaming ? '1' : '';
         xgDraw(this.$refs.live, this.active, this.screenMode === 'live' ? performance.now() : this.snapT, this.monitor);
+      }
+    },
+    /* Overview preview: a scaled copy of the last frame on the Screen canvas, else the placeholder. */
+    paintOverview() {
+      const c = this.$refs.ovr, src = this.$refs.live;
+      if (!c || !this.inspector || this.tab !== 'overview') return;
+      if (this.screenHasFrame && src && src.width && src.height) {
+        const ctx = c.getContext('2d'), s = Math.min(c.width / src.width, c.height / src.height);
+        const w = src.width * s, h = src.height * s;
+        ctx.fillStyle = '#11141a'; ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(src, (c.width - w) / 2, (c.height - h) / 2, w, h);
+        c.dataset.hasLiveFrame = '1';
+      } else {
+        delete c.dataset.hasLiveFrame;
+        c.dataset.wait = this.screenStreaming ? '1' : '';
+        xgDraw(c, this.active, performance.now());
       }
     },
 
@@ -603,6 +855,7 @@ document.addEventListener('alpine:init', () => {
           ports: [],
           devices: [],
           netEvents: [],
+          traffic: [], logUrls: false,
           keyrate: [],
           pastes: [],
           evidence: [],
@@ -638,7 +891,7 @@ document.addEventListener('alpine:init', () => {
             ? d.timeline.map(e => ({ time: e.at, sev: e.type === 'rule_hit' || e.type === 'tamper' ? 'high' : 'info', label: e.summary }))
             : base.events,
           processes: (d.running_processes && d.running_processes.length)
-            ? d.running_processes.map(p => ({ pid: p.pid || 0, start: p.start || 0, name: p.exe || p.name || 'process', title: p.title || p.cmdline || '', cpu: Number(p.cpu || 0), mem: Math.round(Number(p.rss_mb || p.mem || 0)), net: Number(p.net_mbps || 0), threat: p.rule_id || '' }))
+            ? d.running_processes.map(p => ({ pid: p.pid || 0, start: p.start || 0, name: p.exe || p.name || 'process', title: p.title || p.cmdline || '', cpu: Number(p.cpu_pct ?? p.cpu ?? 0), mem: Math.round(Number(p.rss_mb || p.mem || 0)), net: Number(p.net_kbps ?? (Number(p.net_mbps || 0) * 125)), threat: p.rule_id || '' }))
             : ((d.processes && d.processes.length)
               ? d.processes.map(p => ({ pid: p.pid || 0, name: p.exe || 'process', title: p.type || '', cpu: 0, mem: 0, net: 0, threat: p.rule || '' }))
               : base.processes),
@@ -646,7 +899,7 @@ document.addEventListener('alpine:init', () => {
             ? d.ai_traffic.map(r => ({ service: r.description || r.rule_id, host: r.domain || r.remote_ip, proc: r.process || 'browser', count: Number(r.count || 1), last: r.at, mode: r.mode || 'Observed' }))
             : base.aiTraffic,
           tabs: (d.browser_tabs && d.browser_tabs.length)
-            ? d.browser_tabs.map(t => ({ browser: t.app || 'Browser', title: t.title || t.app, host: t.ai_site || t.user || '', ai: !!t.ai_site }))
+            ? d.browser_tabs.map(t => ({ browser: t.app || 'Browser', title: t.title || '', host: t.ai_site || '', ai: !!t.ai_site, at: t.at || '', firstAt: t.first_at || '', count: Number(t.count || 1), active: !!t.active }))
             : base.tabs,
           extensions: (d.extensions && d.extensions.length)
             ? d.extensions.map(e => ({ browser: e.browser || 'Browser', name: e.name || e.id, id: e.id || '' }))
@@ -664,9 +917,12 @@ document.addEventListener('alpine:init', () => {
             ? d.devices.map(dv => ({ vidpid: (dv.vendor && dv.product) ? `${dv.vendor}:${dv.product}` : (dv.class || 'USB'), name: dv.model || dv.action || 'USB device', time: dv.at }))
             : base.devices,
           netEvents: d.network || [],
+          traffic: (d.traffic || []).map(r => ({ host: r.host || '—', action: r.action || '', category: r.category || '', ai: !!r.ai, count: Number(r.count || 1), last: r.at || '', first: r.first_at || '' })),
+          logUrls: !!d.log_urls,
           keyrate: (d.keyrate && d.keyrate.series && d.keyrate.series.length)
             ? d.keyrate.series.map(s => s.keys || 0)
             : base.keyrate,
+          keylabels: (d.keyrate && d.keyrate.series && d.keyrate.series.length) ? (d.keyrate.labels || []) : [],
           pastes: (d.pastes && d.pastes.length)
             ? d.pastes.map(p => ({ time: p.occurred_at, chars: p.chars, lines: p.lines, from: p.source_app || '?', to: p.target_app || '?', code: !!p.looks_like_code }))
             : base.pastes,
@@ -686,7 +942,7 @@ document.addEventListener('alpine:init', () => {
       return this.serverDetails[this.activePcId] || {
         processesUpdatedAt: '',
         events: [], processes: [], aiTraffic: [], tabs: [], extensions: [],
-        artifacts: [], adapters: [], ports: [], devices: [], netEvents: [],
+        artifacts: [], adapters: [], ports: [], devices: [], netEvents: [], traffic: [], logUrls: false,
         keyrate: [], pastes: [], evidence: [],
       };
     },
@@ -704,16 +960,87 @@ document.addEventListener('alpine:init', () => {
       return out;
     },
     get unplaced() { return this.pcs.filter(p => !p.seat); },
-    get listed() { return this.pcs.filter(p => p.seat && (this.pcFilter === 'all' || !['ok', 'idle'].includes(this.kind(p)))); },
     get wallPcs() { return this.pcs.filter(p => p.seat && !this.pinned.includes(p.id) && (!this.flagged || !['ok', 'idle'].includes(this.kind(p)))); },
     get pinnedPcs() { return this.pinned.map(id => this.pcs.find(p => p.id === id)).filter(Boolean); },
     get screenOk() { return !!(this.active.caps && this.active.caps.snapshot && this.active.status !== 'offline'); },
+    /* Programs tab: filter by name/title, sort by clicked column (desc first, click again flips). */
+    get progShown() {
+      const q = this.progQ.trim().toLowerCase(), k = this.progSort, dir = this.progDir;
+      let list = this.det ? this.det.processes : [];
+      if (q) list = list.filter(p => (p.name + ' ' + p.title + ' ' + p.threat).toLowerCase().includes(q));
+      if (!k) return list;
+      return [...list].sort((x, y) => k === 'name' ? dir * String(x.name).localeCompare(String(y.name)) : dir * ((x[k] || 0) - (y[k] || 0)));
+    },
+    progSortBy(k) {
+      if (this.progSort === k) this.progDir = -this.progDir;
+      else { this.progSort = k; this.progDir = k === 'name' ? 1 : -1; }
+    },
+    fmtNet(kb) { return kb >= 1000 ? (kb / 1000).toFixed(1) + ' MB/s' : kb.toFixed(1) + ' KB/s'; },
+    progTick() {
+      if (document.hidden || !this.inspector || this.tab !== 'programs' || !this.activePcId) return;
+      const id = this.activePcId, now = Date.now();
+      // Renew every 10 s (lease 20 s); the server sends at most one command per PC per 5 s.
+      if (this._progLeasePc !== id || now - (this._progLeaseAt || 0) > 10000) {
+        this._progLeasePc = id; this._progLeaseAt = now;
+        window.xgApi(`/pcs/${id}/process-lease`, { method: 'POST', body: '{}' }).catch(() => { this._progLeaseAt = 0; });
+      }
+      this.fetchDetail(id);
+    },
+    progArrow(k) { return this.progSort === k ? (this.progDir > 0 ? ' ▲' : ' ▼') : ''; },
     get pcAlerts() { return this.alerts.filter(a => a.pcId === this.activePcId); },
+    /* Alerts tab: source filter pills (Program, Browser, Network, ...) with counts, and the filtered list. */
+    get pcAlertSources() {
+      const m = new Map();
+      this.pcAlerts.forEach(a => { const src = window.xgAlertSource(a); const e = m.get(src.key) || { ...src, n: 0 }; e.n++; m.set(src.key, e); });
+      return [...m.values()].sort((x, y) => y.n - x.n);
+    },
+    get pcAlertsShown() {
+      const f = this.alertSrcFilter;
+      return f ? this.pcAlerts.filter(a => window.xgAlertSource(a).key === f) : this.pcAlerts;
+    },
+    /* Typing tab: words per minute (5 characters = 1 word) per minute, on a continuous time axis.
+       Minutes with no key data count as 0. Without real labels (demo data) the axis is "minutes ago". */
+    get wpm() {
+      const d = this.det, raw = d ? (d.keyrate || []) : [];
+      if (!raw.length) return { n: 0 };
+      const lab = (d.keylabels && d.keylabels.length === raw.length) ? d.keylabels : null;
+      let vals = raw.map(k => Math.round(k / 5)), labels;
+      if (lab) {
+        let prev = -1, off = 0;
+        const mins = lab.map(t => { const [h, m] = String(t).split(':').map(Number); let v = h * 60 + m + off; if (v < prev) { off += 1440; v += 1440; } prev = v; return v; });
+        const first = mins[0], len = Math.min(mins[mins.length - 1] - first + 1, 24 * 60);
+        vals = Array(len).fill(0); labels = Array(len);
+        mins.forEach((m, i) => { if (m - first < len) vals[m - first] = Math.round(raw[i] / 5); });
+        for (let i = 0; i < len; i++) { const t = (first + i) % 1440; labels[i] = String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0'); }
+      } else {
+        labels = vals.map((_, i) => (i === vals.length - 1) ? 'now' : '-' + (vals.length - 1 - i) + 'm');
+      }
+      const n = vals.length, peak = Math.max(...vals);
+      const step = peak <= 20 ? 5 : peak <= 50 ? 10 : peak <= 100 ? 20 : 50;
+      const max = Math.max(step, Math.ceil(peak / step) * step);
+      const x = i => n === 1 ? 50 : i / (n - 1) * 100, y = w => 100 - w / max * 100;
+      const pts = vals.map((w, i) => [x(i), y(w)]);
+      const line = pts.map(p => p[0].toFixed(2) + ',' + p[1].toFixed(2)).join(' ');
+      const yticks = []; for (let t = max; t >= 0; t -= step) yticks.push({ v: t, top: y(t) });
+      const xticks = [...new Set([0, 0.25, 0.5, 0.75, 1].map(f => Math.round(f * (n - 1))))].map(i => ({ label: labels[i], left: x(i) }));
+      const active = vals.filter(v => v > 0);
+      return {
+        n, vals, labels, pts, line, area: (n === 1 ? '50,100 ' : '0,100 ') + line + (n === 1 ? ' 50,100' : ' 100,100'),
+        yticks, xticks, peak, avg: active.length ? Math.round(active.reduce((a, b) => a + b, 0) / active.length) : 0,
+      };
+    },
+    wpmMove(ev) {
+      const w = this.wpm; if (!w.n) return;
+      const r = ev.currentTarget.getBoundingClientRect();
+      const f = Math.min(1, Math.max(0, (ev.clientX - r.left) / Math.max(1, r.width)));
+      this.wpmHover = Math.round(f * (w.n - 1));
+    },
     get tabs() {
       const d = this.det; if (!d) return [];
-      return [['screen', 'Screen', 'monitor', ''], ['timeline', 'Timeline', 'clock', ''], ['alerts', 'Alerts', 'bell', this.pcAlerts.length || ''],
-        ['programs', 'Programs', 'terminal', d.processes.length], ['browser', 'Browser', 'globe', d.aiTraffic.length || ''],
+      return [['overview', 'Overview', 'info', ''], ['screen', 'Screen', 'monitor', ''], ['timeline', 'Timeline', 'clock', ''], ['alerts', 'Alerts', 'bell', this.pcAlerts.length || ''],
+        ['programs', 'Programs', 'terminal', d.processes.length], ['traffic', 'Traffic', 'globe', (d.traffic.length || d.aiTraffic.length) || ''], ['browsertabs', 'Browser tabs', 'grid', d.tabs.length || ''],
         ['installed', 'Installed AI', 'shield', (d.extensions.length + d.artifacts.length) || ''], ['network', 'Network', 'wifi', ''],
+        ['dns', 'DNS log', 'list', (d.netEvents && d.netEvents.length) || ''], ['usb', 'USB', 'layers', d.devices.length || ''],
         ['typing', 'Typing', 'keyboard', ''], ['pastes', 'Pastes', 'clipboard', d.pastes.length || '']];
     },
     pct(n) { return Math.max(0, n / Math.max(1, this.total) * 100); },
@@ -824,9 +1151,36 @@ document.addEventListener('alpine:init', () => {
 
     /* selection / inspector */
     select(id) { if (this.editing) return; this.activePcId = id; this.fetchDetail(id); },
-    openInspector(id, tab) { if (this.editing) return; this.activePcId = id; this.tab = tab || 'screen'; this.screenMode = 'snapshot'; this.monitor = 0; this.inspector = true; this.fetchDetail(id); },
-    closeInspector() { this.stopScreen(); this.inspector = false; },
-    clear() { this.stopScreen(); this.inspector = false; this.messageModal = false; this.closeModal = false; },
+    openInspector(id, tab) {
+      if (this.editing) return;
+      if (this.inspector && this.activePcId !== id) this.stopScreen();
+      this.screenOnly = false;
+      this.activePcId = id; this.tab = tab || 'overview'; this.screenMode = 'snapshot'; this.monitor = 0; this.alertSrcFilter = ''; this.inspector = true; this.fetchDetail(id);
+      // Opening a PC is the staff request: start Live (audited, student sees the indicator) so the screen shows first;
+      // a PC without live capability gets one snapshot instead.
+      this.$nextTick(() => { if (this.activePcId === id && !this.screenHasFrame) this.autoLive(); });
+    },
+    autoLive() {
+      // Opening the popup and the tab watch can both ask in the same tick; start only once.
+      if (!this.inspector || !this.screenOk || this.screenStreaming || this._autoLiveBusy) return;
+      this._autoLiveBusy = true;
+      setTimeout(() => { this._autoLiveBusy = false; }, 1000);
+      if (this.active.caps && this.active.caps.live) this.goLive(); else if (!this.screenHasFrame) this.snapshot();
+    },
+    /* Wall "Inspect": the popup shows only the big screen; "Show full details" turns it into the full inspector. */
+    openScreen(id) { this.openInspector(id, 'screen'); this.screenOnly = true; },
+    showDetails() { this.screenOnly = false; this.tab = 'overview'; },
+    closeInspector() { this.stopScreen(); this.inspector = false; this.screenOnly = false; },
+    clear() {
+      if (this.alertModal) { this.alertModal = false; return; } // Esc closes only the alert popup, the PC popup stays.
+      this.stopScreen(); this.inspector = false; this.screenOnly = false; this.messageModal = false; this.closeModal = false;
+    },
+    /* Alert details popup (xgAlertDetails mixin): mark one alert reviewed in this view. */
+    async alertAckOne(d) {
+      const a = this.alerts.find(x => x.id === d.id) || d;
+      await this.ackGroup({ items: [a], pc: a.pc, pcId: a.pcId, count: 1 });
+      return a;
+    },
     confirmForm(evt, msg) { if (!confirm(msg)) evt.preventDefault(); },
 
     async toggleIsolate(pc) {
@@ -1097,7 +1451,7 @@ document.addEventListener('alpine:init', () => {
 
     /* wall */
     togglePin(id) { const i = this.pinned.indexOf(id); if (i >= 0) this.pinned.splice(i, 1); else if (this.pinned.length < 4) this.pinned.push(id); else Alpine.store('toasts').add('You can pin up to 4 PCs.', 'watch'); },
-    tileSize(s) { this.tile = s; },
+    tileSize(s) { this.tile = s; try { localStorage.setItem('xg-live-tile', String(s)); } catch (e) {} },
 
     /* messages & alerts */
     message(id) { this.messageTarget = id ? this.pcs.find(p => p.id === id) : null; this.messageText = ''; this.messageModal = true; },
@@ -1157,19 +1511,23 @@ document.addEventListener('alpine:init', () => {
         Alpine.store('toasts').add(e.message || 'Could not save seat map.', 'alert');
       }
     }
-  }));
+  }, window.xgAlertDetails()));
 
   /* ---------- Alerts page ---------- */
   Alpine.data('alertsPage', () => {
     const d = window.xgJson('xg-page-data', {}) || {};
-    return {
+    return window.xgMix({
       sev: d.sev || '',
+      src: '',
       unacked: !!d.unacked,
       session: d.session || '',
       grouped: true,
       q: '',
       openKey: null,
       notes: {},
+      picked: [],
+      pickNote: '',
+      busy: false,
       byName: d.byName || window.XG_USER_NAME || 'Staff',
       openTotal: Number(d.openTotal ?? 0),
       total: Number(d.total ?? 0),
@@ -1181,8 +1539,15 @@ document.addEventListener('alpine:init', () => {
         return this.all.filter(a =>
           (!this.sev || a.sev === this.sev)
           && (!this.unacked || !a.acked)
-          && (!q || (a.pc + ' ' + a.title + ' ' + a.rule + ' ' + a.user).toLowerCase().includes(q))
+          && (!this.src || window.xgAlertSource(a).key === this.src)
+          && (!q || (a.pc + ' ' + a.title + ' ' + a.rule + ' ' + a.user + ' ' + window.xgAlertSource(a).label).toLowerCase().includes(q))
         );
+      },
+      /* "Detected by" pills with counts over the alerts on this page. */
+      get sources() {
+        const m = new Map();
+        this.all.forEach(a => { const s = window.xgAlertSource(a); const e = m.get(s.key) || { ...s, n: 0 }; e.n++; m.set(s.key, e); });
+        return [...m.values()].sort((x, y) => y.n - x.n);
       },
       get rows() {
         return this.grouped
@@ -1235,12 +1600,64 @@ document.addEventListener('alpine:init', () => {
           this.openTotal = Math.max(0, this.openTotal - pending.length);
           window.xgAdjustAlertBadge(-pending.length);
           this.openKey = null;
+          this.picked = this.picked.filter(id => !pending.some(p => p.id === id));
           Alpine.store('toasts').add(r.pc + ': marked as reviewed.', 'ok');
         } catch (e) {
           Alpine.store('toasts').add(e.message || 'Could not mark reviewed.', 'alert');
         }
+      },
+      /* A filter change clears the selection, so hidden alerts are never marked by accident. */
+      init() {
+        this.$watch('q', () => { this.picked = []; });
+        this.$watch('src', () => { this.picked = []; });
+        this.$watch('sev', () => { this.picked = []; });
+      },
+      /* Selection: ids of unreviewed alerts; a grouped row selects all of its unreviewed items. */
+      openIds(r) {
+        return (r.items || []).filter(i => !i.acked && i.id).map(i => i.id);
+      },
+      isPicked(r) {
+        const ids = this.openIds(r);
+        return ids.length > 0 && ids.every(id => this.picked.includes(id));
+      },
+      pick(r, on) {
+        const ids = this.openIds(r);
+        this.picked = on ? [...new Set([...this.picked, ...ids])] : this.picked.filter(id => !ids.includes(id));
+      },
+      allPicked() {
+        const ids = this.rows.flatMap(r => this.openIds(r));
+        return ids.length > 0 && ids.every(id => this.picked.includes(id));
+      },
+      pickAll(on) {
+        this.picked = on ? [...new Set(this.rows.flatMap(r => this.openIds(r)))] : [];
+      },
+      async ackPicked() {
+        const items = this.all.filter(a => this.picked.includes(a.id) && !a.acked);
+        if (!items.length || this.busy) { this.picked = []; return; }
+        const note = (this.pickNote || '').trim() || 'Reviewed.';
+        this.busy = true;
+        try {
+          await window.xgAckItems(items, note);
+          items.forEach(a => { a.acked = true; a.by = this.byName; a.note = note; });
+          this.openTotal = Math.max(0, this.openTotal - items.length);
+          window.xgAdjustAlertBadge(-items.length);
+          this.picked = [];
+          this.pickNote = '';
+          Alpine.store('toasts').add(items.length + (items.length === 1 ? ' alert' : ' alerts') + ' marked as reviewed.', 'ok');
+        } catch (e) {
+          Alpine.store('toasts').add(e.message || 'Could not mark reviewed.', 'alert');
+        } finally {
+          this.busy = false;
+        }
+      },
+      /* Alert details popup (xgAlertDetails mixin): mark one alert reviewed, using any note typed for it. */
+      async alertAckOne(det) {
+        const a = this.all.find(x => x.id === det.id) || det;
+        const key = 'a' + a.id;
+        await this.ack({ key, pc: a.pc, items: [a] });
+        return a;
       }
-    };
+    }, window.xgAlertDetails());
   });
 
   /* ---------- Settings page ---------- */
@@ -1326,11 +1743,12 @@ document.addEventListener('alpine:init', () => {
     };
   });
 
-  /* ---------- Timetable & Profiles page ---------- */
+  /* ---------- Timetable and Profiles pages (one component, two routes) ---------- */
   Alpine.data('profilesPage', () => {
     const d = window.xgJson('xg-page-data', {}) || {};
+    // old links to /profiles#timetable now go to the separate Timetable page
+    if (location.hash === '#timetable' && /^\/profiles/.test(location.pathname)) location.replace('/timetable');
     return {
-      tab: location.hash === '#timetable' ? 'timetable' : 'profiles',
       cur: 0, hr: 44, start: 8, end: 18,
       days: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
       addOpen: false,
@@ -1694,7 +2112,7 @@ document.addEventListener('alpine:initialized', () => {
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); window.dispatchEvent(new CustomEvent('xg-palette')); return; }
   if (!e.altKey || e.ctrlKey || e.metaKey) return;
-  const map = { 1: '/', 2: '/alerts', 3: '/sessions', 4: '/profiles', 5: '/roster', 6: '/signatures', 7: '/reports', 8: '/enroll', 9: '/admin/health' };
+  const map = { 1: '/', 2: '/alerts', 3: '/sessions', 4: '/timetable', 0: '/profiles', 5: '/roster', 6: '/signatures', 7: '/reports', 8: '/enroll', 9: '/admin/health' };
   const code = e.code && e.code.startsWith('Digit') ? e.code.slice(5) : e.key;
   if (map[code]) { e.preventDefault(); location.href = map[code]; }
 });

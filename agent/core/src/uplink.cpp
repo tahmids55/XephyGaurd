@@ -34,6 +34,44 @@ void Uplink::wake() {
     wake_cv_.notify_all();
 }
 
+void Uplink::queue_evidence(EvidenceUpload u) {
+    if (u.after_events) {
+        // Called after the core emitted the rule_hit, so the queue's last seq covers it.
+        u.after_seq = queue_ ? queue_->last_seq() : 0;
+        u.queued_ms = steady_ms();
+    }
+    {
+        std::lock_guard lk(evidence_mu_);
+        evidence_ = std::move(u);
+    }
+    wake();
+}
+
+void Uplink::send_evidence(const UplinkView& v) {
+    std::optional<EvidenceUpload> u;
+    {
+        std::lock_guard lk(evidence_mu_);
+        if (evidence_ && evidence_->after_events) {
+            if (steady_ms() - evidence_->queued_ms > kEvidenceWaitMs) {
+                log::warn("evidence: dropped, its rule_hit was not stored within 60 s");
+                evidence_.reset();
+                return;
+            }
+            if (acked_seq_ < evidence_->after_seq) return;  // the CCC does not know this nonce yet
+        }
+        u.swap(evidence_);
+    }
+    if (!u || !protocol::valid_evidence_nonce(u->nonce)) return;
+    auto r = api(v).request("POST", protocol::evidence_upload_path(u->nonce, u->masked), u->masked ? "" : u->jpeg,
+                            {{"Content-Type", u->masked ? "application/octet-stream" : "image/jpeg"}});
+    if (r.ok()) {
+        status_.bytes_up += u->jpeg.size();
+        log::info("evidence: {} uploaded", u->masked ? "masked notice" : "screenshot");
+    } else {
+        log::warn("evidence: upload failed ({} {})", r.status, r.error);
+    }
+}
+
 net::HttpsClient& Uplink::api(const UplinkView& v) {
     const std::string key = v.ccc_host + ":" + std::to_string(v.api_port) + ":" + v.token;
     if (!api_ || key != api_key_) {
@@ -108,6 +146,7 @@ bool Uplink::flush_once() {
         return false;
     }
     if (queue_ && ack->ack_seq > 0) queue_->ack(ack->ack_seq);
+    if (ack->ack_seq > acked_seq_) acked_seq_ = ack->ack_seq;
     core_.post(msg::AckReceived{*ack, t0, t1});
     return true;
 }
@@ -126,7 +165,9 @@ void Uplink::run(const std::atomic<bool>& stop) {
                     last_policy_fetch_ = now;
                     if (fetch_policy(*v)) policy_dirty_ = false;
                 }
+                send_evidence(*v);  // first: the nonce expires 60 s after the alert
                 const bool ok = flush_once();
+                if (ok) send_evidence(*v);  // local fast path: right after the ack that stored its rule_hit
                 if (ok != status_.online.load())
                     log::info("uplink: CCC {}", ok ? "reachable" : "unreachable (buffering locally)");
                 status_.online = ok;

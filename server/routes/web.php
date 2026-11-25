@@ -43,9 +43,12 @@ Route::group([], function () {
             Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
             Route::get('/index.html', [DashboardController::class, 'index'])->name('dashboard.html');
             Route::get('/pcs/{pc}', [DashboardController::class, 'pc'])->name('pcs.show');
+            Route::get('/lab/feed', [DashboardController::class, 'feed'])->name('lab.feed');
             Route::get('/alerts', [AlertController::class, 'index'])->name('alerts.index');
             Route::get('/alerts.html', [AlertController::class, 'index'])->name('alerts.html');
             Route::post('/alerts/ack-batch', [AlertController::class, 'acknowledgeBatch'])->name('alerts.ack_batch');
+            Route::get('/alerts/{alert}', [AlertController::class, 'show'])->whereNumber('alert')->name('alerts.show');
+            Route::get('/alerts/{alert}/snapshot', [AlertController::class, 'snapshot'])->whereNumber('alert')->name('alerts.snapshot');
             Route::post('/alerts/{alert}/ack', [AlertController::class, 'acknowledge'])->name('alerts.ack');
 
             Route::get('/sessions', [SessionController::class, 'index'])->name('sessions.index');
@@ -58,6 +61,7 @@ Route::group([], function () {
             Route::post('/pcs/{pc}/isolate', [SessionController::class, 'isolate'])->name('pcs.isolate');
             Route::post('/pcs/{pc}/kill', [SessionController::class, 'kill'])->name('pcs.kill');
             Route::post('/pcs/{pc}/rescan', [SessionController::class, 'rescan'])->name('pcs.rescan');
+            Route::post('/pcs/{pc}/process-lease', [SessionController::class, 'processLease'])->name('pcs.process_lease');
 
             Route::get('/enroll', [EnrollmentController::class, 'index'])->name('enroll.index');
             Route::get('/enroll.html', [EnrollmentController::class, 'index'])->name('enroll.html');
@@ -83,6 +87,8 @@ Route::group([], function () {
             Route::post('/sessions/{session}/pcs/{pc}/override', [SessionController::class, 'override'])->name('sessions.override');
             Route::get('/profiles', [ProfileController::class, 'index'])->name('profiles.index');
             Route::get('/profiles.html', [ProfileController::class, 'index'])->name('profiles.html');
+            Route::get('/timetable', [ProfileController::class, 'timetable'])->name('timetable.index');
+            Route::get('/timetable.html', [ProfileController::class, 'timetable'])->name('timetable.html');
             Route::post('/timetable', [ProfileController::class, 'saveEntry'])->name('timetable.store');
             Route::post('/timetable/{entry}/toggle', [ProfileController::class, 'toggleEntry'])->name('timetable.toggle');
             Route::delete('/timetable/{entry}', [ProfileController::class, 'deleteEntry'])->name('timetable.delete');

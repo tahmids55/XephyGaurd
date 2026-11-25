@@ -49,6 +49,7 @@
           'sev' => $a['severity'] ?? 'medium',
           'title' => $a['title'] ?? $a['rule_id'],
           'rule' => $a['rule_id'] ?? '',
+          'cat' => $a['category'] ?? '',
           'at' => $a['occurred_at'] ?? '',
           'ago' => (int) ($a['ago_min'] ?? 0),
           'acked' => (bool) ($a['acked'] ?? false),
@@ -142,7 +143,7 @@
           <template x-for="c in cells" :key="c.key">
             <div class="seat" :class="[seatClass(c.pc), dropKey === c.key ? 'drop' : '', c.pc && activePcId === c.pc.id ? 'sel' : '']" :style="'grid-column:'+c.col"
                  :draggable="editing && !!c.pc" @dragstart="startDrag(c.pc)" @dragover.prevent="dropKey = editing ? c.key : null" @dragleave="dropKey = null" @drop.prevent="dropOn(c)"
-                 :tabindex="c.pc ? 0 : -1" :role="c.pc ? 'button' : null" @click="c.pc && select(c.pc.id)" @dblclick="c.pc && openInspector(c.pc.id)" @keydown.enter="c.pc && openInspector(c.pc.id)">
+                 :tabindex="c.pc ? 0 : -1" :role="c.pc ? 'button' : null" @click="c.pc && openInspector(c.pc.id)" @keydown.enter="c.pc && openInspector(c.pc.id)">
               <template x-if="c.pc">
                 <div style="display:contents">
                   <div class="top"><span class="pcn"><span class="dot"></span><span x-text="c.pc.name"></span><svg class="i i-sm" x-show="c.pc.isolated" style="color:var(--iso)"><use href="#i-lock"/></svg></span><span class="sc" :class="scoreClass(c.pc)" x-text="c.pc.score"></span></div>
@@ -158,7 +159,7 @@
         <div class="shelf" x-show="unplaced.length || editing" @dragover.prevent @drop.prevent="dropShelf()">
           <div class="label">Not on the map</div>
           <div class="row">
-            <template x-for="p in unplaced" :key="p.id"><div class="seat" :class="seatClass(p)" style="min-height:0;width:180px" :draggable="editing" @dragstart="startDrag(p)" @click="select(p.id)" tabindex="0" role="button"><div class="top"><span class="pcn"><span class="dot"></span><span x-text="p.name"></span></span></div><div class="who" x-text="p.user"></div></div></template>
+            <template x-for="p in unplaced" :key="p.id"><div class="seat" :class="seatClass(p)" style="min-height:0;width:180px" :draggable="editing" @dragstart="startDrag(p)" @click="openInspector(p.id)" @keydown.enter="openInspector(p.id)" tabindex="0" role="button"><div class="top"><span class="pcn"><span class="dot"></span><span x-text="p.name"></span></span></div><div class="who" x-text="p.user"></div></div></template>
             <span class="muted small" x-show="!unplaced.length">Drop a PC here to take it off the map.</span>
           </div>
         </div>
@@ -175,9 +176,9 @@
             <h3 class="wall-title"><svg class="i i-sm" aria-hidden="true"><use href="#i-pin"/></svg> Pinned <span class="count" x-text="pinnedPcs.length"></span></h3>
             <div class="wall-grid pins">
               <template x-for="p in pinnedPcs" :key="'p' + p.id">
-                <div class="tile" :class="[tileClass(p), activePcId === p.id && 'sel', blur && !['alert','watch'].includes(kind(p)) ? 'blurred' : '']" @click="select(p.id)" @dblclick="openInspector(p.id)">
+                <div class="tile" :class="[tileClass(p), activePcId === p.id && 'sel', blur && !['alert','watch'].includes(kind(p)) ? 'blurred' : '']" @click="select(p.id)" @dblclick="openScreen(p.id)">
                   <div class="ov"><span class="chip" x-show="!['ok','idle'].includes(kind(p))" x-text="p.last"></span></div>
-                  <div class="acts"><button @click.stop="togglePin(p.id)" title="Unpin"><svg class="i i-sm" aria-hidden="true"><use href="#i-pin"/></svg></button><button @click.stop="openInspector(p.id)" title="Inspect"><svg class="i i-sm" aria-hidden="true"><use href="#i-expand"/></svg></button></div>
+                  <div class="acts"><button @click.stop="togglePin(p.id)" title="Unpin"><svg class="i i-sm" aria-hidden="true"><use href="#i-pin"/></svg></button><button @click.stop="openScreen(p.id)" title="Inspect"><svg class="i i-sm" aria-hidden="true"><use href="#i-expand"/></svg></button></div>
                   <canvas width="640" height="360" :data-pc="p.id" x-init="xgDraw($el, pc(p.id), performance.now())"></canvas>
                   <div class="offmsg" x-show="p.status === 'offline'">No signal</div>
                   <div class="cap"><span class="dot" :class="dotOf(p)"></span><b x-text="p.name"></b><span class="u" x-text="p.user"></span><span class="sc" x-text="p.score"></span></div>
@@ -190,9 +191,9 @@
         <h3 class="wall-title">All screens <span class="count" x-text="wallPcs.length"></span></h3>
         <div class="wall-grid">
           <template x-for="p in wallPcs" :key="p.id">
-            <div class="tile" :class="[tileClass(p), activePcId === p.id && 'sel', blur && !['alert','watch'].includes(kind(p)) ? 'blurred' : '']" @click="select(p.id)" @dblclick="openInspector(p.id)">
+            <div class="tile" :class="[tileClass(p), activePcId === p.id && 'sel', blur && !['alert','watch'].includes(kind(p)) ? 'blurred' : '']" @click="select(p.id)" @dblclick="openScreen(p.id)">
               <div class="ov"><span class="chip" x-show="!['ok','idle'].includes(kind(p))" x-text="p.last"></span></div>
-              <div class="acts"><button @click.stop="togglePin(p.id)" title="Pin"><svg class="i i-sm" aria-hidden="true"><use href="#i-pin"/></svg></button><button @click.stop="openInspector(p.id)" title="Inspect"><svg class="i i-sm" aria-hidden="true"><use href="#i-expand"/></svg></button></div>
+              <div class="acts"><button @click.stop="togglePin(p.id)" title="Pin"><svg class="i i-sm" aria-hidden="true"><use href="#i-pin"/></svg></button><button @click.stop="openScreen(p.id)" title="Inspect"><svg class="i i-sm" aria-hidden="true"><use href="#i-expand"/></svg></button></div>
               <canvas width="320" height="180" :data-pc="p.id" x-init="xgDraw($el, pc(p.id), performance.now())"></canvas>
               <div class="offmsg" x-show="p.status === 'offline'">No signal</div>
               <div class="offmsg" x-show="p.session === 'wayland'" style="padding:0 16px;text-align:center;font-size:12px">Screen view isn’t available on Wayland</div>
@@ -210,11 +211,12 @@
         <div class="dsec-head" role="button" tabindex="0" :aria-expanded="dock.att" @click="dock.att = !dock.att"><svg class="i i-sm" aria-hidden="true"><use href="#i-chev"/></svg> Needs attention <span class="count" x-show="groups.length" x-text="groups.length"></span><span class="sp"></span><a href="{{ route('alerts.index') }}" @click.stop class="small" style="font-weight:500">All alerts</a></div>
         <div x-show="dock.att" style="max-height:300px;overflow:auto">
           <template x-for="g in groups" :key="g.key">
-            <div class="q-item" :class="activePcId === g.pcId && 'sel'">
+            <div class="q-item" :class="activePcId === g.pcId && 'sel'" style="cursor:pointer" @click="openAlert(xgNewest(g.items))" :title="g.count > 1 ? 'Details of the newest of ' + g.count : 'Details'">
               <div class="row" style="justify-content:space-between"><span class="sev" :class="g.sev" x-text="g.sev"></span><span class="small muted" x-text="xgAgo(g.ago)"></span></div>
               <div class="q-title"><span x-text="g.title"></span> <span class="count" x-show="g.count > 1" x-text="'×' + g.count"></span></div>
-              <div class="q-meta"><b x-text="g.pc"></b><span class="chip plain" x-show="g.pcRetired" style="margin-left:6px">retired</span> · <span x-text="g.user"></span></div>
-              <div class="q-actions"><button class="btn btn-sm" @click="openInspector(g.pcId, 'alerts')">Open</button><button class="btn btn-sm btn-quiet" @click="ackGroup(g)">Mark reviewed</button></div>
+              <div class="tiny muted" style="margin:-2px 0 4px" x-text="alertExplain(g)"></div>
+              <div class="q-meta"><b x-text="g.pc"></b><span class="chip plain" x-show="g.pcRetired" style="margin-left:6px">retired</span> · <span x-text="g.user"></span> · <span class="chip plain"><svg class="i i-sm" aria-hidden="true"><use :href="'#' + alertSrc(g).icon"/></svg><span x-text="alertSrc(g).label"></span></span></div>
+              <div class="q-actions"><button class="btn btn-sm" @click.stop="openInspector(g.pcId, 'alerts')">Open PC</button><button class="btn btn-sm btn-quiet" @click.stop="ackGroup(g)">Mark reviewed</button></div>
             </div>
           </template>
           <div class="empty-state" x-show="!groups.length"><b>All clear</b>Nothing is waiting for review.</div>
@@ -223,41 +225,34 @@
         </div>
       </section>
 
-      <section class="dsec">
-        <div class="dsec-head" role="button" tabindex="0" :aria-expanded="dock.props" @click="dock.props = !dock.props"><svg class="i i-sm" aria-hidden="true"><use href="#i-chev"/></svg> Selected PC <span class="sp"></span></div>
-        <div x-show="dock.props">
-          <div class="empty-state" x-show="!activePcId" style="padding:24px 16px">Select a seat to see its details. Double-click to inspect.</div>
-          <div x-show="activePcId" x-cloak>
-            <div style="padding:0 16px 12px">
-              <div class="screenbox" style="cursor:pointer" @click="openInspector(activePcId)"><canvas width="320" height="180" :data-pc="activePcId" x-effect="xgDraw($el, pc(activePcId), performance.now())"></canvas></div>
-            </div>
-            <div class="row" style="padding:0 16px;--gap:10px;flex-wrap:nowrap">
-              <div class="scorering" style="width:40px;height:40px" :style="'--v:'+(typeof active.score === 'number' ? active.score : 0)+';--c:'+ringColor(active)"><b x-text="active.score" style="font-size:12px"></b></div>
-              <div style="min-width:0"><div style="font-weight:600;font-size:14px" x-text="active.name"></div><div class="small muted" x-text="statusText(active) + ' · ' + active.user"></div></div>
-            </div>
-            <dl class="prop"><dt>Computer</dt><dd class="mono" x-text="active.host"></dd><dt>Address</dt><dd class="mono" x-text="active.ip"></dd><dt>System</dt><dd x-text="active.os"></dd><dt>Agent</dt><dd x-text="'v' + active.agent"></dd><dt x-show="active.streamCost">Streaming</dt><dd class="mono" x-show="active.streamCost" x-text="active.streamCost"></dd><dt>Last event</dt><dd x-text="active.last"></dd></dl>
-            <div class="row" style="padding:0 16px 16px">
-              <button class="btn btn-sm btn-solid" @click="openInspector(activePcId)">Open inspector</button>
-              <button class="btn btn-sm" @click="message(activePcId)">Message</button>
-              <button class="btn btn-sm" :class="active.isolated ? '' : 'btn-danger'" @click="toggleIsolate(active)" x-text="active.isolated ? 'Reconnect' : 'Cut off'"></button>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <section class="dsec" style="border-bottom:0">
-        <div class="dsec-head" role="button" tabindex="0" :aria-expanded="dock.list" @click="dock.list = !dock.list"><svg class="i i-sm" aria-hidden="true"><use href="#i-chev"/></svg> All PCs <span class="sp"></span>
-          <span class="pills" @click.stop><button class="pill" :aria-pressed="pcFilter === 'all'" @click="pcFilter = 'all'">All</button><button class="pill" :aria-pressed="pcFilter === 'attn'" @click="pcFilter = 'attn'">Flagged</button></span></div>
-        <ul class="pclist" x-show="dock.list">
-          <template x-for="p in listed" :key="p.id"><li :class="activePcId === p.id && 'sel'" @click="select(p.id)" @dblclick="openInspector(p.id)"><span class="dot" :class="dotOf(p)"></span><span style="font-weight:500" x-text="p.name"></span><span class="u" x-text="p.user"></span><span class="mono small" x-text="p.score"></span></li></template>
-        </ul>
+        <div class="dsec-head" role="button" tabindex="0" :aria-expanded="dock.feed" @click="dock.feed = !dock.feed"><svg class="i i-sm" aria-hidden="true"><use href="#i-chev"/></svg> Live timeline <span class="livedot" :class="!feedOk && 'down'" :title="feedOk ? 'Updated ' + feedAt : 'Can’t reach the server'"></span><span class="sp"></span>
+          <span class="small muted" x-text="feedOk ? feedAt : 'offline'"></span></div>
+        <div x-show="dock.feed">
+          <div class="row" style="padding:0 16px 10px;--gap:8px">
+            <select class="select select-sm" style="flex:1;min-width:0" x-model.number="feedPcFilter" aria-label="Filter by PC">
+              <option value="0">All PCs</option>
+              <template x-for="p in pcs" :key="p.id"><option :value="p.id" x-text="p.name"></option></template>
+            </select>
+            <label class="check small" title="Show every program start"><span class="switch"><input type="checkbox" :checked="!feedQuiet" @change="feedQuiet = !$event.target.checked"><i></i></span> Programs</label>
+          </div>
+          <ul class="timeline feed">
+            <template x-for="e in feedShown" :key="e.id">
+              <li :class="[e.sev, feedFresh[e.id] && 'fresh']" @click="openInspector(e.pc_id, 'timeline')" role="button" tabindex="0" @keydown.enter="openInspector(e.pc_id, 'timeline')">
+                <div class="feed-meta"><time x-text="e.at"></time><b x-text="e.pc"></b><span class="muted" x-show="e.user" x-text="' · ' + e.user"></span></div>
+                <div class="feed-txt" x-text="e.summary"></div>
+              </li>
+            </template>
+          </ul>
+          <div class="empty-state" x-show="!feedShown.length" style="padding:20px 16px"><b>Quiet</b>No activity yet. New events show up here within a few seconds.</div>
+        </div>
       </section>
     </aside>
   </div>
 
   <!-- INSPECTOR -->
   <div class="sheetscrim" x-show="inspector" x-cloak x-transition.opacity @click="closeInspector()"></div>
-  <aside class="inspector" x-show="inspector" x-cloak x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0" role="dialog" aria-label="PC inspector">
+  <aside class="inspector" :class="screenOnly && 'screen-only'" x-show="inspector" x-cloak x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0" role="dialog" aria-label="PC inspector">
     <div class="insp-head">
       <div class="scorering" :style="'--v:'+(typeof active.score === 'number' ? active.score : 0)+';--c:'+ringColor(active)"><b x-text="active.score"></b></div>
       <div style="min-width:0">
@@ -268,6 +263,7 @@
         <div class="muted small" x-text="active.user + ' · ' + active.host + ' · ' + active.os"></div>
       </div>
       <span class="grow"></span>
+      <button class="btn" x-show="screenOnly" @click="showDetails()"><svg class="i i-sm" aria-hidden="true"><use href="#i-info"/></svg> Show full details</button>
       <button class="btn" @click="message(activePcId)"><svg class="i i-sm" aria-hidden="true"><use href="#i-send"/></svg> Message</button>
       <button class="btn" :class="active.isolated ? 'btn-solid' : 'btn-danger'" @click="toggleIsolate(active)" x-text="active.isolated ? 'Reconnect network' : 'Cut off network'"></button>
       <button class="xbtn" style="margin-left:0" @click="closeInspector()" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
@@ -278,7 +274,37 @@
       </nav>
       <div class="insp-pane">
 
-        <section x-show="tab === 'screen'">
+        <section x-show="tab === 'overview'">
+          <div class="ov-grid">
+            <div class="screenbox" style="cursor:pointer" @click="tab = 'screen'" title="Open screen"><canvas x-ref="ovr" width="480" height="270" :data-pc="activePcId" x-effect="inspector && tab === 'overview' && (screenHasFrame, screenStreaming, activePcId, paintOverview())"></canvas><div class="badge" x-show="screenHasFrame && screenStreaming && screenMode === 'live'"><span class="chip"><i class="dot alert"></i> Live</span></div></div>
+            <dl class="prop" style="margin:0">
+              <dt>Status</dt><dd x-text="statusText(active)"></dd>
+              <dt>Student</dt><dd x-text="active.user"></dd>
+              <dt>Score</dt><dd class="mono" x-text="active.score"></dd>
+              <dt>Computer</dt><dd class="mono" x-text="active.host"></dd>
+              <dt>Address</dt><dd class="mono" x-text="active.ip"></dd>
+              <dt>System</dt><dd x-text="active.os"></dd>
+              <dt>Agent</dt><dd x-text="'v' + active.agent"></dd>
+              <dt x-show="active.session">Session</dt><dd x-show="active.session" x-text="active.session"></dd>
+              <dt x-show="active.app">Active app</dt><dd x-show="active.app" x-text="active.app"></dd>
+              <dt x-show="active.streamCost">Streaming</dt><dd class="mono" x-show="active.streamCost" x-text="active.streamCost"></dd>
+              <dt>Last event</dt><dd x-text="active.last"></dd>
+            </dl>
+          </div>
+          <div class="label" style="margin-top:18px">At a glance</div>
+          <div class="ov-stats">
+            <button @click="tab = 'alerts'"><b x-text="pcAlerts.filter(a => !a.acked).length"></b><span>Open alerts</span></button>
+            <button @click="tab = 'programs'"><b x-text="det ? det.processes.length : 0"></b><span>Programs</span></button>
+            <button @click="tab = 'traffic'"><b x-text="det ? det.aiTraffic.length : 0"></b><span>AI services seen</span></button>
+            <button @click="tab = 'installed'"><b x-text="det ? det.extensions.length + det.artifacts.length : 0"></b><span>Installed AI</span></button>
+            <button @click="tab = 'network'"><b x-text="det ? det.ports.length : 0"></b><span>AI ports</span></button>
+            <button @click="tab = 'pastes'"><b x-text="det ? det.pastes.length : 0"></b><span>Large pastes</span></button>
+          </div>
+          <div class="label" style="margin-top:18px" x-show="pcAlerts.length">Latest alerts</div>
+          <ul class="timeline" x-show="pcAlerts.length"><template x-for="a in pcAlerts.slice(0, 5)" :key="a.id"><li :class="a.sev"><time x-text="a.at"></time><span x-text="a.title"></span></li></template></ul>
+        </section>
+
+        <section x-show="tab === 'screen'" x-cloak>
           <div class="row" style="margin-bottom:14px;--gap:10px">
             <div class="seg"><button :aria-pressed="screenMode === 'snapshot'" @click="screenMode = 'snapshot'">Snapshot</button><button :aria-pressed="screenMode === 'live'" @click="goLive()" :disabled="!active.caps || !active.caps.live">Live</button></div>
             <button class="btn" @click="snapshot()" :disabled="!screenOk"><svg class="i i-sm" aria-hidden="true"><use href="#i-camera"/></svg> Take snapshot</button>
@@ -293,14 +319,14 @@
             <div class="idle" x-show="!screenOk" style="aspect-ratio:16/9"><div><b style="color:#fff;font-size:15px" x-text="active.status === 'offline' ? 'This PC is offline' : 'Screen view isn’t available'"></b><p style="margin-top:6px" x-text="active.status === 'offline' ? 'Waiting for the agent heartbeat. Screens appear again when the agent reconnects.' : 'This PC uses a Wayland session, which doesn’t allow screen capture.'"></p></div></div>
           </div>
           <div class="note warn" style="margin-top:14px" x-show="active.session === 'wayland'"><svg class="i i-sm" aria-hidden="true"><use href="#i-warn"/></svg><span>Choose “Ubuntu on Xorg” on the login screen to enable screen view on this PC.</span></div>
-          <div style="margin-top:16px"><div class="label">What this PC can do</div>
+          <div class="scr-extra" style="margin-top:16px"><div class="label">What this PC can do</div>
             <div class="caps">
               <span class="chip" :class="active.caps && active.caps.snapshot ? 'ok' : 'off'">Snapshot</span><span class="chip" :class="active.caps && active.caps.live ? 'ok' : 'off'">Live</span>
               <span class="chip" :class="active.caps && active.caps.delta ? 'ok' : 'off'">Delta updates</span><span class="chip" :class="active.caps && active.caps.multi ? 'ok' : 'off'">Multi-monitor</span>
               <span class="chip" :class="active.caps && active.caps.secure ? 'ok' : 'off'">Secure desktop</span>
             </div></div>
-          <p class="help">Students see an “instructor is viewing” indicator while Live is on. Every view is written to the audit log.</p>
-          <div style="margin-top:16px" x-show="det && det.evidence && det.evidence.length">
+          <p class="help scr-extra">Students see an “instructor is viewing” indicator while Live is on. Every view is written to the audit log.</p>
+          <div class="scr-extra" style="margin-top:16px" x-show="det && det.evidence && det.evidence.length">
             <div class="label">Saved evidence</div>
             <div class="stack" style="--gap:8px;margin-top:8px">
               <template x-for="ev in (det ? det.evidence : [])" :key="ev.id">
@@ -323,34 +349,59 @@
         </section>
 
         <section x-show="tab === 'alerts'" x-cloak style="padding:0">
-          <table class="tbl"><thead><tr><th>Severity</th><th>Alert</th><th>Time</th><th></th></tr></thead><tbody>
-            <template x-for="a in pcAlerts" :key="a.id"><tr><td><span class="sev" :class="a.sev" x-text="a.sev"></span></td><td><div class="cut" x-text="a.title"></div><div class="tiny muted mono" x-text="a.rule"></div></td><td class="num muted" x-text="a.at"></td><td class="right"><span class="small muted" x-show="a.acked">Reviewed</span><button class="btn btn-sm" x-show="!a.acked" @click="ackGroup({ items: [a], pc: a.pc, count: 1 })">Mark reviewed</button></td></tr></template>
+          <div class="pills" style="padding:12px 16px 4px" x-show="pcAlerts.length" role="group" aria-label="Filter by what detected it">
+            <button class="pill" :aria-pressed="!alertSrcFilter ? 'true' : 'false'" @click="alertSrcFilter = ''">All <span class="n" x-text="pcAlerts.length"></span></button>
+            <template x-for="s in pcAlertSources" :key="s.key"><button class="pill" :aria-pressed="alertSrcFilter === s.key ? 'true' : 'false'" @click="alertSrcFilter = s.key"><svg class="i i-sm" aria-hidden="true"><use :href="'#' + s.icon"/></svg> <span x-text="s.label"></span> <span class="n" x-text="s.n"></span></button></template>
+          </div>
+          <table class="tbl"><thead><tr><th>Severity</th><th>What happened</th><th>Detected by</th><th>Time</th><th>Status</th><th></th></tr></thead><tbody>
+            <template x-for="a in pcAlertsShown" :key="a.id"><tr style="cursor:pointer" @click="openAlert(a)">
+              <td><span class="sev" :class="a.sev" x-text="a.sev"></span></td>
+              <td><div class="cut" style="font-weight:500" x-text="a.title"></div><div class="tiny muted cut" x-text="alertExplain(a)"></div></td>
+              <td><span class="chip"><svg class="i i-sm" aria-hidden="true"><use :href="'#' + alertSrc(a).icon"/></svg><span x-text="alertSrc(a).label"></span></span></td>
+              <td class="num muted" x-text="a.at"></td>
+              <td><span class="small muted" x-show="a.acked" x-text="a.by ? 'Reviewed by ' + a.by : 'Reviewed'"></span><span class="small" x-show="!a.acked" style="color:var(--watch);font-weight:500">Needs review</span></td>
+              <td class="right" style="white-space:nowrap"><button class="btn btn-sm btn-quiet" x-show="!a.acked" @click.stop="ackGroup({ items: [a], pc: a.pc, pcId: a.pcId, count: 1 })">Mark reviewed</button></td>
+            </tr></template>
           </tbody></table>
           <div class="empty-state" x-show="!pcAlerts.length"><b>No alerts</b>Nothing has been raised for this PC.</div>
         </section>
 
         <section x-show="tab === 'programs'" x-cloak style="padding:0">
           <div class="row" style="padding:12px 20px;border-bottom:1px solid var(--border)">
-            <span class="small muted" x-text="det && det.processesUpdatedAt ? 'Updated ' + det.processesUpdatedAt : 'Running processes'"></span>
+            <span class="small muted" x-text="det && det.processesUpdatedAt ? 'Updated ' + det.processesUpdatedAt + ' · live' : 'Running processes'"></span>
             <span class="grow"></span>
+            <input class="input input-sm" type="search" x-model="progQ" placeholder="Search programs" aria-label="Search programs" style="width:200px">
             <button class="btn btn-sm" @click="rescan('processes')"><svg class="i i-sm" aria-hidden="true"><use href="#i-refresh"/></svg> Rescan</button>
             <button class="btn btn-sm" @click="promptCloseProgram()">Close a program…</button>
           </div>
-          <table class="tbl"><thead><tr><th>Program</th><th class="right">CPU</th><th class="right">Memory</th><th class="right">Network</th><th></th></tr></thead><tbody>
-            <template x-for="(p, idx) in (det ? det.processes : [])" :key="(p.pid || idx) + '-' + p.name"><tr>
+          <table class="tbl"><thead><tr><th style="cursor:pointer;user-select:none" @click="progSortBy('name')" :aria-sort="progSort === 'name' ? (progDir > 0 ? 'ascending' : 'descending') : 'none'" x-text="'Program' + progArrow('name')"></th><th class="right" style="cursor:pointer;user-select:none" @click="progSortBy('cpu')" :aria-sort="progSort === 'cpu' ? (progDir > 0 ? 'ascending' : 'descending') : 'none'" x-text="'CPU' + progArrow('cpu')"></th><th class="right" style="cursor:pointer;user-select:none" @click="progSortBy('mem')" :aria-sort="progSort === 'mem' ? (progDir > 0 ? 'ascending' : 'descending') : 'none'" x-text="'Memory' + progArrow('mem')"></th><th class="right" style="cursor:pointer;user-select:none" @click="progSortBy('net')" :aria-sort="progSort === 'net' ? (progDir > 0 ? 'ascending' : 'descending') : 'none'" x-text="'Network' + progArrow('net')"></th><th></th></tr></thead><tbody>
+            <template x-for="(p, idx) in progShown" :key="(p.pid || idx) + '-' + p.name"><tr>
               <td><div style="font-weight:500" :style="p.threat && 'color:var(--alert)'" x-text="p.name"></div><div class="tiny muted cut" x-text="p.title"></div></td>
-              <td class="right num" x-text="p.cpu.toFixed(1) + '%'"></td><td class="right num" x-text="p.mem + ' MB'"></td><td class="right num" x-text="p.net.toFixed(1) + ' Mb/s'"></td>
+              <td class="right num" x-text="p.cpu.toFixed(1) + '%'"></td><td class="right num" x-text="p.mem + ' MB'"></td><td class="right num" x-text="fmtNet(p.net)"></td>
               <td class="right nw"><span class="chip alert" x-show="p.threat" x-text="p.threat" style="margin-right:6px"></span><button class="btn btn-sm" @click="promptCloseProgram(p.name, p.pid || null, p.start || null)">Close</button></td></tr></template>
           </tbody></table>
+          <div class="empty-state" x-show="det && det.processes.length && !progShown.length" style="padding:20px"><b>No match</b>No program matches the search.</div>
         </section>
 
-        <section x-show="tab === 'browser'" x-cloak style="padding:0">
+        <section x-show="tab === 'traffic'" x-cloak style="padding:0">
           <div class="row" style="padding:16px 20px 8px"><span class="h3">AI traffic</span><span class="grow"></span><button class="btn btn-sm" @click="rescan('network')"><svg class="i i-sm" aria-hidden="true"><use href="#i-refresh"/></svg> Refresh</button></div>
           <table class="tbl" x-show="det && det.aiTraffic.length"><thead><tr><th>Service</th><th>Site</th><th>Browser</th><th class="right">Requests</th><th>Last</th><th>Result</th></tr></thead><tbody>
             <template x-for="(r, idx) in (det ? det.aiTraffic : [])" :key="idx + '-' + r.host"><tr><td style="font-weight:500" x-text="r.service"></td><td class="mono small" x-text="r.host"></td><td x-text="r.proc"></td><td class="right num" x-text="r.count"></td><td class="num muted" x-text="r.last"></td><td><span class="chip" :class="r.mode === 'Blocked' ? 'ok' : 'alert'" x-text="r.mode"></span></td></tr></template></tbody></table>
           <div class="empty-state" x-show="det && !det.aiTraffic.length" style="padding:20px"><b>No AI traffic</b>No connections to AI services were seen.</div>
-          <div style="padding:16px 20px 8px" class="h3">Open tabs</div>
-          <table class="tbl"><tbody><template x-for="(t, idx) in (det ? det.tabs : [])" :key="idx + '-' + t.title"><tr><td style="width:90px" class="muted" x-text="t.browser"></td><td><div x-text="t.title" style="font-weight:500"></div><div class="tiny muted mono" x-text="t.host"></div></td><td class="right"><span class="chip alert" x-show="t.ai">AI site</span></td></tr></template></tbody></table>
+          <div class="row" style="padding:16px 20px 8px"><span class="h3">All traffic</span><span class="grow"></span><span class="tiny muted">Proxy log grouped by site, this session. Host names only.</span></div>
+          <div class="note" style="margin:0 20px 8px" x-show="det && !det.logUrls && det.traffic.length"><svg class="i i-sm" aria-hidden="true"><use href="#i-info"/></svg><span>Allowed sites are not logged (Settings → Privacy and retention → “Log which allowed sites are visited” is off). Only blocked and AI sites are listed.</span></div>
+          <table class="tbl" x-show="det && det.traffic.length"><thead><tr><th>Site</th><th>Category</th><th class="right">Requests</th><th>Last</th><th>First</th><th>Result</th></tr></thead><tbody>
+            <template x-for="(r, idx) in (det ? det.traffic : [])" :key="idx + '-' + r.host + '-' + r.action"><tr><td class="mono small" x-text="r.host"></td><td class="muted" x-text="r.category || '—'"></td><td class="right num" x-text="r.count"></td><td class="num" x-text="r.last"></td><td class="num muted" x-text="r.first"></td><td><span class="chip" :class="r.action === 'blocked' ? 'ok' : (r.ai ? 'alert' : '')" x-text="r.action === 'blocked' ? 'Blocked' : (r.ai ? 'AI' : (r.action === 'allowed' ? 'Allowed' : r.action))"></span></td></tr></template></tbody></table>
+          <div class="empty-state" x-show="det && !det.traffic.length && !det.logUrls" style="padding:20px"><b>Site logging is off</b>Turn on “Log which allowed sites are visited” in Settings → Privacy and retention to list every site this PC visits. Blocked and AI sites appear here when seen.</div>
+          <div class="empty-state" x-show="det && !det.traffic.length && det.logUrls" style="padding:20px"><b>No traffic</b>The proxy has not seen any traffic from this PC in this session.</div>
+        </section>
+
+        <section x-show="tab === 'browsertabs'" x-cloak style="padding:0">
+          <div class="row" style="padding:16px 20px 8px"><span class="h3">Browser tabs</span><span class="grow"></span><span class="tiny muted">Focused browser windows this session. Active = on screen now.</span></div>
+          <table class="tbl" x-show="det && det.tabs.length"><thead><tr><th>Status</th><th>Browser</th><th>Title</th><th>Last seen</th><th>First seen</th><th class="right">Times</th><th></th></tr></thead><tbody>
+            <template x-for="(t, idx) in (det ? det.tabs : [])" :key="idx + '-' + t.browser + '-' + t.title"><tr><td style="width:96px"><span class="chip" :class="t.active && active.status !== 'offline' ? 'ok' : ''" x-text="t.active && active.status !== 'offline' ? 'Active' : 'Not active'"></span></td><td class="muted" style="width:90px" x-text="t.browser"></td><td><div x-show="t.title" x-text="t.title" style="font-weight:500"></div><div x-show="!t.title" class="muted">Title not captured</div><div class="tiny muted mono" x-show="t.host" x-text="t.host"></div></td><td class="num" x-text="t.at"></td><td class="num muted" x-text="t.firstAt"></td><td class="right num" x-text="t.count"></td><td class="right"><span class="chip alert" x-show="t.ai">AI site</span></td></tr></template>
+          </tbody></table>
+          <div class="empty-state" x-show="det && !det.tabs.length" style="padding:20px"><b>No browser tabs</b>No browser window was focused on this PC in this session.</div>
         </section>
 
         <section x-show="tab === 'installed'" x-cloak style="padding:0">
@@ -368,12 +419,13 @@
           <div style="padding:16px 20px 8px" class="h3">Listening ports</div>
           <table class="tbl" x-show="det && det.ports.length"><tbody><template x-for="(p, idx) in (det ? det.ports : [])" :key="idx + '-' + p.port"><tr><td class="mono" x-text="p.port + '/' + p.proto"></td><td x-text="p.proc"></td><td class="right nw"><span class="chip alert" style="margin-right:6px">Local AI port</span><button class="btn btn-sm" @click="promptCloseProgram(p.exe || p.proc, p.pid || null)">End task</button></td></tr></template></tbody></table>
           <div class="empty-state" x-show="det && !det.ports.length" style="padding:16px"><b>Nothing unusual</b></div>
-          <div style="padding:16px 20px 8px" class="h3">USB devices</div>
-          <table class="tbl" x-show="det && det.devices.length"><tbody><template x-for="(d, idx) in (det ? det.devices : [])" :key="idx + '-' + d.vidpid"><tr><td class="mono small" x-text="d.vidpid"></td><td x-text="d.name"></td><td class="num muted" x-text="d.time"></td></tr></template></tbody></table>
-          <div class="empty-state" x-show="det && !det.devices.length" style="padding:16px"><b>None attached</b></div>
+        </section>
+
+        <section x-show="tab === 'dns'" x-cloak style="padding:0">
+          <div style="padding:16px 20px 8px" class="h3">Gateway DNS &amp; proxy log</div>
+          <div class="empty-state" x-show="!(det && det.netEvents && det.netEvents.length)" style="padding:16px"><b>No entries</b></div>
           <template x-if="det && det.netEvents && det.netEvents.length">
             <div>
-              <div style="padding:16px 20px 8px" class="h3">Gateway DNS &amp; proxy log</div>
               <table class="tbl"><thead><tr><th>Time</th><th>Host</th><th>Layer</th><th>Category</th><th class="right">Action</th></tr></thead><tbody>
                 <template x-for="(n, idx) in det.netEvents" :key="idx">
                   <tr>
@@ -389,9 +441,34 @@
           </template>
         </section>
 
+        <section x-show="tab === 'usb'" x-cloak style="padding:0">
+          <div style="padding:16px 20px 8px" class="h3">USB devices</div>
+          <table class="tbl" x-show="det && det.devices.length"><tbody><template x-for="(d, idx) in (det ? det.devices : [])" :key="idx + '-' + d.vidpid"><tr><td class="mono small" x-text="d.vidpid"></td><td x-text="d.name"></td><td class="num muted" x-text="d.time"></td></tr></template></tbody></table>
+          <div class="empty-state" x-show="det && !det.devices.length" style="padding:16px"><b>None attached</b></div>
+        </section>
+
         <section x-show="tab === 'typing'" x-cloak>
-          <div class="h3">Typing pace</div><p class="muted small">Characters per minute, last 30 minutes. Only pace and pauses are measured, never which keys.</p>
-          <div class="bars"><template x-for="(v, i) in (det ? det.keyrate : [])" :key="i"><i :style="'height:' + Math.min(100, v) + '%'" :title="v + ' per min'"></i></template></div>
+          <div class="h3">Typing speed</div><p class="muted small">Words per minute over time (5 characters = 1 word). Only pace and pauses are measured, never which keys.</p>
+          <div class="wpm-stats" x-show="wpm.n"><span>Average <b x-text="wpm.avg"></b> WPM</span><span>Peak <b x-text="wpm.peak"></b> WPM</span></div>
+          <div class="wpm-chart" x-show="wpm.n">
+            <div class="wpm-y"><template x-for="t in (wpm.yticks || [])" :key="'y' + t.v"><span :style="'top:' + t.top + '%'" x-text="t.v"></span></template></div>
+            <div class="wpm-plot" @mousemove="wpmMove($event)" @mouseleave="wpmHover = null">
+              <template x-for="t in (wpm.yticks || [])" :key="'g' + t.v"><i class="wpm-grid" :style="'top:' + t.top + '%'"></i></template>
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                <polygon class="wpm-area" :points="wpm.area"></polygon>
+                <polyline class="wpm-line" :points="wpm.line"></polyline>
+              </svg>
+              <template x-if="wpmHover !== null && wpm.pts && wpm.pts[wpmHover]">
+                <div>
+                  <i class="wpm-cursor" :style="'left:' + wpm.pts[wpmHover][0] + '%'"></i>
+                  <i class="wpm-dot" :style="'left:' + wpm.pts[wpmHover][0] + '%;top:' + wpm.pts[wpmHover][1] + '%'"></i>
+                  <div class="wpm-tip" :class="wpm.pts[wpmHover][0] > 70 ? 'flip' : ''" :style="'left:' + wpm.pts[wpmHover][0] + '%'"><b x-text="wpm.vals[wpmHover] + ' WPM'"></b> <span x-text="wpm.labels[wpmHover]"></span></div>
+                </div>
+              </template>
+            </div>
+            <div class="wpm-x"><template x-for="(t, i) in (wpm.xticks || [])" :key="'x' + i"><span :style="'left:' + t.left + '%'" x-text="t.label"></span></template></div>
+          </div>
+          <div class="empty-state" x-show="!wpm.n"><b>No typing data yet</b>Typing speed appears here once the student types during a session.</div>
         </section>
 
         <section x-show="tab === 'pastes'" x-cloak style="padding:0">
@@ -414,6 +491,7 @@
       <div class="modal-foot"><button class="btn" @click="messageModal = false">Cancel</button><button class="btn btn-solid" @click="sendMessage()">Send</button></div>
     </div>
   </div>
+  @include('alerts._details-modal')
   <div class="overlay" x-show="closeModal" x-cloak x-transition.opacity @click.self="closeModal = false">
     <div class="modal" role="dialog" aria-label="Close a program">
       <div class="modal-head"><span class="h2">Close this program?</span><button class="xbtn" @click="closeModal = false" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>

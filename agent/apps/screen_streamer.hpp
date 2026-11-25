@@ -38,6 +38,20 @@ struct ScreenEncoding {
     bool operator==(const ScreenEncoding&) const = default;
 };
 
+/// One evidence screenshot request from the service (F123, `evidence_snap`); evidence_shot() clamps every field.
+struct EvidenceRequest {
+    int max_width = 1920;                  // 320..3840; wider pictures are scaled down, aspect kept
+    int quality = 70;                      // 30..95
+    size_t max_bytes = 4 * 1024 * 1024;    // 64 KiB..4 MiB (ipc::kMaxEvidenceJpeg)
+};
+/// What evidence_shot() produced: one JPEG, "masked" (no image taken) or "failed" with a short reason.
+struct EvidenceShot {
+    enum class Kind { jpeg, masked, failed };
+    Kind kind = Kind::failed;
+    std::string jpeg;
+    std::string reason;  // failed only: a fixed word, never screen or window content
+};
+
 class ScreenStreamer {
 public:
     /// Sends one encoded screen message to the service; false if it could not be sent.
@@ -77,6 +91,10 @@ public:
     /// The service connection is gone: stop capturing until the gateway asks again.
     void on_link_lost();
     void stop();
+    /// Takes one full-frame screenshot for an alert (F123, DECISIONS #32) with a capture of its own: independent of
+    /// a live view and of the CCC lease. No image (masked) when the privacy mask applies before or after the capture,
+    /// the focused window is unknown, or the screen is a secure desktop / blanked. Blocks for one capture + encode.
+    EvidenceShot evidence_shot(const EvidenceRequest& req);
     bool is_running() const;
     bool is_capturing() const;
 

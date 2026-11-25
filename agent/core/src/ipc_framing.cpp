@@ -14,13 +14,15 @@ bool StreamReader::feed(const char* data, size_t n, std::vector<Record>& out) {
             if (buf_.size() - pos < kBinaryHeader) break;
             const auto* h = reinterpret_cast<const uint8_t*>(buf_.data() + pos);
             const size_t len = (size_t(h[2]) << 24) | (size_t(h[3]) << 16) | (size_t(h[4]) << 8) | size_t(h[5]);
-            if (h[1] != kScreenFrame || len == 0 || len > kMaxScreenFrame) {
+            const bool screen = h[1] == kScreenFrame, evidence = h[1] == kEvidenceJpeg;
+            if (!(screen || evidence) || len == 0 || len > (screen ? kMaxScreenFrame : kMaxEvidenceJpeg)) {
                 failed_ = true;
                 buf_.clear();
                 return false;
             }
             if (buf_.size() - pos - kBinaryHeader < len) break;
-            out.push_back({Record::Kind::screen_frame, buf_.substr(pos + kBinaryHeader, len)});
+            out.push_back({screen ? Record::Kind::screen_frame : Record::Kind::evidence_jpeg,
+                           buf_.substr(pos + kBinaryHeader, len)});
             pos += kBinaryHeader + len;
             continue;
         }
@@ -36,13 +38,14 @@ bool StreamReader::feed(const char* data, size_t n, std::vector<Record>& out) {
     return true;
 }
 
-std::string screen_frame_record(std::string_view payload) {
-    if (payload.empty() || payload.size() > kMaxScreenFrame) return {};
+namespace {
+std::string binary_record(uint8_t type, std::string_view payload, size_t max) {
+    if (payload.empty() || payload.size() > max) return {};
     const auto len = uint32_t(payload.size());
     std::string r;
     r.reserve(kBinaryHeader + payload.size());
     r.push_back(char(kBinaryMarker));
-    r.push_back(char(kScreenFrame));
+    r.push_back(char(type));
     r.push_back(char((len >> 24) & 0xff));
     r.push_back(char((len >> 16) & 0xff));
     r.push_back(char((len >> 8) & 0xff));
@@ -50,9 +53,19 @@ std::string screen_frame_record(std::string_view payload) {
     r.append(payload);
     return r;
 }
+}  // namespace
+
+std::string screen_frame_record(std::string_view payload) { return binary_record(kScreenFrame, payload, kMaxScreenFrame); }
+
+std::string evidence_jpeg_record(std::string_view jpeg) { return binary_record(kEvidenceJpeg, jpeg, kMaxEvidenceJpeg); }
 
 bool send_screen_frame(IIpcClient& client, std::string_view payload) {
     const std::string r = screen_frame_record(payload);
+    return !r.empty() && client.send(r);
+}
+
+bool send_evidence_jpeg(IIpcClient& client, std::string_view jpeg) {
+    const std::string r = evidence_jpeg_record(jpeg);
     return !r.empty() && client.send(r);
 }
 

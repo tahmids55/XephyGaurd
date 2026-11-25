@@ -7,6 +7,7 @@
 
 #include "xg/artifact_scan.hpp"
 #include "xg/crypto.hpp"
+#include "xg/ipc_framing.hpp"
 #include "xg/ipc_messages.hpp"
 #include "xg/json_read.hpp"
 #include "xg/log.hpp"
@@ -44,6 +45,7 @@ Agent::Agent(Config cfg, std::string config_path, ServicePlatform& plat)
     queue_ = std::make_unique<EventQueue>(join(cfg_.data_dir, "queue.db"));
     sink_ = queue_.get();
     uplink_ = std::make_unique<Uplink>(queue_.get(), view_, mailbox_, status_);
+    evidence_out_ = [this](EvidenceUpload u) { uplink_->queue_evidence(std::move(u)); };
     probe_worker_.start();  // idle until scan_ports hands it candidates
     realtime_ = std::make_unique<Realtime>(view_, mailbox_, status_);
     screen_relay_ = std::make_unique<ScreenRelay>(view_, plat_.ipc.get(), mtls_screen_link_factory());
@@ -89,6 +91,7 @@ Agent::~Agent() = default;
 void Agent::apply_policy(const Policy& p) {
     const Mode old_mode = policy_.mode;
     policy_ = p;
+    if (!p.screen_auto_evidence && evidence_pending_) cancel_evidence("disabled by policy");
     rules_.set_disabled(p.disabled_rules);
     keys_.set_window(p.intervals.keystats_window_s);
     if (old_mode != p.mode) {
@@ -198,6 +201,16 @@ void Agent::handle_rule_hit(const RuleHit& hit, const std::string& subject, json
         return;
     }
 
+    // F123 fast path (plan step 8): an alert worth a screenshot asks the helper now, before warn/kill change the
+    // screen, with no CCC round trip. The nonce goes with this event; the CCC records it only if the alert passes
+    // its own guards (policy, severity, 30 s per PC), else the upload is refused.
+    std::string evidence_nonce;
+    if (std::find(actions.begin(), actions.end(), Action::alert) != actions.end() &&
+        hit.severity >= pol.screen_evidence_min_severity) {
+        std::string nonce = random_hex(16);
+        if (!request_evidence("", nonce, "rule " + hit.rule_id, true)) evidence_nonce = std::move(nonce);
+    }
+
     json taken = json::array();
     json result = json::object();
     for (auto a : actions) {
@@ -219,17 +232,19 @@ void Agent::handle_rule_hit(const RuleHit& hit, const std::string& subject, json
                 break;  // alert/isolate are executed by the CCC when it ingests the event
         }
     }
-    sink_->emit(ev::rule_hit, {{"rule_id", hit.rule_id},
-                               {"severity", to_string(hit.severity)},
-                               {"category", hit.category},
-                               {"description", hit.description},
-                               {"subject", limit(subject, 512)},
-                               {"actions", taken},
-                               {"result", result},
-                               {"context", std::move(context)},
-                               {"mode", to_string(pol.mode)},
-                               {"session_id", pol.session_id},
-                               {"user", active_user()}});
+    json data = {{"rule_id", hit.rule_id},
+                 {"severity", to_string(hit.severity)},
+                 {"category", hit.category},
+                 {"description", hit.description},
+                 {"subject", limit(subject, 512)},
+                 {"actions", taken},
+                 {"result", result},
+                 {"context", std::move(context)},
+                 {"mode", to_string(pol.mode)},
+                 {"session_id", pol.session_id},
+                 {"user", active_user()}};
+    if (!evidence_nonce.empty()) data["evidence_nonce"] = std::move(evidence_nonce);
+    sink_->emit(ev::rule_hit, std::move(data));
     wake_uplink();  // alerts should reach the CCC within seconds
 }
 
@@ -728,6 +743,8 @@ void Agent::on_helper_conn(const IIpcServer::Peer& peer, bool connected) {
     else {
         helpers_.erase(peer.conn_id);
         peer_budget_.erase(peer.conn_id);
+        evidence_helpers_.erase(peer.conn_id);
+        if (evidence_pending_ && evidence_pending_->conn == peer.conn_id) cancel_evidence("helper disconnected");
         if (screen_relay_->source() == peer.conn_id) screen_relay_->set_source(0);
     }
     if (!connected) {
@@ -849,9 +866,79 @@ void Agent::on_helper_message(const IIpcServer::Peer& peer, const std::string& l
         const bool may_stream = cfg_.screen_enabled && jr::boolean(j, "ipc_stream") && have_active && peer.uid == active_uid;
         if (may_stream) screen_relay_->set_source(peer.conn_id);
         else if (screen_relay_->source() == peer.conn_id) screen_relay_->set_source(0);
+        if (jr::boolean(j, "evidence")) evidence_helpers_.insert(peer.conn_id);
+        else evidence_helpers_.erase(peer.conn_id);
+    } else if (t == "evidence_masked" || t == "evidence_failed") {
+        // Only the helper that was asked; the masked notice carries no image (the privacy mask hid the screen).
+        if (!evidence_pending_ || evidence_pending_->conn != peer.conn_id) return;
+        uint64_t want = peer.conn_id;
+        if (!evidence_wait_conn_.compare_exchange_strong(want, 0)) return;  // a JPEG from it is already on its way
+        if (t == "evidence_masked") {
+            evidence_out_(EvidenceUpload{evidence_pending_->nonce, {}, true, evidence_pending_->local});
+            log::info("evidence: {}: screen masked, no image", evidence_pending_->label);
+            evidence_pending_.reset();
+        } else {
+            cancel_evidence(("helper failed: " + limit(jr::str(j, "reason"), 120)).c_str());
+        }
     } else if (t == "ping") {
         if (plat_.ipc) plat_.ipc->send(peer.conn_id, ipc::line({{"t", "pong"}}));
     }
+}
+
+// --------------------------------------------------------------------------- auto evidence (F123)
+uint64_t Agent::evidence_helper() const {
+    if (!plat_.system) return 0;
+    for (const auto& s : plat_.system->sessions()) {
+        if (!s.active) continue;
+        for (const auto& [conn, peer] : helpers_)
+            if (peer.uid == s.uid && evidence_helpers_.contains(conn)) return conn;
+        return 0;
+    }
+    return 0;
+}
+
+void Agent::cancel_evidence(const char* why) {
+    evidence_wait_conn_ = 0;
+    if (evidence_pending_) log::warn("evidence: {}: no screenshot ({})", evidence_pending_->label, why);
+    evidence_pending_.reset();
+}
+
+const char* Agent::request_evidence(const std::string& cmd_id, std::string nonce, std::string label, bool local) {
+    const int64_t now = steady_ms();
+    uint64_t conn = 0;
+    if (!policy_.screen_auto_evidence || !cfg_.screen_enabled) return "disabled";
+    if (evidence_pending_ && now <= evidence_pending_->deadline) return "busy";
+    if (last_evidence_req_ != 0 && now - last_evidence_req_ < kEvidenceGapMs) return "rate_limited";
+    if ((conn = evidence_helper()) == 0) return "no_helper";
+    if (evidence_pending_) cancel_evidence("helper did not reply");
+    evidence_pending_ = PendingEvidence{cmd_id, std::move(nonce), std::move(label), conn, now + kEvidenceReplyMs, local};
+    last_evidence_req_ = now;
+    evidence_wait_conn_ = conn;
+    if (plat_.ipc)
+        plat_.ipc->send(conn, ipc::line({{"t", "evidence_snap"}, {"max_width", 1920}, {"quality", 70},
+                                          {"max_bytes", ipc::kMaxEvidenceJpeg}}));
+    return nullptr;
+}
+
+bool Agent::offer_evidence_record(const IIpcServer::Peer& peer, std::string&& jpeg) {
+    // One record per request, from the asked connection only: a helper cannot queue 4 MiB records at will.
+    uint64_t want = peer.conn_id;
+    if (want == 0 || !evidence_wait_conn_.compare_exchange_strong(want, 0)) return false;
+    return post(msg::EvidenceJpeg{peer, std::move(jpeg)});
+}
+
+void Agent::on_evidence_jpeg(const IIpcServer::Peer& peer, std::string&& jpeg) {
+    if (!evidence_pending_ || evidence_pending_->conn != peer.conn_id) return;
+    if (steady_ms() > evidence_pending_->deadline) return cancel_evidence("helper replied too late");
+    // A JPEG: SOI + marker at the start, EOI at the end, at most the agent's cap. The CCC checks it again.
+    const auto b = [&](size_t i) { return static_cast<uint8_t>(jpeg[i]); };
+    const size_t n = jpeg.size();
+    if (n < 4 || n > ipc::kMaxEvidenceJpeg || b(0) != 0xFF || b(1) != 0xD8 || b(2) != 0xFF || b(n - 2) != 0xFF ||
+        b(n - 1) != 0xD9)
+        return cancel_evidence("helper sent something that is not a JPEG");
+    log::info("evidence: {}: screenshot {} bytes", evidence_pending_->label, n);
+    evidence_out_(EvidenceUpload{evidence_pending_->nonce, std::move(jpeg), false, evidence_pending_->local});
+    evidence_pending_.reset();
 }
 
 void Agent::push_helper_config() {
@@ -1342,6 +1429,31 @@ void Agent::handle_command(const protocol::Command& cmd) {
         const int64_t ttl = jr::i64(cmd.args, "ttl_s", 0, 0, 3600);
         if (ttl > 0 && cfg_.screen_enabled) screen_relay_->grant_lease(int(ttl));
         command_result(cmd.id, ttl > 0 && cfg_.screen_enabled ? "ok" : "ignored", json::object());
+    } else if (cmd.type == "process_lease") {
+        // The CCC's Programs tab is open on this PC: send process_snapshot every 2 s for ttl_s more seconds.
+        // Same data as the regular snapshot, only more often; the lease lapses by itself (max 60 s per grant).
+        const int64_t ttl = jr::i64(cmd.args, "ttl_s", 0, 0, 60);
+        const bool on = ttl > 0 && policy_.collect.processes;
+        if (on) {
+            const int64_t now = steady_ms();
+            const bool fresh = now >= proc_lease_until_;
+            proc_lease_until_ = now + ttl * 1000;
+            if (fresh) {
+                scan_processes();
+                process_snapshot();
+                next_run_["snap"] = now + 2000;
+                wake_uplink();
+            }
+        }
+        command_result(cmd.id, on ? "ok" : "ignored", json::object());
+    } else if (cmd.type == "evidence_snapshot") {
+        // A serious alert on this PC (F123, DECISIONS #32): one screenshot from the active session's helper, which
+        // honours the privacy mask. The nonce stays in the service; the helper only gets the capture limits.
+        if (const char* refuse = request_evidence(
+                cmd.id, jr::str(cmd.args, "nonce"), "alert " + std::to_string(jr::i64(cmd.args, "alert_id", 0, 1)), false))
+            command_result(cmd.id, "ignored", {{"reason", refuse}});
+        else
+            command_result(cmd.id, "ok", {{"requested", true}});
     } else if (cmd.type == "flush" || cmd.type == "ping") {
         wake_uplink();
         command_result(cmd.id, "ok", {{"pong", now_ms()}});
@@ -1419,7 +1531,11 @@ void Agent::run_periodic(int64_t now) {
         return false;
     };
     if (p.collect.processes && due("proc", p.intervals.process_scan_s)) scan_processes();
-    if (p.collect.processes && due("snap", p.intervals.snapshot_s)) process_snapshot();
+    const bool proc_live = now < proc_lease_until_;
+    if (p.collect.processes && due("snap", proc_live ? 2 : p.intervals.snapshot_s)) {
+        process_snapshot();
+        if (proc_live) wake_uplink();
+    }
     if (p.collect.ports && due("ports", p.intervals.port_scan_s)) scan_ports();
     if (p.collect.network && (std::exchange(network_dirty_, false) || due("net", 30))) scan_network();
     if (p.collect.network && due("ai_net", 4)) scan_ai_traffic();
@@ -1431,6 +1547,7 @@ void Agent::run_periodic(int64_t now) {
     if (p.collect.gpu && due("gpu", p.intervals.gpu_sample_s)) sample_gpu();
     if (due("integrity", p.intervals.integrity_check_s)) check_integrity(false);
     if (due("helpers", 2)) check_helpers();
+    if (evidence_pending_ && steady_ms() > evidence_pending_->deadline) cancel_evidence("helper did not reply");
     if (running_) maybe_start_artifact_scan(now);
     // Anti-tamper: if the isolation rule disappears while the PC is isolated, put it back and report it.
     if (isolated_ && plat_.isolator && due("isolation", 20) && !plat_.isolator->active()) {
@@ -1476,6 +1593,7 @@ void Agent::dispatch(AgentMessage& m) {
                    [&](msg::EnrollApproved& e) { on_enroll_approved(e); },
                    [&](msg::ArtifactsScanned& e) { on_artifacts_scanned(e.result); },
                    [&](msg::ProbeDone& e) { on_probe_done(e); },
+                   [&](msg::EvidenceJpeg& e) { on_evidence_jpeg(e.peer, std::move(e.jpeg)); },
                },
                m);
 }
@@ -1525,6 +1643,8 @@ int Agent::run(std::atomic<bool>& stop) {
         // Frames bypass the core (up to 4 MiB each): the IPC thread hands them straight to the relay queue.
         plat_.ipc->set_frame_handler(
             [this](const IIpcServer::Peer& peer, std::string&& f) { screen_relay_->push(peer.conn_id, std::move(f)); });
+        plat_.ipc->set_evidence_handler(
+            [this](const IIpcServer::Peer& peer, std::string&& f) { offer_evidence_record(peer, std::move(f)); });
         const bool ok = plat_.ipc->start(
             cfg_.ipc_path,
             [this](const IIpcServer::Peer& peer, const std::string& line) { post(msg::HelperLine{peer, line}); },

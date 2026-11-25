@@ -1,5 +1,6 @@
-@extends('layouts.app', ['activePage' => 'profiles.html'])
-@section('title', 'Timetable and profiles')
+@php $xgTt = ($page ?? 'profiles') === 'timetable'; @endphp
+@extends('layouts.app', ['activePage' => $xgTt ? 'timetable.html' : 'profiles.html'])
+@section('title', $xgTt ? 'Timetable' : 'Profiles')
 @section('content')
 @php
   $daysMap = [1 => 'Mon', 2 => 'Tue', 3 => 'Wed', 4 => 'Thu', 5 => 'Fri', 6 => 'Sat', 7 => 'Sun'];
@@ -46,14 +47,13 @@
   'formProfile' => $liveProfiles[0]['name'] ?? '',
   'canAdmin' => (bool) auth()->user()?->hasRole('admin'),
 ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
-<div class="doc" x-data="profilesPage"><div class="optbar"><span class="otitle">Timetable and profiles</span><span class="osub">What each class runs under, and when.</span><span class="grow"></span></div><div class="canvas ">
+<div class="doc" x-data="profilesPage"><div class="optbar">@if($xgTt)<span class="otitle">Timetable</span><span class="osub">When each class runs, and under which profile.</span>@else<span class="otitle">Profiles</span><span class="osub">What each class runs under.</span>@endif<span class="grow"></span></div><div class="canvas ">
   @if ($errors->any())
   <div class="note warn" style="margin-bottom:16px"><svg class="i i-sm" aria-hidden="true"><use href="#i-warn"/></svg><span>{{ $errors->first() }}</span></div>
   @endif
-  <div class="tabs" role="tablist"><button role="tab" :aria-selected="tab === 'profiles'" @click="tab = 'profiles'">Profiles</button><button role="tab" :aria-selected="tab === 'timetable'" @click="tab = 'timetable'">Timetable</button></div>
-
+  @unless($xgTt)
   <!-- Profiles -->
-  <div x-show="tab === 'profiles'" class="cols-side" style="grid-template-columns:300px minmax(0,1fr)">
+  <div class="cols-side" style="grid-template-columns:300px minmax(0,1fr)">
     <div class="panel" style="min-height:100%">
       <div class="panel-head"><span class="h3">Profiles</span><button type="button" class="btn btn-sm" x-show="canAdmin" @click="newProfile()"><svg class="i i-sm" aria-hidden="true"><use href="#i-plus"/></svg> New</button></div>
       <div class="empty-state" x-show="!profiles.length"><b>No profiles yet</b>Click New to create one.</div>
@@ -103,8 +103,11 @@
     </div>
   </div>
 
+  @endunless
+
+  @if($xgTt)
   <!-- Timetable -->
-  <div x-show="tab === 'timetable'" x-cloak class="cols-main" style="grid-template-columns:minmax(0,1fr) 380px">
+  <div class="cols-main" style="grid-template-columns:minmax(0,1fr) 380px">
     <section class="panel panel-pad">
       <div class="row" style="margin-bottom:14px"><h2 class="h2 grow">This week</h2><button class="btn btn-solid btn-sm" @click="addOpen = !addOpen"><svg class="i i-sm" aria-hidden="true"><use href="#i-plus"/></svg> Add a class</button></div>
       <div class="week" :style="'--hr:' + hr">
@@ -137,5 +140,6 @@
       </form>
     </section>
   </div>
+  @endif
 </div></div>
 @endsection

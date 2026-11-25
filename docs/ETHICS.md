@@ -24,6 +24,8 @@ such controls work.
 | Live screen view by lab staff (on demand, not stored; every view is logged in `screen_view_audits`) | on request | on request | on request |
 | Streaming cost while viewed: frames/s, kbit/s, CPU % and throttle level (numbers only, in the heartbeat) | on request | on request | on request |
 | Screenshot saved as evidence by an instructor, only from their own open audited live view (with a note; saving and every viewing audited; deleted with raw data) | on request | on request | on request |
+| Alert context snapshot: copies of data in this table that the CCC already holds (rule, reasons, process list, window/tab titles, recent events), frozen when an alert is raised | – | ✓ | ✓ |
+| Automatic screenshot when a serious alert is raised (one still image, policy opt-in, off by default, at most 1 per PC per 30 s, never of a privacy-masked window, stored and audited like a staff screenshot, deleted with raw data; the notice says so when on) | – | if enabled | if enabled |
 
 **Never collected:** typed characters, clipboard text, continuous screen recordings, passwords,
 personal messages, file contents, microphone or camera. Keystrokes and clipboard text are reduced to

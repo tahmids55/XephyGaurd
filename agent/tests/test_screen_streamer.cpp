@@ -6,7 +6,9 @@
 #include <chrono>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <thread>
+#include <turbojpeg.h>
 
 #include "agent_state.h"
 #include "fake_capture.h"
@@ -262,4 +264,111 @@ TEST_CASE("streamer passes the CPU budget to the running view's governor", "[scr
     CHECK(r.s.stream_stats().budget_pct == 100.0);
     CHECK(r.s.cost().level == r.s.stream_stats().level);  // heartbeat cost mirrors the governor
     r.s.stop();
+}
+
+// ---------------------------------------------------------------------------- evidence screenshot (F123)
+namespace {
+// Width x height of a JPEG, {0,0} if it does not decode.
+std::pair<int, int> jpeg_size(const std::string& j) {
+    tjhandle tj = tjInitDecompress();
+    int w = 0, h = 0, sub = 0, cs = 0;
+    const bool ok = tjDecompressHeader3(tj, reinterpret_cast<const unsigned char*>(j.data()),
+                                        static_cast<unsigned long>(j.size()), &w, &h, &sub, &cs) == 0;
+    tjDestroy(tj);
+    return ok ? std::pair{w, h} : std::pair{0, 0};
+}
+bool soi_eoi(const std::string& j) {
+    return j.size() > 4 && static_cast<uint8_t>(j[0]) == 0xFF && static_cast<uint8_t>(j[1]) == 0xD8 &&
+           static_cast<uint8_t>(j[j.size() - 2]) == 0xFF && static_cast<uint8_t>(j[j.size() - 1]) == 0xD9;
+}
+struct SecureCapture : FakeCapture {
+    CaptureStatus capture(Frame&) override { return CaptureStatus::SecureDesktop; }
+};
+struct NoiseCapture : FakeCapture {  // incompressible picture: a JPEG of it is large
+    NoiseCapture() : FakeCapture(1920, 1080) {}
+    CaptureStatus capture(Frame& f) override {
+        f.width = 1920; f.height = 1080; f.stride = 1920 * 4;
+        f.bgra.resize(static_cast<size_t>(f.stride) * f.height);
+        std::mt19937 rng(7);
+        for (auto& b : f.bgra) b = static_cast<uint8_t>(rng());
+        f.full_dirty = true;
+        return CaptureStatus::Ok;
+    }
+};
+}  // namespace
+
+TEST_CASE("evidence shot: one full-frame JPEG without a lease or a running view", "[screen][evidence]") {
+    ScreenStreamer s([] { return std::make_shared<FakeCapture>(320, 240); });
+    s.set_window_source([] { return std::optional<ScreenWindow>{ScreenWindow{"editor", "main.cpp"}}; });
+    const EvidenceShot shot = s.evidence_shot({});
+    REQUIRE(shot.kind == EvidenceShot::Kind::jpeg);
+    CHECK(soi_eoi(shot.jpeg));
+    CHECK(jpeg_size(shot.jpeg) == std::pair{320, 240});
+    CHECK_FALSE(s.is_capturing());  // the live-view path is untouched
+}
+
+TEST_CASE("evidence shot: a wide screen is scaled down to max_width, aspect kept", "[screen][evidence]") {
+    ScreenStreamer s([] { return std::make_shared<FakeCapture>(2560, 1440); });
+    s.set_window_source([] { return std::optional<ScreenWindow>{ScreenWindow{"editor", "main.cpp"}}; });
+    EvidenceRequest req;
+    req.max_width = 1920;
+    const EvidenceShot shot = s.evidence_shot(req);
+    REQUIRE(shot.kind == EvidenceShot::Kind::jpeg);
+    CHECK(jpeg_size(shot.jpeg) == std::pair{1920, 1080});
+    req.max_width = 10;  // clamped to 320
+    CHECK(jpeg_size(s.evidence_shot(req).jpeg) == std::pair{320, 180});
+}
+
+TEST_CASE("evidence shot: unknown window, matching mask rule or bad regex give no image (fail-safe)", "[screen][evidence][privacy]") {
+    ScreenStreamer bare([] { return std::make_shared<FakeCapture>(320, 240); });  // no window source
+    CHECK(bare.evidence_shot({}).kind == EvidenceShot::Kind::masked);
+
+    Rig r;
+    r.set_window(std::nullopt);
+    CHECK(r.s.evidence_shot({}).kind == EvidenceShot::Kind::masked);
+    r.s.set_mask_rules({{"keepassxc", ""}});
+    r.set_window(ScreenWindow{"KeePassXC", "Passwords"});
+    const EvidenceShot m = r.s.evidence_shot({});
+    CHECK(m.kind == EvidenceShot::Kind::masked);
+    CHECK(m.jpeg.empty());
+    r.s.set_mask_rules({{"", "([unclosed"}});
+    r.set_window(ScreenWindow{"editor", "main.cpp"});
+    CHECK(r.s.evidence_shot({}).kind == EvidenceShot::Kind::masked);
+    r.s.set_mask_rules({});
+    CHECK(r.s.evidence_shot({}).kind == EvidenceShot::Kind::jpeg);
+}
+
+TEST_CASE("evidence shot: a masked window that appears during the capture drops the picture", "[screen][evidence][privacy]") {
+    ScreenStreamer s([] { return std::make_shared<FakeCapture>(320, 240); });
+    s.set_mask_rules({{"keepassxc", ""}});
+    auto calls = std::make_shared<std::atomic<int>>(0);
+    s.set_window_source([calls] {  // first check (before capture): editor; second check (after): the password manager
+        return std::optional<ScreenWindow>{(*calls)++ == 0 ? ScreenWindow{"editor", "x"} : ScreenWindow{"keepassxc", "y"}};
+    });
+    CHECK(s.evidence_shot({}).kind == EvidenceShot::Kind::masked);
+    CHECK(calls->load() >= 2);
+}
+
+TEST_CASE("evidence shot: secure desktop is masked, no capture or an oversized picture fails", "[screen][evidence]") {
+    auto win = [] { return std::optional<ScreenWindow>{ScreenWindow{"editor", "main.cpp"}}; };
+    ScreenStreamer sec([] { return std::make_shared<SecureCapture>(); });
+    sec.set_window_source(win);
+    CHECK(sec.evidence_shot({}).kind == EvidenceShot::Kind::masked);
+
+    ScreenStreamer none([] { return std::shared_ptr<ScreenCapture>{}; });
+    none.set_window_source(win);
+    const EvidenceShot n = none.evidence_shot({});
+    CHECK(n.kind == EvidenceShot::Kind::failed);
+    CHECK(n.reason == "capture_unavailable");
+
+    ScreenStreamer noisy([] { return std::make_shared<NoiseCapture>(); });
+    noisy.set_window_source(win);
+    EvidenceRequest small;
+    small.max_bytes = 1;  // clamped to 64 KiB, still far below a noise picture
+    const EvidenceShot big = noisy.evidence_shot(small);
+    CHECK(big.kind == EvidenceShot::Kind::failed);
+    CHECK(big.reason == "too_large");
+    const EvidenceShot ok = noisy.evidence_shot({});  // 4 MiB fits (q 70, or the q 30 retry)
+    REQUIRE(ok.kind == EvidenceShot::Kind::jpeg);
+    CHECK(ok.jpeg.size() <= 4u * 1024 * 1024);
 }

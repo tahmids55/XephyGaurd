@@ -73,6 +73,7 @@ public:
     }
 
     void set_frame_handler(FrameHandler h) override { on_frame_ = std::move(h); }
+    void set_evidence_handler(FrameHandler h) override { on_evidence_ = std::move(h); }
 
     void stop() override {
         running_ = false;
@@ -120,7 +121,8 @@ private:
                 }
                 for (auto& r : records) {
                     if (r.kind == ipc::Record::Kind::line) on_msg(peer, r.data);
-                    else if (on_frame_) on_frame_(peer, std::move(r.data));
+                    else if (r.kind == ipc::Record::Kind::screen_frame) { if (on_frame_) on_frame_(peer, std::move(r.data)); }
+                    else if (on_evidence_) on_evidence_(peer, std::move(r.data));
                 }
                 if (closed) on_peer(peer, false);
             }
@@ -156,6 +158,7 @@ private:
 
     std::string allowed_exe_;
     FrameHandler on_frame_;
+    FrameHandler on_evidence_;
     int lfd_ = -1;
     std::atomic<bool> running_{false};
     std::thread thread_;
