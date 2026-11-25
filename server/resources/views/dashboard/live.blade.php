@@ -356,15 +356,17 @@
           <div class="row" style="padding:12px 20px;border-bottom:1px solid var(--border)">
             <span class="small muted" x-text="det && det.processesUpdatedAt ? 'Updated ' + det.processesUpdatedAt : 'Running processes'"></span>
             <span class="grow"></span>
+            <input class="input input-sm" type="search" x-model="progQ" placeholder="Search programs" aria-label="Search programs" style="width:200px">
             <button class="btn btn-sm" @click="rescan('processes')"><svg class="i i-sm" aria-hidden="true"><use href="#i-refresh"/></svg> Rescan</button>
             <button class="btn btn-sm" @click="promptCloseProgram()">Close a program…</button>
           </div>
-          <table class="tbl"><thead><tr><th>Program</th><th class="right">CPU</th><th class="right">Memory</th><th class="right">Network</th><th></th></tr></thead><tbody>
-            <template x-for="(p, idx) in (det ? det.processes : [])" :key="(p.pid || idx) + '-' + p.name"><tr>
+          <table class="tbl"><thead><tr><th style="cursor:pointer;user-select:none" @click="progSortBy('name')" :aria-sort="progSort === 'name' ? (progDir > 0 ? 'ascending' : 'descending') : 'none'" x-text="'Program' + progArrow('name')"></th><th class="right" style="cursor:pointer;user-select:none" @click="progSortBy('cpu')" :aria-sort="progSort === 'cpu' ? (progDir > 0 ? 'ascending' : 'descending') : 'none'" x-text="'CPU' + progArrow('cpu')"></th><th class="right" style="cursor:pointer;user-select:none" @click="progSortBy('mem')" :aria-sort="progSort === 'mem' ? (progDir > 0 ? 'ascending' : 'descending') : 'none'" x-text="'Memory' + progArrow('mem')"></th><th class="right" style="cursor:pointer;user-select:none" @click="progSortBy('net')" :aria-sort="progSort === 'net' ? (progDir > 0 ? 'ascending' : 'descending') : 'none'" x-text="'Network' + progArrow('net')"></th><th></th></tr></thead><tbody>
+            <template x-for="(p, idx) in progShown" :key="(p.pid || idx) + '-' + p.name"><tr>
               <td><div style="font-weight:500" :style="p.threat && 'color:var(--alert)'" x-text="p.name"></div><div class="tiny muted cut" x-text="p.title"></div></td>
               <td class="right num" x-text="p.cpu.toFixed(1) + '%'"></td><td class="right num" x-text="p.mem + ' MB'"></td><td class="right num" x-text="p.net.toFixed(1) + ' Mb/s'"></td>
               <td class="right nw"><span class="chip alert" x-show="p.threat" x-text="p.threat" style="margin-right:6px"></span><button class="btn btn-sm" @click="promptCloseProgram(p.name, p.pid || null, p.start || null)">Close</button></td></tr></template>
           </tbody></table>
+          <div class="empty-state" x-show="det && det.processes.length && !progShown.length" style="padding:20px"><b>No match</b>No program matches the search.</div>
         </section>
 
         <section x-show="tab === 'browser'" x-cloak style="padding:0">

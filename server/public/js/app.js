@@ -562,7 +562,7 @@ document.addEventListener('alpine:init', () => {
     activePcId: null, inspector: false, tab: 'screen', screenMode: 'snapshot', monitor: 0, screenMonitors: [], screenMonitorActive: 0, screenAllScreens: false, snapT: 4200, snapAt: '',
     screenStreaming: false, screenHasFrame: false, screenStatus: '', screenAuditId: null, screenViewer: null, screenRenewTimer: null,
     wallStreams: {},
-    tile: 240, flagged: false, blur: false, pinned: [], dock: { att: true, feed: true }, feed: [], feedSeen: 0, feedFresh: {}, feedOk: true, feedAt: '', feedPcFilter: 0, feedQuiet: true,
+    tile: 240, flagged: false, blur: false, pinned: [], dock: { att: true, feed: true }, feed: [], feedSeen: 0, feedFresh: {}, feedOk: true, feedAt: '', feedPcFilter: 0, feedQuiet: true, progQ: '', progSort: '', progDir: -1,
     messageModal: false, messageTarget: null, messageText: '', showDone: false, closeModal: false, closeName: '', closePid: null, closeStart: null, closeManual: false,
 
     init() {
@@ -783,6 +783,19 @@ document.addEventListener('alpine:init', () => {
     get wallPcs() { return this.pcs.filter(p => p.seat && !this.pinned.includes(p.id) && (!this.flagged || !['ok', 'idle'].includes(this.kind(p)))); },
     get pinnedPcs() { return this.pinned.map(id => this.pcs.find(p => p.id === id)).filter(Boolean); },
     get screenOk() { return !!(this.active.caps && this.active.caps.snapshot && this.active.status !== 'offline'); },
+    /* Programs tab: filter by name/title, sort by clicked column (desc first, click again flips). */
+    get progShown() {
+      const q = this.progQ.trim().toLowerCase(), k = this.progSort, dir = this.progDir;
+      let list = this.det ? this.det.processes : [];
+      if (q) list = list.filter(p => (p.name + ' ' + p.title + ' ' + p.threat).toLowerCase().includes(q));
+      if (!k) return list;
+      return [...list].sort((x, y) => k === 'name' ? dir * String(x.name).localeCompare(String(y.name)) : dir * ((x[k] || 0) - (y[k] || 0)));
+    },
+    progSortBy(k) {
+      if (this.progSort === k) this.progDir = -this.progDir;
+      else { this.progSort = k; this.progDir = k === 'name' ? 1 : -1; }
+    },
+    progArrow(k) { return this.progSort === k ? (this.progDir > 0 ? ' ▲' : ' ▼') : ''; },
     get pcAlerts() { return this.alerts.filter(a => a.pcId === this.activePcId); },
     get tabs() {
       const d = this.det; if (!d) return [];
