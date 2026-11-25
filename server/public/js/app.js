@@ -726,7 +726,7 @@ document.addEventListener('alpine:init', () => {
     get pcAlerts() { return this.alerts.filter(a => a.pcId === this.activePcId); },
     get tabs() {
       const d = this.det; if (!d) return [];
-      return [['screen', 'Screen', 'monitor', ''], ['timeline', 'Timeline', 'clock', ''], ['alerts', 'Alerts', 'bell', this.pcAlerts.length || ''],
+      return [['overview', 'Overview', 'info', ''], ['screen', 'Screen', 'monitor', ''], ['timeline', 'Timeline', 'clock', ''], ['alerts', 'Alerts', 'bell', this.pcAlerts.length || ''],
         ['programs', 'Programs', 'terminal', d.processes.length], ['browser', 'Browser', 'globe', d.aiTraffic.length || ''],
         ['installed', 'Installed AI', 'shield', (d.extensions.length + d.artifacts.length) || ''], ['network', 'Network', 'wifi', ''],
         ['typing', 'Typing', 'keyboard', ''], ['pastes', 'Pastes', 'clipboard', d.pastes.length || '']];
@@ -839,7 +839,7 @@ document.addEventListener('alpine:init', () => {
 
     /* selection / inspector */
     select(id) { if (this.editing) return; this.activePcId = id; this.fetchDetail(id); },
-    openInspector(id, tab) { if (this.editing) return; this.activePcId = id; this.tab = tab || 'screen'; this.screenMode = 'snapshot'; this.monitor = 0; this.inspector = true; this.fetchDetail(id); },
+    openInspector(id, tab) { if (this.editing) return; this.activePcId = id; this.tab = tab || 'overview'; this.screenMode = 'snapshot'; this.monitor = 0; this.inspector = true; this.fetchDetail(id); },
     closeInspector() { this.stopScreen(); this.inspector = false; },
     clear() { this.stopScreen(); this.inspector = false; this.messageModal = false; this.closeModal = false; },
     confirmForm(evt, msg) { if (!confirm(msg)) evt.preventDefault(); },

@@ -280,10 +280,10 @@ Paths are relative to the repo root. `S/` = `server/app/`, `A/` = `agent/`.
   `dashboard_reconciles_stale_live_score_when_no_open_alerts_exist`).
 - **Test:** 1. Open `/` with one PC online. 2. Stop the agent: the seat goes offline within ~15 s.
 
-### F24. PC inspector (9 tabs)
-- **What:** per-PC detail: processes, extensions/installed AI, network/ports/adapters, USB devices,
+### F24. PC inspector (10 tabs, popup)
+- **What:** centered popup opened by clicking a seat; per-PC detail: overview (props + counts), processes, extensions/installed AI, network/ports/adapters, USB devices,
   copy/paste, browser tabs, events timeline, screen, alerts.
-- **Trigger:** `GET /pcs/{pc}` (JSON for the drawer). Assistant and up.
+- **Trigger:** `GET /pcs/{pc}` (JSON for the popup). Assistant and up.
 - **Code:** `DashboardController::pc` (also marks some data as seen).
 - **Status:** working (`copy_from_chrome_and_paste_in_vscode_updates_dashboard`,
   `every_screen_renders_for_admin`). ⚠PRIV shows window/tab titles and file names (F75, F79).

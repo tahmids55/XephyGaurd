@@ -398,7 +398,12 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent);width:15px;hei
 .blurred canvas{filter:blur(7px)}
 
 /* inspector */
-.inspector{position:absolute;inset:0 0 0 auto;z-index:30;width:min(1040px,100%);display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--border);box-shadow:var(--shadow-lg)}
+.inspector{position:fixed;inset:0;margin:auto;z-index:75;width:min(1180px,calc(100% - 64px));height:min(860px,calc(100% - 80px));display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-lg)}
+.ov-grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:20px;align-items:start}
+.ov-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-top:8px}
+.ov-stats button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);color:var(--text);text-align:left}
+.ov-stats button:hover{background:var(--surface-3)}
+.ov-stats b{font-size:20px}.ov-stats span{font-size:12px;color:var(--muted)}
 .insp-head{display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--border)}
 .insp-body{flex:1;min-height:0;display:grid;grid-template-columns:190px minmax(0,1fr)}
 .insp-nav{padding:10px;border-right:1px solid var(--border);background:var(--surface-2);overflow:auto}
@@ -408,8 +413,8 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent);width:15px;hei
 .insp-nav .c{margin-left:auto;font-size:12px;color:var(--muted)}
 .insp-pane{overflow:auto;min-height:0}
 .insp-pane>section{padding:20px}
-.sheetscrim{position:absolute;inset:0;z-index:25;background:var(--scrim)}
-@media (max-width:760px){.insp-body{grid-template-columns:1fr}.insp-nav{display:flex;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border)}.insp-nav button{width:auto;white-space:nowrap}}
+.sheetscrim{position:fixed;inset:0;z-index:70;background:var(--scrim)}
+@media (max-width:760px){.inspector{width:100%;height:100%;border-radius:0}.ov-grid{grid-template-columns:1fr}.insp-body{grid-template-columns:1fr}.insp-nav{display:flex;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border)}.insp-nav button{width:auto;white-space:nowrap}}
 .screenbox{position:relative;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#0d0f12}
 .screenbox canvas{display:block;width:100%;aspect-ratio:16/9}
 .screenbox .badge{position:absolute;top:12px;left:12px;display:flex;gap:8px}

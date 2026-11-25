@@ -142,7 +142,7 @@
           <template x-for="c in cells" :key="c.key">
             <div class="seat" :class="[seatClass(c.pc), dropKey === c.key ? 'drop' : '', c.pc && activePcId === c.pc.id ? 'sel' : '']" :style="'grid-column:'+c.col"
                  :draggable="editing && !!c.pc" @dragstart="startDrag(c.pc)" @dragover.prevent="dropKey = editing ? c.key : null" @dragleave="dropKey = null" @drop.prevent="dropOn(c)"
-                 :tabindex="c.pc ? 0 : -1" :role="c.pc ? 'button' : null" @click="c.pc && select(c.pc.id)" @dblclick="c.pc && openInspector(c.pc.id)" @keydown.enter="c.pc && openInspector(c.pc.id)">
+                 :tabindex="c.pc ? 0 : -1" :role="c.pc ? 'button' : null" @click="c.pc && openInspector(c.pc.id)" @keydown.enter="c.pc && openInspector(c.pc.id)">
               <template x-if="c.pc">
                 <div style="display:contents">
                   <div class="top"><span class="pcn"><span class="dot"></span><span x-text="c.pc.name"></span><svg class="i i-sm" x-show="c.pc.isolated" style="color:var(--iso)"><use href="#i-lock"/></svg></span><span class="sc" :class="scoreClass(c.pc)" x-text="c.pc.score"></span></div>
@@ -158,7 +158,7 @@
         <div class="shelf" x-show="unplaced.length || editing" @dragover.prevent @drop.prevent="dropShelf()">
           <div class="label">Not on the map</div>
           <div class="row">
-            <template x-for="p in unplaced" :key="p.id"><div class="seat" :class="seatClass(p)" style="min-height:0;width:180px" :draggable="editing" @dragstart="startDrag(p)" @click="select(p.id)" tabindex="0" role="button"><div class="top"><span class="pcn"><span class="dot"></span><span x-text="p.name"></span></span></div><div class="who" x-text="p.user"></div></div></template>
+            <template x-for="p in unplaced" :key="p.id"><div class="seat" :class="seatClass(p)" style="min-height:0;width:180px" :draggable="editing" @dragstart="startDrag(p)" @click="openInspector(p.id)" @keydown.enter="openInspector(p.id)" tabindex="0" role="button"><div class="top"><span class="pcn"><span class="dot"></span><span x-text="p.name"></span></span></div><div class="who" x-text="p.user"></div></div></template>
             <span class="muted small" x-show="!unplaced.length">Drop a PC here to take it off the map.</span>
           </div>
         </div>
@@ -278,7 +278,37 @@
       </nav>
       <div class="insp-pane">
 
-        <section x-show="tab === 'screen'">
+        <section x-show="tab === 'overview'">
+          <div class="ov-grid">
+            <div class="screenbox" style="cursor:pointer" @click="tab = 'screen'" title="Open screen"><canvas width="480" height="270" :data-pc="activePcId" x-effect="inspector && tab === 'overview' && xgDraw($el, pc(activePcId), performance.now())"></canvas></div>
+            <dl class="prop" style="margin:0">
+              <dt>Status</dt><dd x-text="statusText(active)"></dd>
+              <dt>Student</dt><dd x-text="active.user"></dd>
+              <dt>Score</dt><dd class="mono" x-text="active.score"></dd>
+              <dt>Computer</dt><dd class="mono" x-text="active.host"></dd>
+              <dt>Address</dt><dd class="mono" x-text="active.ip"></dd>
+              <dt>System</dt><dd x-text="active.os"></dd>
+              <dt>Agent</dt><dd x-text="'v' + active.agent"></dd>
+              <dt x-show="active.session">Session</dt><dd x-show="active.session" x-text="active.session"></dd>
+              <dt x-show="active.app">Active app</dt><dd x-show="active.app" x-text="active.app"></dd>
+              <dt x-show="active.streamCost">Streaming</dt><dd class="mono" x-show="active.streamCost" x-text="active.streamCost"></dd>
+              <dt>Last event</dt><dd x-text="active.last"></dd>
+            </dl>
+          </div>
+          <div class="label" style="margin-top:18px">At a glance</div>
+          <div class="ov-stats">
+            <button @click="tab = 'alerts'"><b x-text="pcAlerts.filter(a => !a.acked).length"></b><span>Open alerts</span></button>
+            <button @click="tab = 'programs'"><b x-text="det ? det.processes.length : 0"></b><span>Programs</span></button>
+            <button @click="tab = 'browser'"><b x-text="det ? det.aiTraffic.length : 0"></b><span>AI services seen</span></button>
+            <button @click="tab = 'installed'"><b x-text="det ? det.extensions.length + det.artifacts.length : 0"></b><span>Installed AI</span></button>
+            <button @click="tab = 'network'"><b x-text="det ? det.ports.length : 0"></b><span>AI ports</span></button>
+            <button @click="tab = 'pastes'"><b x-text="det ? det.pastes.length : 0"></b><span>Large pastes</span></button>
+          </div>
+          <div class="label" style="margin-top:18px" x-show="pcAlerts.length">Latest alerts</div>
+          <ul class="timeline" x-show="pcAlerts.length"><template x-for="a in pcAlerts.slice(0, 5)" :key="a.id"><li :class="a.sev"><time x-text="a.at"></time><span x-text="a.title"></span></li></template></ul>
+        </section>
+
+        <section x-show="tab === 'screen'" x-cloak>
           <div class="row" style="margin-bottom:14px;--gap:10px">
             <div class="seg"><button :aria-pressed="screenMode === 'snapshot'" @click="screenMode = 'snapshot'">Snapshot</button><button :aria-pressed="screenMode === 'live'" @click="goLive()" :disabled="!active.caps || !active.caps.live">Live</button></div>
             <button class="btn" @click="snapshot()" :disabled="!screenOk"><svg class="i i-sm" aria-hidden="true"><use href="#i-camera"/></svg> Take snapshot</button>
