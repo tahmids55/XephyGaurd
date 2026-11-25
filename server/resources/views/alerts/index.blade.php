@@ -55,7 +55,7 @@
     <label class="check small"><span class="switch"><input type="checkbox" x-model="unacked" @change="toggleUnacked()"><i></i></span> Unreviewed only</label>
     <label class="check small"><span class="switch"><input type="checkbox" x-model="grouped"><i></i></span> Group repeats</label>
   </div>
-  <div class="pills" style="margin:0 0 12px" x-show="sources.length > 1" role="group" aria-label="Filter by what detected it">
+  <div class="pills" style="margin:0;padding:10px 20px" x-show="sources.length > 1" role="group" aria-label="Filter by what detected it">
     <span class="small muted" style="align-self:center;margin-right:4px">Detected by</span>
     <button class="pill" :aria-pressed="!src ? 'true' : 'false'" @click="src = ''">All <span class="n" x-text="all.length"></span></button>
     <template x-for="s in sources" :key="s.key"><button class="pill" :aria-pressed="src === s.key ? 'true' : 'false'" @click="src = s.key"><svg class="i i-sm" aria-hidden="true"><use :href="'#' + s.icon"/></svg> <span x-text="s.label"></span> <span class="n" x-text="s.n"></span></button></template>
