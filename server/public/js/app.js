@@ -348,7 +348,8 @@ window.xgApi = async function (url, opts = {}) {
       ctx.textBaseline = 'middle';
       const label = pc.status === 'offline' ? 'No signal'
         : (pc.session === 'wayland' ? 'Wayland session (capture disabled)'
-        : (pc.status === 'idle' ? 'Signed out / idle' : 'Click Live or Take snapshot'));
+        : (pc.status === 'idle' ? 'Signed out / idle'
+        : (c.dataset && c.dataset.wait === '1' ? 'Loading screen…' : 'Click Live or Take snapshot')));
       ctx.fillText(label, w / 2, h / 2);
       return;
     }
@@ -570,7 +571,9 @@ document.addEventListener('alpine:init', () => {
       const m = h.match(/pc=(\d+)/); if (m) this.select(+m[1]);
       if (this.view === 'wall') this.$nextTick(() => this.syncWallStreams());
       this._timer = setInterval(() => {
-        if (document.hidden || !this.inspector || this.tab !== 'screen' || !this.$refs.live) return;
+        if (document.hidden || !this.inspector || !this.$refs.live) return;
+        if (this.tab === 'overview') { this.paintOverview(); return; }
+        if (this.tab !== 'screen') return;
         if (!this.screenHasFrame) {
           xgDraw(this.$refs.live, this.active, this.screenMode === 'live' ? performance.now() : this.snapT, this.monitor);
         }
@@ -593,8 +596,13 @@ document.addEventListener('alpine:init', () => {
         }
       });
       this.$watch('tab', t => {
-        this.$nextTick(() => this.paintLive());
-        if (t !== 'screen' && this.screenStreaming) this.stopScreen();
+        this.$nextTick(() => { this.paintLive(); this.paintOverview(); });
+        if (t !== 'screen' && this.screenStreaming) {
+          // Keep the last frame so Overview still shows the screen after Live stops.
+          const had = this.screenHasFrame;
+          this.stopScreen(had);
+          if (had) { this.screenMode = 'snapshot'; this.snapAt = new Date().toTimeString().slice(0, 8); }
+        }
       });
       this.$watch('monitor', () => this.paintLive());
       if (document.getElementById('xg-live-data')) {
@@ -635,7 +643,24 @@ document.addEventListener('alpine:init', () => {
     },
     paintLive() {
       if (this.$refs.live && !this.screenHasFrame) {
+        this.$refs.live.dataset.wait = this.screenStreaming ? '1' : '';
         xgDraw(this.$refs.live, this.active, this.screenMode === 'live' ? performance.now() : this.snapT, this.monitor);
+      }
+    },
+    /* Overview preview: a scaled copy of the last frame on the Screen canvas, else the placeholder. */
+    paintOverview() {
+      const c = this.$refs.ovr, src = this.$refs.live;
+      if (!c || !this.inspector || this.tab !== 'overview') return;
+      if (this.screenHasFrame && src && src.width && src.height) {
+        const ctx = c.getContext('2d'), s = Math.min(c.width / src.width, c.height / src.height);
+        const w = src.width * s, h = src.height * s;
+        ctx.fillStyle = '#11141a'; ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(src, (c.width - w) / 2, (c.height - h) / 2, w, h);
+        c.dataset.hasLiveFrame = '1';
+      } else {
+        delete c.dataset.hasLiveFrame;
+        c.dataset.wait = this.screenStreaming ? '1' : '';
+        xgDraw(c, this.active, performance.now());
       }
     },
 
@@ -874,7 +899,13 @@ document.addEventListener('alpine:init', () => {
 
     /* selection / inspector */
     select(id) { if (this.editing) return; this.activePcId = id; this.fetchDetail(id); },
-    openInspector(id, tab) { if (this.editing) return; this.activePcId = id; this.tab = tab || 'overview'; this.screenMode = 'snapshot'; this.monitor = 0; this.inspector = true; this.fetchDetail(id); },
+    openInspector(id, tab) {
+      if (this.editing) return;
+      if (this.inspector && this.activePcId !== id) this.stopScreen();
+      this.activePcId = id; this.tab = tab || 'overview'; this.screenMode = 'snapshot'; this.monitor = 0; this.inspector = true; this.fetchDetail(id);
+      // Opening a PC is the staff request: take one snapshot (audited like any view) so the screen shows first.
+      this.$nextTick(() => { if (this.inspector && this.activePcId === id && this.screenOk && !this.screenStreaming && !this.screenHasFrame) this.snapshot(); });
+    },
     closeInspector() { this.stopScreen(); this.inspector = false; },
     clear() { this.stopScreen(); this.inspector = false; this.messageModal = false; this.closeModal = false; },
     confirmForm(evt, msg) { if (!confirm(msg)) evt.preventDefault(); },

@@ -273,7 +273,7 @@
 
         <section x-show="tab === 'overview'">
           <div class="ov-grid">
-            <div class="screenbox" style="cursor:pointer" @click="tab = 'screen'" title="Open screen"><canvas width="480" height="270" :data-pc="activePcId" x-effect="inspector && tab === 'overview' && xgDraw($el, pc(activePcId), performance.now())"></canvas></div>
+            <div class="screenbox" style="cursor:pointer" @click="tab = 'screen'" title="Open screen"><canvas x-ref="ovr" width="480" height="270" :data-pc="activePcId" x-effect="inspector && tab === 'overview' && (screenHasFrame, screenStreaming, activePcId, paintOverview())"></canvas></div>
             <dl class="prop" style="margin:0">
               <dt>Status</dt><dd x-text="statusText(active)"></dd>
               <dt>Student</dt><dd x-text="active.user"></dd>
