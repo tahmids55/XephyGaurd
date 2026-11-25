@@ -54,4 +54,40 @@ PasteInfo analyze_clipboard_text(std::string_view text) {
     return p;
 }
 
+std::string label_app(const std::string& app, const std::string& file) {
+    if (app.empty()) return file;
+    if (file.empty()) return app;
+    return app + " (" + file + ")";
+}
+
+std::string resolve_copy_source(const PasteInfo& pi, const FocusLabel& focus) {
+    if (pi.source_app.empty()) return focus.app.empty() ? pi.target_app : label_app(focus.app, focus.file);
+    if (pi.source_app == focus.app && pi.source_app.find('(') == std::string::npos)
+        return label_app(pi.source_app, focus.file);
+    return pi.source_app;
+}
+
+static std::string base_app(const std::string& label) {
+    auto pos = label.find(" (");
+    return pos == std::string::npos ? label : label.substr(0, pos);
+}
+
+bool is_clipboard_reown(const PasteInfo& pi, const CopyRecord& last, int64_t now_ms, int64_t window_ms) {
+    if (last.source.empty() || last.chars == 0 || pi.source_app.empty()) return false;
+    if (now_ms - last.timestamp_ms < 0 || now_ms - last.timestamp_ms > window_ms) return false;
+    return pi.chars == last.chars && pi.lines == last.lines && pi.source_app != base_app(last.source);
+}
+
+PasteRoute resolve_paste_route(const PasteInfo& pi, const FocusLabel& focus, const CopyRecord& last) {
+    PasteRoute r;
+    if (!pi.target_app.empty())
+        r.dst = pi.target_app == focus.app ? label_app(focus.app, focus.file) : pi.target_app;
+    else
+        r.dst = label_app(focus.app, focus.file);
+    const bool matches_last = !last.source.empty() && last.chars == pi.chars && last.lines == pi.lines;
+    if (matches_last) r.src = last.source;
+    else if (!pi.source_app.empty()) r.src = pi.source_app;
+    return r;
+}
+
 }  // namespace xg

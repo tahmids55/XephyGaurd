@@ -783,8 +783,11 @@ and queues events in a local SQLite queue (`A/core/src/event_queue*`), sent in b
   clipboard text leaves the function (`paste.cpp`).
 - **Events:** `paste`, `copy`; alert when over `paste_alert_chars`.
 - **Code:** `A/core/src/paste.cpp`, helper `paste_probe`; `EventIngestor`.
-- **Status:** working (`clipboard text is reduced to features`,
-  `copy_from_chrome_and_paste_in_vscode_updates_dashboard`). ⚠PRIV file names leak into
+- **Routing:** paste source = last copy if its size matches the clipboard, else the clipboard owner at
+  paste time, else unknown; target = app focused at paste time. A clipboard manager re-owning the last
+  copy is ignored (`resolve_paste_route`, `is_clipboard_reown` in `paste.cpp`).
+- **Status:** working (`clipboard text is reduced to features`, `paste route: source from matching copy,
+  owner, or unknown`, `copy_from_chrome_and_paste_in_vscode_updates_dashboard`). ⚠PRIV file names leak into
   copy/paste events (`docs/HISTORY.md` batch 2).
 - **Test:** 1. Copy 2,000 chars from a browser into an editor. 2. A paste event with size and apps shows.
 
