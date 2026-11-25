@@ -13,6 +13,7 @@ use App\Models\NetEvent;
 use App\Models\PasteEvent;
 use App\Models\Pc;
 use App\Models\SessionPc;
+use App\Models\Setting;
 use App\Models\Student;
 
 /** Inspector (PC detail drawer) data: timeline, processes, network log, key-rate chart, paste log. */
@@ -109,15 +110,7 @@ class InspectorQueries
             'artifacts' => $latestArt?->data['found'] ?? [],
             'artifacts_visited' => $latestArt?->data['files_visited'] ?? 0,
             'artifacts_updated_at' => $latestArt?->occurred_at?->format('H:i:s'),
-            'browser_tabs' => Event::query()->where('pc_id', $pc->id)->where('type', 'window_focus')
-                ->where('occurred_at', '>=', $since)->latest('occurred_at')
-                ->limit(60)->get(['occurred_at', 'user', 'data'])->map(fn ($e) => [
-                    'at' => $e->occurred_at->format('H:i:s'),
-                    'app' => $e->data['app'] ?? '',
-                    'title' => $e->data['title'] ?? '',
-                    'user' => $e->user ?: ($e->data['user'] ?? ''),
-                    'ai_site' => $e->data['ai_site'] ?? '',
-                ]),
+            'browser_tabs' => $this->browserTabs($pc, $since),
             'ai_traffic' => $agentAiTraffic->concat($proxyAiTraffic)->sortByDesc('at')->values(),
             'processes' => $events->whereIn('type', ['process_start', 'process_stop'])->values()
                 ->map(fn ($e) => ['at' => $e->occurred_at->format('H:i:s'), 'type' => $e->type, 'pid' => $e->data['pid'] ?? null, 'exe' => $e->data['exe'] ?? '', 'rule' => $e->data['rule_id'] ?? '']),
@@ -170,6 +163,40 @@ class InspectorQueries
                 ->where('occurred_at', '>=', $since)->latest('occurred_at')->limit(20)
                 ->get()->map->toApiArray()->values(),
         ];
+    }
+
+    /**
+     * Browser windows seen since $since (window_focus events whose app is in data/signatures/web.yaml `browsers`;
+     * all apps if that list is empty), one row per app + title, newest first. `active` = this row is the PC's
+     * most recent focus event of any app, i.e. the browser tab on screen now (the UI also requires the PC online).
+     */
+    private function browserTabs(Pc $pc, $since)
+    {
+        $browsers = array_map('strtolower', (array) (Setting::get('signatures.web', [])['browsers'] ?? []));
+        $norm = function (string $app): string {
+            $b = strtolower(basename(str_replace('\\', '/', $app)));
+
+            return str_ends_with($b, '.exe') && strlen($b) > 4 ? substr($b, 0, -4) : $b;
+        };
+        $events = Event::query()->where('pc_id', $pc->id)->where('type', 'window_focus')
+            ->where('occurred_at', '>=', $since)->orderByDesc('occurred_at')->orderByDesc('id')
+            ->limit(300)->get(['id', 'occurred_at', 'user', 'data']);
+        $latestId = $events->first()?->id;
+
+        return $events
+            ->filter(fn ($e) => ! $browsers || in_array($norm((string) ($e->data['app'] ?? '')), $browsers, true))
+            ->groupBy(fn ($e) => ($e->data['app'] ?? '')."\n".($e->data['title'] ?? ''))
+            ->map(fn ($g) => [
+                'at' => $g->first()->occurred_at->format('H:i:s'),
+                'first_at' => $g->last()->occurred_at->format('H:i:s'),
+                'count' => $g->count(),
+                'active' => $g->first()->id === $latestId,
+                'app' => $g->first()->data['app'] ?? '',
+                'title' => $g->first()->data['title'] ?? '',
+                'user' => $g->first()->user ?: ($g->first()->data['user'] ?? ''),
+                'ai_site' => $g->first()->data['ai_site'] ?? '',
+            ])
+            ->values()->take(60);
     }
 
     public static function summarize(string $type, array $d): string

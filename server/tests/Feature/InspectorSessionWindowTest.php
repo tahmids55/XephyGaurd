@@ -38,6 +38,29 @@ class InspectorSessionWindowTest extends TestCase
         $this->assertSame(['this class', 'earlier class'], app(InspectorQueries::class)->forPc($pc, null, false)['browser_tabs']->pluck('title')->all());
     }
 
+    public function test_browser_tabs_are_browsers_only_grouped_with_active_flag(): void
+    {
+        $this->bootLab();
+        [$pc] = $this->enrolledPc();
+        $focus = fn (int $seq, int $ago, string $app, string $title) => Event::create(['pc_id' => $pc->id, 'agent_id' => $pc->agent->id,
+            'received_at' => now(), 'seq' => $seq, 'type' => 'window_focus', 'occurred_at' => now()->subMinutes($ago),
+            'data' => ['app' => $app, 'title' => $title]]);
+        $focus(1, 30, 'firefox', 'cppreference');
+        $focus(2, 20, 'code', 'main.cpp - VS Code');
+        $focus(3, 10, 'chrome.exe', 'Docs');
+        $focus(4, 5, 'firefox', 'cppreference');
+
+        $tabs = app(InspectorQueries::class)->forPc($pc, null, false)['browser_tabs'];
+        $this->assertSame(['cppreference', 'Docs'], $tabs->pluck('title')->all());
+        $this->assertSame([2, 1], $tabs->pluck('count')->all());
+        $this->assertSame([true, false], $tabs->pluck('active')->all());
+
+        // A non-browser window now has focus: no browser tab is active.
+        $focus(5, 1, 'code', 'main.cpp - VS Code');
+        $tabs = app(InspectorQueries::class)->forPc($pc, null, false)['browser_tabs'];
+        $this->assertSame([false, false], $tabs->pluck('active')->all());
+    }
+
     public function test_inspector_get_does_not_write(): void
     {
         $this->bootLab();

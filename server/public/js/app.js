@@ -696,7 +696,7 @@ document.addEventListener('alpine:init', () => {
 
   /* ---------- Live lab ---------- */
   Alpine.data('labView', () => window.xgMix({
-    view: 'map',
+    view: (() => { try { return localStorage.getItem('xg-live-view') === 'wall' ? 'wall' : 'map'; } catch (e) { return 'map'; } })(),
     cols: (window.XG_LIVE && (window.XG_LIVE.cols || (window.XG_LIVE.lab && window.XG_LIVE.lab.cols))) || 6,
     rows: (window.XG_LIVE && (window.XG_LIVE.rows || (window.XG_LIVE.lab && window.XG_LIVE.lab.rows))) || 4,
     editing: false, dragId: null, dropKey: null,
@@ -706,7 +706,7 @@ document.addEventListener('alpine:init', () => {
     activePcId: null, inspector: false, tab: 'screen', screenMode: 'snapshot', monitor: 0, screenMonitors: [], screenMonitorActive: 0, screenAllScreens: false, snapT: 4200, snapAt: '',
     screenStreaming: false, screenHasFrame: false, screenStatus: '', screenAuditId: null, screenViewer: null, screenRenewTimer: null,
     wallStreams: {},
-    tile: 240, flagged: false, blur: false, pinned: [], dock: { att: true, feed: true }, feed: [], feedSeen: 0, feedFresh: {}, feedOk: true, feedAt: '', feedPcFilter: 0, feedQuiet: true, progQ: '', progSort: '', progDir: -1,
+    tile: (() => { try { const t = +localStorage.getItem('xg-live-tile'); return [180, 240, 340].includes(t) ? t : 240; } catch (e) { return 240; } })(), screenOnly: false, flagged: false, blur: false, pinned: [], dock: { att: true, feed: true }, feed: [], feedSeen: 0, feedFresh: {}, feedOk: true, feedAt: '', feedPcFilter: 0, feedQuiet: true, progQ: '', progSort: '', progDir: -1,
     messageModal: false, messageTarget: null, messageText: '', showDone: false, closeModal: false, closeName: '', closePid: null, closeStart: null, closeManual: false,
     alertSrcFilter: '',
 
@@ -726,6 +726,7 @@ document.addEventListener('alpine:init', () => {
       // Programs tab acts like a task manager: hold a process lease (agent sends a snapshot every 2 s) and re-read every 2 s.
       this._progTimer = setInterval(() => this.progTick(), 2000);
       this.$watch('view', v => {
+        try { localStorage.setItem('xg-live-view', v); } catch (e) {}
         if (v === 'wall' && !this.inspector) this.$nextTick(() => this.syncWallStreams());
         else this.stopWallStreams();
       });
@@ -873,7 +874,7 @@ document.addEventListener('alpine:init', () => {
             ? d.ai_traffic.map(r => ({ service: r.description || r.rule_id, host: r.domain || r.remote_ip, proc: r.process || 'browser', count: Number(r.count || 1), last: r.at, mode: r.mode || 'Observed' }))
             : base.aiTraffic,
           tabs: (d.browser_tabs && d.browser_tabs.length)
-            ? d.browser_tabs.map(t => ({ browser: t.app || 'Browser', title: t.title || t.app, host: t.ai_site || t.user || '', ai: !!t.ai_site }))
+            ? d.browser_tabs.map(t => ({ browser: t.app || 'Browser', title: t.title || '', host: t.ai_site || '', ai: !!t.ai_site, at: t.at || '', firstAt: t.first_at || '', count: Number(t.count || 1), active: !!t.active }))
             : base.tabs,
           extensions: (d.extensions && d.extensions.length)
             ? d.extensions.map(e => ({ browser: e.browser || 'Browser', name: e.name || e.id, id: e.id || '' }))
@@ -972,7 +973,7 @@ document.addEventListener('alpine:init', () => {
     get tabs() {
       const d = this.det; if (!d) return [];
       return [['overview', 'Overview', 'info', ''], ['screen', 'Screen', 'monitor', ''], ['timeline', 'Timeline', 'clock', ''], ['alerts', 'Alerts', 'bell', this.pcAlerts.length || ''],
-        ['programs', 'Programs', 'terminal', d.processes.length], ['browser', 'Browser', 'globe', d.aiTraffic.length || ''],
+        ['programs', 'Programs', 'terminal', d.processes.length], ['traffic', 'Traffic', 'globe', d.aiTraffic.length || ''], ['browsertabs', 'Browser tabs', 'grid', d.tabs.length || ''],
         ['installed', 'Installed AI', 'shield', (d.extensions.length + d.artifacts.length) || ''], ['network', 'Network', 'wifi', ''],
         ['dns', 'DNS log', 'list', (d.netEvents && d.netEvents.length) || ''], ['usb', 'USB', 'layers', d.devices.length || ''],
         ['typing', 'Typing', 'keyboard', ''], ['pastes', 'Pastes', 'clipboard', d.pastes.length || '']];
@@ -1088,6 +1089,7 @@ document.addEventListener('alpine:init', () => {
     openInspector(id, tab) {
       if (this.editing) return;
       if (this.inspector && this.activePcId !== id) this.stopScreen();
+      this.screenOnly = false;
       this.activePcId = id; this.tab = tab || 'overview'; this.screenMode = 'snapshot'; this.monitor = 0; this.alertSrcFilter = ''; this.inspector = true; this.fetchDetail(id);
       // Opening a PC is the staff request: start Live (audited, student sees the indicator) so the screen shows first;
       // a PC without live capability gets one snapshot instead.
@@ -1100,10 +1102,13 @@ document.addEventListener('alpine:init', () => {
       setTimeout(() => { this._autoLiveBusy = false; }, 1000);
       if (this.active.caps && this.active.caps.live) this.goLive(); else if (!this.screenHasFrame) this.snapshot();
     },
-    closeInspector() { this.stopScreen(); this.inspector = false; },
+    /* Wall "Inspect": the popup shows only the big screen; "Show full details" turns it into the full inspector. */
+    openScreen(id) { this.openInspector(id, 'screen'); this.screenOnly = true; },
+    showDetails() { this.screenOnly = false; this.tab = 'overview'; },
+    closeInspector() { this.stopScreen(); this.inspector = false; this.screenOnly = false; },
     clear() {
       if (this.alertModal) { this.alertModal = false; return; } // Esc closes only the alert popup, the PC popup stays.
-      this.stopScreen(); this.inspector = false; this.messageModal = false; this.closeModal = false;
+      this.stopScreen(); this.inspector = false; this.screenOnly = false; this.messageModal = false; this.closeModal = false;
     },
     /* Alert details popup (xgAlertDetails mixin): mark one alert reviewed in this view. */
     async alertAckOne(d) {
@@ -1381,7 +1386,7 @@ document.addEventListener('alpine:init', () => {
 
     /* wall */
     togglePin(id) { const i = this.pinned.indexOf(id); if (i >= 0) this.pinned.splice(i, 1); else if (this.pinned.length < 4) this.pinned.push(id); else Alpine.store('toasts').add('You can pin up to 4 PCs.', 'watch'); },
-    tileSize(s) { this.tile = s; },
+    tileSize(s) { this.tile = s; try { localStorage.setItem('xg-live-tile', String(s)); } catch (e) {} },
 
     /* messages & alerts */
     message(id) { this.messageTarget = id ? this.pcs.find(p => p.id === id) : null; this.messageText = ''; this.messageModal = true; },

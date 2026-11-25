@@ -176,9 +176,9 @@
             <h3 class="wall-title"><svg class="i i-sm" aria-hidden="true"><use href="#i-pin"/></svg> Pinned <span class="count" x-text="pinnedPcs.length"></span></h3>
             <div class="wall-grid pins">
               <template x-for="p in pinnedPcs" :key="'p' + p.id">
-                <div class="tile" :class="[tileClass(p), activePcId === p.id && 'sel', blur && !['alert','watch'].includes(kind(p)) ? 'blurred' : '']" @click="select(p.id)" @dblclick="openInspector(p.id)">
+                <div class="tile" :class="[tileClass(p), activePcId === p.id && 'sel', blur && !['alert','watch'].includes(kind(p)) ? 'blurred' : '']" @click="select(p.id)" @dblclick="openScreen(p.id)">
                   <div class="ov"><span class="chip" x-show="!['ok','idle'].includes(kind(p))" x-text="p.last"></span></div>
-                  <div class="acts"><button @click.stop="togglePin(p.id)" title="Unpin"><svg class="i i-sm" aria-hidden="true"><use href="#i-pin"/></svg></button><button @click.stop="openInspector(p.id)" title="Inspect"><svg class="i i-sm" aria-hidden="true"><use href="#i-expand"/></svg></button></div>
+                  <div class="acts"><button @click.stop="togglePin(p.id)" title="Unpin"><svg class="i i-sm" aria-hidden="true"><use href="#i-pin"/></svg></button><button @click.stop="openScreen(p.id)" title="Inspect"><svg class="i i-sm" aria-hidden="true"><use href="#i-expand"/></svg></button></div>
                   <canvas width="640" height="360" :data-pc="p.id" x-init="xgDraw($el, pc(p.id), performance.now())"></canvas>
                   <div class="offmsg" x-show="p.status === 'offline'">No signal</div>
                   <div class="cap"><span class="dot" :class="dotOf(p)"></span><b x-text="p.name"></b><span class="u" x-text="p.user"></span><span class="sc" x-text="p.score"></span></div>
@@ -191,9 +191,9 @@
         <h3 class="wall-title">All screens <span class="count" x-text="wallPcs.length"></span></h3>
         <div class="wall-grid">
           <template x-for="p in wallPcs" :key="p.id">
-            <div class="tile" :class="[tileClass(p), activePcId === p.id && 'sel', blur && !['alert','watch'].includes(kind(p)) ? 'blurred' : '']" @click="select(p.id)" @dblclick="openInspector(p.id)">
+            <div class="tile" :class="[tileClass(p), activePcId === p.id && 'sel', blur && !['alert','watch'].includes(kind(p)) ? 'blurred' : '']" @click="select(p.id)" @dblclick="openScreen(p.id)">
               <div class="ov"><span class="chip" x-show="!['ok','idle'].includes(kind(p))" x-text="p.last"></span></div>
-              <div class="acts"><button @click.stop="togglePin(p.id)" title="Pin"><svg class="i i-sm" aria-hidden="true"><use href="#i-pin"/></svg></button><button @click.stop="openInspector(p.id)" title="Inspect"><svg class="i i-sm" aria-hidden="true"><use href="#i-expand"/></svg></button></div>
+              <div class="acts"><button @click.stop="togglePin(p.id)" title="Pin"><svg class="i i-sm" aria-hidden="true"><use href="#i-pin"/></svg></button><button @click.stop="openScreen(p.id)" title="Inspect"><svg class="i i-sm" aria-hidden="true"><use href="#i-expand"/></svg></button></div>
               <canvas width="320" height="180" :data-pc="p.id" x-init="xgDraw($el, pc(p.id), performance.now())"></canvas>
               <div class="offmsg" x-show="p.status === 'offline'">No signal</div>
               <div class="offmsg" x-show="p.session === 'wayland'" style="padding:0 16px;text-align:center;font-size:12px">Screen view isn’t available on Wayland</div>
@@ -252,7 +252,7 @@
 
   <!-- INSPECTOR -->
   <div class="sheetscrim" x-show="inspector" x-cloak x-transition.opacity @click="closeInspector()"></div>
-  <aside class="inspector" x-show="inspector" x-cloak x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0" role="dialog" aria-label="PC inspector">
+  <aside class="inspector" :class="screenOnly && 'screen-only'" x-show="inspector" x-cloak x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0" role="dialog" aria-label="PC inspector">
     <div class="insp-head">
       <div class="scorering" :style="'--v:'+(typeof active.score === 'number' ? active.score : 0)+';--c:'+ringColor(active)"><b x-text="active.score"></b></div>
       <div style="min-width:0">
@@ -263,6 +263,7 @@
         <div class="muted small" x-text="active.user + ' · ' + active.host + ' · ' + active.os"></div>
       </div>
       <span class="grow"></span>
+      <button class="btn" x-show="screenOnly" @click="showDetails()"><svg class="i i-sm" aria-hidden="true"><use href="#i-info"/></svg> Show full details</button>
       <button class="btn" @click="message(activePcId)"><svg class="i i-sm" aria-hidden="true"><use href="#i-send"/></svg> Message</button>
       <button class="btn" :class="active.isolated ? 'btn-solid' : 'btn-danger'" @click="toggleIsolate(active)" x-text="active.isolated ? 'Reconnect network' : 'Cut off network'"></button>
       <button class="xbtn" style="margin-left:0" @click="closeInspector()" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
@@ -294,7 +295,7 @@
           <div class="ov-stats">
             <button @click="tab = 'alerts'"><b x-text="pcAlerts.filter(a => !a.acked).length"></b><span>Open alerts</span></button>
             <button @click="tab = 'programs'"><b x-text="det ? det.processes.length : 0"></b><span>Programs</span></button>
-            <button @click="tab = 'browser'"><b x-text="det ? det.aiTraffic.length : 0"></b><span>AI services seen</span></button>
+            <button @click="tab = 'traffic'"><b x-text="det ? det.aiTraffic.length : 0"></b><span>AI services seen</span></button>
             <button @click="tab = 'installed'"><b x-text="det ? det.extensions.length + det.artifacts.length : 0"></b><span>Installed AI</span></button>
             <button @click="tab = 'network'"><b x-text="det ? det.ports.length : 0"></b><span>AI ports</span></button>
             <button @click="tab = 'pastes'"><b x-text="det ? det.pastes.length : 0"></b><span>Large pastes</span></button>
@@ -318,14 +319,14 @@
             <div class="idle" x-show="!screenOk" style="aspect-ratio:16/9"><div><b style="color:#fff;font-size:15px" x-text="active.status === 'offline' ? 'This PC is offline' : 'Screen view isn’t available'"></b><p style="margin-top:6px" x-text="active.status === 'offline' ? 'Waiting for the agent heartbeat. Screens appear again when the agent reconnects.' : 'This PC uses a Wayland session, which doesn’t allow screen capture.'"></p></div></div>
           </div>
           <div class="note warn" style="margin-top:14px" x-show="active.session === 'wayland'"><svg class="i i-sm" aria-hidden="true"><use href="#i-warn"/></svg><span>Choose “Ubuntu on Xorg” on the login screen to enable screen view on this PC.</span></div>
-          <div style="margin-top:16px"><div class="label">What this PC can do</div>
+          <div class="scr-extra" style="margin-top:16px"><div class="label">What this PC can do</div>
             <div class="caps">
               <span class="chip" :class="active.caps && active.caps.snapshot ? 'ok' : 'off'">Snapshot</span><span class="chip" :class="active.caps && active.caps.live ? 'ok' : 'off'">Live</span>
               <span class="chip" :class="active.caps && active.caps.delta ? 'ok' : 'off'">Delta updates</span><span class="chip" :class="active.caps && active.caps.multi ? 'ok' : 'off'">Multi-monitor</span>
               <span class="chip" :class="active.caps && active.caps.secure ? 'ok' : 'off'">Secure desktop</span>
             </div></div>
-          <p class="help">Students see an “instructor is viewing” indicator while Live is on. Every view is written to the audit log.</p>
-          <div style="margin-top:16px" x-show="det && det.evidence && det.evidence.length">
+          <p class="help scr-extra">Students see an “instructor is viewing” indicator while Live is on. Every view is written to the audit log.</p>
+          <div class="scr-extra" style="margin-top:16px" x-show="det && det.evidence && det.evidence.length">
             <div class="label">Saved evidence</div>
             <div class="stack" style="--gap:8px;margin-top:8px">
               <template x-for="ev in (det ? det.evidence : [])" :key="ev.id">
@@ -382,13 +383,19 @@
           <div class="empty-state" x-show="det && det.processes.length && !progShown.length" style="padding:20px"><b>No match</b>No program matches the search.</div>
         </section>
 
-        <section x-show="tab === 'browser'" x-cloak style="padding:0">
+        <section x-show="tab === 'traffic'" x-cloak style="padding:0">
           <div class="row" style="padding:16px 20px 8px"><span class="h3">AI traffic</span><span class="grow"></span><button class="btn btn-sm" @click="rescan('network')"><svg class="i i-sm" aria-hidden="true"><use href="#i-refresh"/></svg> Refresh</button></div>
           <table class="tbl" x-show="det && det.aiTraffic.length"><thead><tr><th>Service</th><th>Site</th><th>Browser</th><th class="right">Requests</th><th>Last</th><th>Result</th></tr></thead><tbody>
             <template x-for="(r, idx) in (det ? det.aiTraffic : [])" :key="idx + '-' + r.host"><tr><td style="font-weight:500" x-text="r.service"></td><td class="mono small" x-text="r.host"></td><td x-text="r.proc"></td><td class="right num" x-text="r.count"></td><td class="num muted" x-text="r.last"></td><td><span class="chip" :class="r.mode === 'Blocked' ? 'ok' : 'alert'" x-text="r.mode"></span></td></tr></template></tbody></table>
           <div class="empty-state" x-show="det && !det.aiTraffic.length" style="padding:20px"><b>No AI traffic</b>No connections to AI services were seen.</div>
-          <div style="padding:16px 20px 8px" class="h3">Open tabs</div>
-          <table class="tbl"><tbody><template x-for="(t, idx) in (det ? det.tabs : [])" :key="idx + '-' + t.title"><tr><td style="width:90px" class="muted" x-text="t.browser"></td><td><div x-text="t.title" style="font-weight:500"></div><div class="tiny muted mono" x-text="t.host"></div></td><td class="right"><span class="chip alert" x-show="t.ai">AI site</span></td></tr></template></tbody></table>
+        </section>
+
+        <section x-show="tab === 'browsertabs'" x-cloak style="padding:0">
+          <div class="row" style="padding:16px 20px 8px"><span class="h3">Browser tabs</span><span class="grow"></span><span class="tiny muted">Focused browser windows this session. Active = on screen now.</span></div>
+          <table class="tbl" x-show="det && det.tabs.length"><thead><tr><th>Status</th><th>Browser</th><th>Title</th><th>Last seen</th><th>First seen</th><th class="right">Times</th><th></th></tr></thead><tbody>
+            <template x-for="(t, idx) in (det ? det.tabs : [])" :key="idx + '-' + t.browser + '-' + t.title"><tr><td style="width:96px"><span class="chip" :class="t.active && active.status !== 'offline' ? 'ok' : ''" x-text="t.active && active.status !== 'offline' ? 'Active' : 'Not active'"></span></td><td class="muted" style="width:90px" x-text="t.browser"></td><td><div x-show="t.title" x-text="t.title" style="font-weight:500"></div><div x-show="!t.title" class="muted">Title not captured</div><div class="tiny muted mono" x-show="t.host" x-text="t.host"></div></td><td class="num" x-text="t.at"></td><td class="num muted" x-text="t.firstAt"></td><td class="right num" x-text="t.count"></td><td class="right"><span class="chip alert" x-show="t.ai">AI site</span></td></tr></template>
+          </tbody></table>
+          <div class="empty-state" x-show="det && !det.tabs.length" style="padding:20px"><b>No browser tabs</b>No browser window was focused on this PC in this session.</div>
         </section>
 
         <section x-show="tab === 'installed'" x-cloak style="padding:0">
