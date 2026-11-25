@@ -172,6 +172,8 @@ TEST_CASE("protocol batch and command validation") {
     // The indicator follows the policy (mode + notice); there is no separate command for it.
     CHECK_FALSE(protocol::parse_command({{"id", "c3"}, {"type", "set_indicator"}, {"args", json::object()}}));
     CHECK(protocol::parse_command({{"id", 42}, {"type", "kill"}, {"args", {{"pid", 5}}}})->id == "42");
+    // The CCC's live-view lease must pass the allow-list, or the helper never captures.
+    CHECK(protocol::parse_command({{"id", "c4"}, {"type", "screen_lease"}, {"args", {{"ttl_s", 30}}}}));
 }
 
 TEST_CASE("server JSON with wrong types never throws (I-AGENT-13)") {

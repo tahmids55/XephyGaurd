@@ -45,7 +45,7 @@ std::optional<BatchAck> parse_batch_ack(const std::string& body, std::string* er
 std::optional<Command> parse_command(const json& j, std::string* err) {
     static const std::regex id_re("^[A-Za-z0-9_-]{1,64}$");
     static const std::vector<std::string> known = {"policy_updated", "message", "kill", "isolate_notice",
-                                                   "rescan", "ping", "flush"};
+                                                   "rescan", "ping", "flush", "screen_lease"};
     if (!j.is_object()) { if (err) *err = "command not an object"; return std::nullopt; }
     Command c;
     c.id = j.contains("id") ? (j["id"].is_string() ? j["id"].get<std::string>() : j["id"].dump()) : "";
