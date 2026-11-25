@@ -285,7 +285,9 @@ Paths are relative to the repo root. `S/` = `server/app/`, `A/` = `agent/`.
 
 ### F24. PC inspector (13 tabs, popup)
 - **What:** centered popup opened by clicking a seat; per-PC detail: overview (props + counts), processes, extensions/installed AI, network (adapters + ports), DNS log (gateway DNS & proxy log), USB devices (each its own tab),
-  copy/paste, Traffic (AI traffic), Browser tabs (focused browser windows only, per `browsers` in web.yaml; one row
+  copy/paste, Traffic (AI traffic, plus All traffic: every proxy net_event this session grouped by host + result
+  Allowed / Blocked / AI with request count and last/first seen, host names only; allowed hosts only exist while
+  `privacy.log_urls` is on, otherwise a note or a "Site logging is off" empty state), Browser tabs (focused browser windows only, per `browsers` in web.yaml; one row
   per browser + title with last/first seen and count; "Active" = the PC's latest focus and the PC is online), events timeline, screen, alerts. Opening the popup on an online X11 PC starts Live
   (audited; the student sees the viewing indicator) so Overview and Screen show the live screen first; a PC without
   live capability gets one snapshot. Live runs on Overview and Screen, stops on other tabs or when the popup closes, and resumes on

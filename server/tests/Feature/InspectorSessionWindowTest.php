@@ -6,6 +6,8 @@ namespace Tests\Feature;
 
 use App\Models\Alert;
 use App\Models\Event;
+use App\Models\NetEvent;
+use App\Models\Setting;
 use App\Services\InspectorQueries;
 use App\Services\SessionManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -100,5 +102,33 @@ class InspectorSessionWindowTest extends TestCase
 
         $sessions->stop($session);
         $this->assertSame(60, $pc->fresh()->live_score);  // both open alerts again
+    }
+
+    public function test_traffic_tab_groups_all_proxy_traffic_by_host(): void
+    {
+        $this->freezeSecond();
+        $this->bootLab();
+        [$pc] = $this->enrolledPc();
+        $ne = fn (string $host, string $action, ?string $cat, int $ago) => NetEvent::create(['pc_id' => $pc->id,
+            'client_ip' => '192.168.10.21', 'host' => $host, 'path' => '/secret?q=x', 'layer' => 'http', 'action' => $action,
+            'category' => $cat, 'occurred_at' => now()->subMinutes($ago)]);
+        $ne('docs.python.org', 'allowed', null, 30);
+        $ne('docs.python.org', 'allowed', null, 10);
+        $ne('chatgpt.com', 'observed', 'ai', 5);
+        $ne('chatgpt.com', 'blocked', 'ai', 2);
+        $ne('old.example', 'allowed', null, 60 * 30);   // outside the 24 h window
+
+        $d = app(InspectorQueries::class)->forPc($pc, null, false);
+        $this->assertFalse($d['log_urls']);
+        $rows = $d['traffic'];
+        $this->assertSame(['chatgpt.com', 'chatgpt.com', 'docs.python.org'], $rows->pluck('host')->all());
+        $this->assertSame(['blocked', 'observed', 'allowed'], $rows->pluck('action')->all());
+        $this->assertSame([1, 1, 2], $rows->pluck('count')->all());
+        $this->assertSame([true, true, false], $rows->pluck('ai')->all());
+        $this->assertSame(now()->subMinutes(30)->format('H:i:s'), $rows[2]['first_at']);
+        $this->assertArrayNotHasKey('path', $rows[0]);   // host names only
+
+        Setting::put('privacy.log_urls', ['enabled' => true, 'query' => false]);
+        $this->assertTrue(app(InspectorQueries::class)->forPc($pc, null, false)['log_urls']);
     }
 }

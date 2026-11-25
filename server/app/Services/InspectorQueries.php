@@ -15,6 +15,7 @@ use App\Models\Pc;
 use App\Models\SessionPc;
 use App\Models\Setting;
 use App\Models\Student;
+use Illuminate\Support\Carbon;
 
 /** Inspector (PC detail drawer) data: timeline, processes, network log, key-rate chart, paste log. */
 class InspectorQueries
@@ -111,6 +112,8 @@ class InspectorQueries
             'artifacts_visited' => $latestArt?->data['files_visited'] ?? 0,
             'artifacts_updated_at' => $latestArt?->occurred_at?->format('H:i:s'),
             'browser_tabs' => $this->browserTabs($pc, $since),
+            'traffic' => $this->trafficByHost($pc, $since),
+            'log_urls' => PrivacySettings::logUrls()['enabled'],
             'ai_traffic' => $agentAiTraffic->concat($proxyAiTraffic)->sortByDesc('at')->values(),
             'processes' => $events->whereIn('type', ['process_start', 'process_stop'])->values()
                 ->map(fn ($e) => ['at' => $e->occurred_at->format('H:i:s'), 'type' => $e->type, 'pid' => $e->data['pid'] ?? null, 'exe' => $e->data['exe'] ?? '', 'rule' => $e->data['rule_id'] ?? '']),
@@ -163,6 +166,27 @@ class InspectorQueries
                 ->where('occurred_at', '>=', $since)->latest('occurred_at')->limit(20)
                 ->get()->map->toApiArray()->values(),
         ];
+    }
+
+    /**
+     * All proxy traffic since $since (net_events), one row per host + action + category, newest first.
+     * Allowed hosts exist only while privacy.log_urls is on; blocked and AI (observed) rows are always logged.
+     * Host names only: paths and query strings stay in the DNS log tab.
+     */
+    private function trafficByHost(Pc $pc, $since)
+    {
+        return NetEvent::query()->where('pc_id', $pc->id)->where('occurred_at', '>=', $since)
+            ->selectRaw('host, action, category, COUNT(*) AS n, MAX(occurred_at) AS last_at, MIN(occurred_at) AS first_at')
+            ->groupBy('host', 'action', 'category')->orderByDesc('last_at')->limit(200)->get()
+            ->map(fn ($r) => [
+                'host' => (string) $r->host,
+                'action' => (string) $r->action,
+                'category' => $r->category,
+                'ai' => $r->action === 'observed' || in_array($r->category, ['ai', 'ide', 'search_ai'], true),
+                'count' => (int) $r->n,
+                'at' => Carbon::parse($r->last_at)->format('H:i:s'),
+                'first_at' => Carbon::parse($r->first_at)->format('H:i:s'),
+            ])->values();
     }
 
     /**

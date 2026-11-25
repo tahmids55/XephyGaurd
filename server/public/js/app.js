@@ -831,6 +831,7 @@ document.addEventListener('alpine:init', () => {
           ports: [],
           devices: [],
           netEvents: [],
+          traffic: [], logUrls: false,
           keyrate: [],
           pastes: [],
           evidence: [],
@@ -892,6 +893,8 @@ document.addEventListener('alpine:init', () => {
             ? d.devices.map(dv => ({ vidpid: (dv.vendor && dv.product) ? `${dv.vendor}:${dv.product}` : (dv.class || 'USB'), name: dv.model || dv.action || 'USB device', time: dv.at }))
             : base.devices,
           netEvents: d.network || [],
+          traffic: (d.traffic || []).map(r => ({ host: r.host || '—', action: r.action || '', category: r.category || '', ai: !!r.ai, count: Number(r.count || 1), last: r.at || '', first: r.first_at || '' })),
+          logUrls: !!d.log_urls,
           keyrate: (d.keyrate && d.keyrate.series && d.keyrate.series.length)
             ? d.keyrate.series.map(s => s.keys || 0)
             : base.keyrate,
@@ -914,7 +917,7 @@ document.addEventListener('alpine:init', () => {
       return this.serverDetails[this.activePcId] || {
         processesUpdatedAt: '',
         events: [], processes: [], aiTraffic: [], tabs: [], extensions: [],
-        artifacts: [], adapters: [], ports: [], devices: [], netEvents: [],
+        artifacts: [], adapters: [], ports: [], devices: [], netEvents: [], traffic: [], logUrls: false,
         keyrate: [], pastes: [], evidence: [],
       };
     },
@@ -973,7 +976,7 @@ document.addEventListener('alpine:init', () => {
     get tabs() {
       const d = this.det; if (!d) return [];
       return [['overview', 'Overview', 'info', ''], ['screen', 'Screen', 'monitor', ''], ['timeline', 'Timeline', 'clock', ''], ['alerts', 'Alerts', 'bell', this.pcAlerts.length || ''],
-        ['programs', 'Programs', 'terminal', d.processes.length], ['traffic', 'Traffic', 'globe', d.aiTraffic.length || ''], ['browsertabs', 'Browser tabs', 'grid', d.tabs.length || ''],
+        ['programs', 'Programs', 'terminal', d.processes.length], ['traffic', 'Traffic', 'globe', (d.traffic.length || d.aiTraffic.length) || ''], ['browsertabs', 'Browser tabs', 'grid', d.tabs.length || ''],
         ['installed', 'Installed AI', 'shield', (d.extensions.length + d.artifacts.length) || ''], ['network', 'Network', 'wifi', ''],
         ['dns', 'DNS log', 'list', (d.netEvents && d.netEvents.length) || ''], ['usb', 'USB', 'layers', d.devices.length || ''],
         ['typing', 'Typing', 'keyboard', ''], ['pastes', 'Pastes', 'clipboard', d.pastes.length || '']];
