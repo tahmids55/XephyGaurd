@@ -23,7 +23,7 @@ final class EventSchema
             'removed' => 'strs:64:200', 'list' => '@proc[]:250'],
         'rule_hit' => ['rule_id' => 'str:64', 'severity' => 'str:16', 'category' => 'str:32', 'description' => 'str:512',
             'subject' => 'str:512', 'actions' => 'strs:16:8', 'result' => '@result', 'context' => '@context',
-            'mode' => 'str:16', 'session_id' => 'id'],
+            'mode' => 'str:16', 'session_id' => 'id', 'evidence_nonce' => 'str:32'],
         'listening_port' => ['port' => 'int', 'address' => 'str:64', 'process' => 'str:128', 'pid' => 'int',
             'rule_id' => 'str:64', 'probed' => 'bool'],
         'window_focus' => ['app' => 'str:64', 'title' => 'str:256', 'ai_site' => 'str:128'],

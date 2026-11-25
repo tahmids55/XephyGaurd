@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Observers;
 
 use App\Models\Alert;
+use App\Models\Command;
 use App\Services\CommandBus;
 use App\Services\PrivacySettings;
 use Illuminate\Support\Facades\Cache;
@@ -15,6 +16,10 @@ use Throwable;
  * F123 / DECISIONS #32: a serious alert asks its PC for one screenshot at once (command `evidence_snapshot`,
  * pushed like every command). Only when an admin enabled it, never in Always-on, at most once per PC per
  * RATE_S. Sent after the commit so the command row (= the upload's nonce record) exists when the agent answers.
+ *
+ * Fast path (plan step 8): an agent `rule_hit` with the `alert` action may already have asked its helper and sent
+ * `evidence_nonce` (32 hex). Then nothing is pushed: the same guards apply and the command row is only recorded
+ * (status `local`, inside the ingest transaction) so the upload endpoint accepts that nonce once, for this alert.
  */
 final class AutoScreenshotRequester
 {
@@ -28,6 +33,13 @@ final class AutoScreenshotRequester
             if (! $cfg['enabled'] || $pc === null || $pc->mode === 'always_on'
                 || (Alert::SEVERITY_POINTS[$alert->severity] ?? -1) < Alert::SEVERITY_POINTS[$cfg['min_severity']]
                 || ! Cache::add("evidence:auto:pc:{$pc->id}", 1, self::RATE_S)) {
+                return;
+            }
+            $local = $alert->details['evidence_nonce'] ?? null;
+            if (is_string($local) && preg_match('/^[0-9a-f]{32}$/', $local) === 1) {
+                Command::create(['pc_id' => $pc->id, 'type' => 'evidence_snapshot', 'status' => 'local',
+                    'args' => ['alert_id' => $alert->id, 'nonce' => $local]]);
+
                 return;
             }
             $args = ['alert_id' => $alert->id, 'nonce' => bin2hex(random_bytes(16))];

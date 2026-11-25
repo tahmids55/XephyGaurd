@@ -66,6 +66,7 @@ class AutoScreenshotRequestTest extends TestCase
         $this->assertArrayNotHasKey('auto_evidence', app(PolicyService::class)->forPc($pc)['screen'] ?? []);  // no session = Always-on
         app(SessionManager::class)->start($lab, $this->profile('Test: AI blocked'), 'CS1');
         $this->assertTrue(app(PolicyService::class)->forPc($pc->fresh())['screen']['auto_evidence']);
+        $this->assertSame('high', app(PolicyService::class)->forPc($pc->fresh())['screen']['evidence_min_severity']);
     }
 
     public function test_never_in_always_on_and_invalid_min_severity_counts_as_high(): void

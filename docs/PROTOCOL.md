@@ -59,6 +59,8 @@ the policy. The service passes them to the helper in `config.screen`; a view in 
 does not send them yet (agent defaults apply).
 `policy.screen.auto_evidence` (bool, sent only when `true`; F123): an admin enabled automatic screenshots on serious
 alerts and the PC is not in Always-on mode. Without it the agent refuses `evidence_snapshot`.
+`policy.screen.evidence_min_severity` (`low`|`medium`|`high`|`critical`, sent with `auto_evidence`; plan step 8): a
+`rule_hit` whose actions include `alert` at or above it may ask the helper at once, without waiting for the command.
 `policy.screen.cpu_budget_pct` (number 1..100, default 8, optional, invalid keeps the default) is the CPU budget of the
 helper's capture/encode thread in percent of one core; the governor lowers fps (floor 2) then quality to stay under it.
 Passed in `config.screen` like the above, applied at once (also to a running view). The server sends it only after an
@@ -108,7 +110,7 @@ and a listed field with the wrong type, is dropped before storage; strings are c
 | `agent_stopping` | `reason` [32], `uptime_s` (clean shutdown announcement) |
 | `process_start` / `process_stop` | `pid, ppid, exe` [256], `rss_mb, rule_id` (stop: `pid, rule_id`) — only for processes matching signatures; no command lines |
 | `process_snapshot` | `hash, count, total_running, added[], removed[]` (≤ 200 executable names each), `list[]` (≤ 250 × `pid, ppid, exe, name, user` [32], `rss_mb, cpu_pct, net_kbps, net_conns, start, rule_id`; `start` = OS start tick that identifies the process together with `pid`) |
-| `rule_hit` | `rule_id, severity` [16], `category` [32], `description` [512], `subject` [512], `actions[]` (≤ 8), `result` {`kill` {`pid, killed, reason`}}, `context`, `mode` [16], `session_id, user`. `context` keys: `exe, pid, user, port, adapter, driver, initial, default_routes, class, vendor, model, process, domain, remote_ip, remote_port, sent_kb, recv_kb, signal, ide, extension, version, activity, path` [512], `size_mb, rule_id, app, title` [256], `ai_site`. Tunnel flags (`category: tunnel`, rule id from `web.tunnel`, sessions only): context `process, pid, remote_ip, remote_port, signal: tcp_destination`, never closed by the agent |
+| `rule_hit` | `rule_id, severity` [16], `category` [32], `description` [512], `subject` [512], `actions[]` (≤ 8), `result` {`kill` {`pid, killed, reason`}}, `context`, `mode` [16], `session_id, user`, `evidence_nonce` (32 lowercase hex, optional: the agent already asked its helper for an auto screenshot of this hit, F123 fast path). `context` keys: `exe, pid, user, port, adapter, driver, initial, default_routes, class, vendor, model, process, domain, remote_ip, remote_port, sent_kb, recv_kb, signal, ide, extension, version, activity, path` [512], `size_mb, rule_id, app, title` [256], `ai_site`. Tunnel flags (`category: tunnel`, rule id from `web.tunnel`, sessions only): context `process, pid, remote_ip, remote_port, signal: tcp_destination`, never closed by the agent |
 | `listening_port` | `port, address, process` [128], `pid, rule_id, probed` |
 | `window_focus` | `app` [64], `title` [256] (filtered by policy: off / app_only / full; the server drops a title the PC's effective `title_capture` does not allow, also `rule_hit.context.title`, and below `full` the " (file)" part of paste/copy targets), `ai_site` [128] |
 | `paste` / `copy` | `chars, lines, code, score, src` [128], `dst` [128], `user` |
@@ -154,7 +156,9 @@ the listed targets; `isolate_notice`: boolean).
 ## Auto evidence upload (agent → CCC, F123)
 `POST /api/agent/v1/evidence?nonce=<32 hex>` with the usual agent auth, body = one JPEG (raw bytes, `Content-Type:
 image/jpeg`, ≤ 8 MiB on the CCC, the agent caps at 4 MiB; width and height ≤ 8192). `nonce` is the one from an
-`evidence_snapshot` command sent to this PC in the last 60 s; each nonce is accepted once (first attempt consumes it,
+`evidence_snapshot` command sent to this PC in the last 60 s, or the `evidence_nonce` of a `rule_hit` from this PC whose
+alert passed the same guards in the last 60 s (the CCC then records an `evidence_snapshot` command row with status
+`local` and pushes nothing; the agent uploads only after the batch with that `rule_hit` was accepted); each nonce is accepted once (first attempt consumes it,
 even a refused image). `?masked=1&nonce=…` with an empty body says the privacy mask hid the screen (audited, no image).
 Replies: `201 {"ok":true,"id":N}`, `200 {"ok":true,"masked":true}`, `403` unknown/expired nonce or another PC's,
 `409` nonce already used, `413` too big, `422` bad nonce format or not a JPEG. Stored like staff evidence (F46):

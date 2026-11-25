@@ -99,4 +99,53 @@ class AutoEvidenceUploadTest extends TestCase
         $this->assertSame(0, EvidenceCapture::count());
         $this->assertTrue(AuditLog::where('action', 'pc.evidence.auto_masked')->exists());
     }
+
+    /** Plan step 8: the agent asked its helper on an `alert` rule_hit and sent the nonce with the event. */
+    private function ruleHit(array $h, int $pcId, int $seq, string $nonce): void
+    {
+        $ts = now()->getTimestampMs();
+        $this->withHeaders($h)->postJson('/api/agent/v1/events', ['v' => 1, 'pc_id' => (string) $pcId,
+            'heartbeat' => ['local_time_ms' => $ts], 'events' => [['seq' => $seq, 'ts' => $ts, 'type' => 'rule_hit', 'data' => [
+                'rule_id' => 'proc.ollama', 'severity' => 'high', 'description' => 'Ollama', 'subject' => 'ollama.'.$seq,
+                'actions' => ['alert'], 'evidence_nonce' => $nonce]]]])->assertOk();
+    }
+
+    public function test_local_trigger_nonce_from_rule_hit_is_recorded_not_pushed_and_accepted_once(): void
+    {
+        Storage::fake('local');
+        $this->bootLab();
+        Setting::put('evidence.auto_screenshot', true);
+        [$pc, $token, $cert] = $this->enrolledPc();
+        $pc->update(['mode' => 'test']);
+        $h = $this->agentHeaders($token, $cert);
+        $nonce = str_repeat('ab', 16);
+
+        $this->ruleHit($h, $pc->id, 1, $nonce);
+        $alert = Alert::where('rule_id', 'proc.ollama')->sole();
+        $cmd = Command::where('type', 'evidence_snapshot')->sole();
+        $this->assertSame(['local', $alert->id, $nonce], [$cmd->status, $cmd->args['alert_id'], $cmd->args['nonce']]);
+
+        $this->upload($h, 'nonce='.$nonce, $this->jpeg())->assertCreated();
+        $this->assertSame([$alert->id, $cmd->id], [EvidenceCapture::sole()->alert_id, EvidenceCapture::sole()->command_id]);
+        $this->upload($h, 'nonce='.$nonce, $this->jpeg())->assertStatus(409);
+
+        // Inside the 30 s window the CCC records nothing, so a second local shot is refused.
+        $this->ruleHit($h, $pc->id, 2, str_repeat('cd', 16));
+        $this->assertSame(1, Command::where('type', 'evidence_snapshot')->count());
+        $this->upload($h, 'nonce='.str_repeat('cd', 16), $this->jpeg())->assertForbidden();
+    }
+
+    public function test_local_trigger_nonce_is_ignored_when_auto_screenshot_is_off(): void
+    {
+        Storage::fake('local');
+        $this->bootLab();
+        [$pc, $token, $cert] = $this->enrolledPc();
+        $pc->update(['mode' => 'test']);
+        $h = $this->agentHeaders($token, $cert);
+
+        $this->ruleHit($h, $pc->id, 1, str_repeat('ab', 16));
+        $this->assertSame(0, Command::where('type', 'evidence_snapshot')->count());
+        $this->upload($h, 'nonce='.str_repeat('ab', 16), $this->jpeg())->assertForbidden();
+        $this->assertSame(0, EvidenceCapture::count());
+    }
 }
