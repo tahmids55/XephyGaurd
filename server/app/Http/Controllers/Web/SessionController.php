@@ -16,6 +16,7 @@ use App\Services\CommandBus;
 use App\Services\SessionManager;
 use App\Services\SessionNotActive;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 /** Session control: start/stop, switch mode, broadcast message, isolate, kill, per-PC override. */
 class SessionController extends Controller
@@ -127,6 +128,17 @@ class SessionController extends Controller
         $cmd = $this->commands->send($pc, 'rescan', ['what' => $what], $request->user());
 
         return $request->expectsJson() ? response()->json(['command_id' => $cmd->id]) : back()->with('status', 'Rescan requested.');
+    }
+
+    /** Programs tab open: the agent sends process_snapshot every 2 s for 20 s (DECISIONS #31); one command per PC per 5 s. */
+    public function processLease(Request $request, Pc $pc)
+    {
+        $sent = Cache::add("pc:{$pc->id}:process_lease", 1, 5);
+        if ($sent) {
+            $this->commands->send($pc, 'process_lease', ['ttl_s' => 20], $request->user());
+        }
+
+        return response()->json(['sent' => $sent]);
     }
 
     public function override(Request $request, LabSession $session, Pc $pc)

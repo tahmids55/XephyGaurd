@@ -59,6 +59,7 @@ Route::group([], function () {
             Route::post('/pcs/{pc}/isolate', [SessionController::class, 'isolate'])->name('pcs.isolate');
             Route::post('/pcs/{pc}/kill', [SessionController::class, 'kill'])->name('pcs.kill');
             Route::post('/pcs/{pc}/rescan', [SessionController::class, 'rescan'])->name('pcs.rescan');
+            Route::post('/pcs/{pc}/process-lease', [SessionController::class, 'processLease'])->name('pcs.process_lease');
 
             Route::get('/enroll', [EnrollmentController::class, 'index'])->name('enroll.index');
             Route::get('/enroll.html', [EnrollmentController::class, 'index'])->name('enroll.html');

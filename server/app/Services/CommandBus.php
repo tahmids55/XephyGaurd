@@ -19,7 +19,7 @@ use Illuminate\Validation\ValidationException;
  */
 class CommandBus
 {
-    public const TYPES = ['policy_updated', 'message', 'kill', 'isolate_notice', 'rescan', 'ping', 'flush', 'screen_lease'];
+    public const TYPES = ['policy_updated', 'message', 'kill', 'isolate_notice', 'rescan', 'ping', 'flush', 'screen_lease', 'process_lease'];
 
     public const RESCAN_TARGETS = ['processes', 'network', 'ports', 'devices', 'extensions', 'artifacts', 'all'];
 
@@ -37,6 +37,7 @@ class CommandBus
             'ping' => [],
             'flush' => [],
             'screen_lease' => ['ttl_s' => 'required|integer|min:1|max:3600'],   // the agent's own cap
+            'process_lease' => ['ttl_s' => 'required|integer|min:1|max:60'],    // the agent's own cap
         ];
     }
 

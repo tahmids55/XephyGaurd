@@ -578,10 +578,8 @@ document.addEventListener('alpine:init', () => {
           xgDraw(this.$refs.live, this.active, this.screenMode === 'live' ? performance.now() : this.snapT, this.monitor);
         }
       }, 110);
-      // Programs tab acts like a task manager: re-read the PC every 3 s while it is visible.
-      this._progTimer = setInterval(() => {
-        if (!document.hidden && this.inspector && this.tab === 'programs' && this.activePcId) this.fetchDetail(this.activePcId);
-      }, 3000);
+      // Programs tab acts like a task manager: hold a process lease (agent sends a snapshot every 2 s) and re-read every 2 s.
+      this._progTimer = setInterval(() => this.progTick(), 2000);
       this.$watch('view', v => {
         if (v === 'wall' && !this.inspector) this.$nextTick(() => this.syncWallStreams());
         else this.stopWallStreams();
@@ -601,6 +599,7 @@ document.addEventListener('alpine:init', () => {
       });
       this.$watch('tab', (t, prev) => {
         this.$nextTick(() => { this.paintLive(); this.paintOverview(); });
+        if (t === 'programs') this.progTick();
         const shows = x => x === 'screen' || x === 'overview';
         // Coming back to Overview or Screen from another tab resumes Live.
         if (shows(t) && !shows(prev)) this.$nextTick(() => this.autoLive());
@@ -803,6 +802,16 @@ document.addEventListener('alpine:init', () => {
       else { this.progSort = k; this.progDir = k === 'name' ? 1 : -1; }
     },
     fmtNet(kb) { return kb >= 1000 ? (kb / 1000).toFixed(1) + ' MB/s' : kb.toFixed(1) + ' KB/s'; },
+    progTick() {
+      if (document.hidden || !this.inspector || this.tab !== 'programs' || !this.activePcId) return;
+      const id = this.activePcId, now = Date.now();
+      // Renew every 10 s (lease 20 s); the server sends at most one command per PC per 5 s.
+      if (this._progLeasePc !== id || now - (this._progLeaseAt || 0) > 10000) {
+        this._progLeasePc = id; this._progLeaseAt = now;
+        window.xgApi(`/pcs/${id}/process-lease`, { method: 'POST', body: '{}' }).catch(() => { this._progLeaseAt = 0; });
+      }
+      this.fetchDetail(id);
+    },
     progArrow(k) { return this.progSort === k ? (this.progDir > 0 ? ' ▲' : ' ▼') : ''; },
     get pcAlerts() { return this.alerts.filter(a => a.pcId === this.activePcId); },
     get tabs() {
