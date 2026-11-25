@@ -42,7 +42,7 @@
               <div class="stack">
                 <div><button class="btn" x-show="!alertShot" @click="alertShot = true">Show screenshot</button>
                   <span class="small muted" x-show="!alertShot">Opening it is recorded in the audit log.</span></div>
-                <template x-if="alertShot"><a :href="alertDet.screenshot.url" target="_blank" rel="noopener"><img :src="alertDet.screenshot.url" alt="Screenshot taken by the PC when the alert was raised" style="max-width:100%;border:1px solid var(--border);border-radius:6px"></a></template>
+                <template x-if="alertShot"><a :href="alertDet.screenshot.url" @click.prevent="$dispatch('xg-evidence', {url: alertDet.screenshot.url, title: 'Screenshot at alert time', sha256: alertDet.screenshot.sha256})" title="Enlarge"><img :src="alertDet.screenshot.url" alt="Screenshot taken by the PC when the alert was raised" style="max-width:100%;cursor:zoom-in;border:1px solid var(--border);border-radius:6px"></a></template>
                 <div class="small muted mono" style="word-break:break-all" x-text="'sha256 ' + alertDet.screenshot.sha256"></div>
               </div>
             </template>

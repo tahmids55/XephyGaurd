@@ -113,7 +113,7 @@
         <td>{{ $e->source_mode }} · mon {{ $e->monitor + 1 }}</td>
         <td>{{ $e->capturer?->name ?? '—' }}</td>
         <td class="mono small muted">{{ substr($e->sha256, 0, 12) }}</td>
-        <td class="right"><a class="btn btn-sm" href="{{ route('evidence.show', $e) }}" target="_blank" rel="noopener">View</a></td>
+        <td class="right"><a class="btn btn-sm" href="{{ route('evidence.show', $e) }}" @click.prevent="$dispatch('xg-evidence', {{ Js::from(['url' => route('evidence.show', $e), 'title' => ($e->pc?->name ?? 'PC-'.$e->pc_id).' · '.$e->occurred_at?->format('H:i:s'), 'sha256' => $e->sha256]) }})">View</a></td>
       </tr>
     @endforeach
   </tbody></table>

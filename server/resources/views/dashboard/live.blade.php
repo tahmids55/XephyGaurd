@@ -331,13 +331,13 @@
             <div class="stack" style="--gap:8px;margin-top:8px">
               <template x-for="ev in (det ? det.evidence : [])" :key="ev.id">
                 <div class="row" style="--gap:10px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2,transparent)">
-                  <a :href="ev.url" target="_blank" rel="noopener"><img :src="ev.url" :alt="'Evidence ' + ev.id" style="height:44px;width:78px;object-fit:cover;border-radius:4px;border:1px solid var(--border);display:block"></a>
+                  <a :href="ev.url" @click.prevent="$dispatch('xg-evidence', {url: ev.url, title: (ev.source_mode === 'live' ? 'Live capture' : 'Snapshot') + ' · ' + ev.occurred_at, sha256: ev.sha256})" title="Enlarge"><img :src="ev.url" :alt="'Evidence ' + ev.id" style="height:44px;width:78px;object-fit:cover;border-radius:4px;border:1px solid var(--border);display:block"></a>
                   <div style="min-width:0">
                     <div class="small" style="font-weight:500" x-text="(ev.source_mode === 'live' ? 'Live capture' : 'Snapshot') + ' · Monitor ' + ((ev.monitor || 0) + 1)"></div>
                     <div class="tiny muted mono" x-text="ev.occurred_at + (ev.captured_by ? ' · ' + ev.captured_by : '') + ' · ' + (ev.sha256 || '').slice(0, 12)"></div>
                   </div>
                   <span class="grow"></span>
-                  <a class="btn btn-sm" :href="ev.url" target="_blank" rel="noopener">Open</a>
+                  <a class="btn btn-sm" :href="ev.url" @click.prevent="$dispatch('xg-evidence', {url: ev.url, title: (ev.source_mode === 'live' ? 'Live capture' : 'Snapshot') + ' · ' + ev.occurred_at, sha256: ev.sha256})">Open</a>
                 </div>
               </template>
             </div>
