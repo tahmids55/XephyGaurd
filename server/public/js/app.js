@@ -595,9 +595,12 @@ document.addEventListener('alpine:init', () => {
           if (this.view === 'wall') this.$nextTick(() => this.syncWallStreams());
         }
       });
-      this.$watch('tab', t => {
+      this.$watch('tab', (t, prev) => {
         this.$nextTick(() => { this.paintLive(); this.paintOverview(); });
-        if (t !== 'screen' && t !== 'overview' && this.screenStreaming) {
+        const shows = x => x === 'screen' || x === 'overview';
+        // Coming back to Overview or Screen from another tab resumes Live.
+        if (shows(t) && !shows(prev)) this.$nextTick(() => this.autoLive());
+        if (!shows(t) && this.screenStreaming) {
           // Live keeps running on Overview (it mirrors the Screen canvas); other tabs stop it but keep the last frame.
           const had = this.screenHasFrame;
           this.stopScreen(had);
@@ -918,10 +921,14 @@ document.addEventListener('alpine:init', () => {
       this.activePcId = id; this.tab = tab || 'overview'; this.screenMode = 'snapshot'; this.monitor = 0; this.inspector = true; this.fetchDetail(id);
       // Opening a PC is the staff request: start Live (audited, student sees the indicator) so the screen shows first;
       // a PC without live capability gets one snapshot instead.
-      this.$nextTick(() => {
-        if (!this.inspector || this.activePcId !== id || !this.screenOk || this.screenStreaming || this.screenHasFrame) return;
-        if (this.active.caps && this.active.caps.live) this.goLive(); else this.snapshot();
-      });
+      this.$nextTick(() => { if (this.activePcId === id && !this.screenHasFrame) this.autoLive(); });
+    },
+    autoLive() {
+      // Opening the popup and the tab watch can both ask in the same tick; start only once.
+      if (!this.inspector || !this.screenOk || this.screenStreaming || this._autoLiveBusy) return;
+      this._autoLiveBusy = true;
+      setTimeout(() => { this._autoLiveBusy = false; }, 1000);
+      if (this.active.caps && this.active.caps.live) this.goLive(); else if (!this.screenHasFrame) this.snapshot();
     },
     closeInspector() { this.stopScreen(); this.inspector = false; },
     clear() { this.stopScreen(); this.inspector = false; this.messageModal = false; this.closeModal = false; },

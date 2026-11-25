@@ -285,7 +285,8 @@ Paths are relative to the repo root. `S/` = `server/app/`, `A/` = `agent/`.
 - **What:** centered popup opened by clicking a seat; per-PC detail: overview (props + counts), processes, extensions/installed AI, network/ports/adapters, USB devices,
   copy/paste, browser tabs, events timeline, screen, alerts. Opening the popup on an online X11 PC starts Live
   (audited; the student sees the viewing indicator) so Overview and Screen show the live screen first; a PC without
-  live capability gets one snapshot. Live runs on Overview and Screen, stops on other tabs or when the popup closes.
+  live capability gets one snapshot. Live runs on Overview and Screen, stops on other tabs or when the popup closes, and resumes on
+  return to Overview or Screen.
   Programs tab: search box (name, title, rule) and click-to-sort on Program, CPU, Memory, Network (client-side).
 - **Trigger:** `GET /pcs/{pc}` (JSON for the popup). Assistant and up.
 - **Code:** `DashboardController::pc` (also marks some data as seen).
