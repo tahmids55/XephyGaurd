@@ -97,6 +97,7 @@ add_library(xgcore STATIC
   core/encoder.cpp
   core/flow.cpp
   core/downscale.cpp
+  core/still_jpeg.cpp
   core/thread_priority.cpp
   core/governor.cpp
   capture/fake_capture.cpp

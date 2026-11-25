@@ -327,7 +327,8 @@ int helper_main() {
               {"delta_tiles", can_live},
               {"monitors", count_monitors()},
               {"secure_desktop", secure_desk},
-              {"ipc_stream", can_live}});  // frames go to the service, which relays them (DECISIONS #24)
+              {"ipc_stream", can_live},  // frames go to the service, which relays them (DECISIONS #24)
+              {"evidence", can_live}});  // one masked-aware screenshot on a serious alert (F123)
     };
 
     ScreenStreamer screen_streamer;
@@ -464,6 +465,26 @@ int helper_main() {
                     if (auto b = crypto::base64_decode(j["data"].get<std::string>()); b && b->size() <= 1024)
                         screen_streamer.on_gateway_message(*b);
                 }
+            } else if (t == "evidence_snap") {
+                // One screenshot for a serious alert (F123, DECISIONS #32). The service holds the nonce and does the
+                // upload; the helper only answers with one JPEG record, evidence_masked or evidence_failed.
+                if (!cfg_screen_enabled.load() || !linux_screen_ready()) {
+                    send({{"t", "evidence_failed"}, {"reason", "screen_unavailable"}});
+                    continue;
+                }
+                EvidenceRequest req;  // evidence_shot() clamps; a missing or odd field keeps the default
+                auto int_field = [&](const char* k, int64_t def) {
+                    return j.contains(k) && j[k].is_number_integer() ? j[k].get<int64_t>() : def;
+                };
+                req.max_width = static_cast<int>(std::clamp<int64_t>(int_field("max_width", req.max_width), 1, 1 << 16));
+                req.quality = static_cast<int>(std::clamp<int64_t>(int_field("quality", req.quality), 1, 100));
+                req.max_bytes = static_cast<size_t>(std::clamp<int64_t>(
+                    int_field("max_bytes", static_cast<int64_t>(req.max_bytes)), 1, static_cast<int64_t>(ipc::kMaxEvidenceJpeg)));
+                const EvidenceShot shot = screen_streamer.evidence_shot(req);
+                if (shot.kind == EvidenceShot::Kind::jpeg && ipc::send_evidence_jpeg(*plat->ipc, shot.jpeg)) continue;
+                if (shot.kind == EvidenceShot::Kind::masked) send({{"t", "evidence_masked"}});
+                else send({{"t", "evidence_failed"},
+                           {"reason", shot.kind == EvidenceShot::Kind::jpeg ? "send_failed" : shot.reason}});
             } else if (t == "paste_probe") {
                 handle_paste_chord(false);
             }
