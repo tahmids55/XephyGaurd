@@ -537,10 +537,12 @@ on `private-pc.<id>` (`S/Events/AgentCommand.php`) and acknowledged in the next 
   turns it on, one screenshot taken by the PC itself (DECISIONS #32, docs/plan/evidence.md).
 - **Trigger:** any `Alert` created (EventIngestor, NetEventsController, SessionManager). Screenshot only with policy
   `evidence.auto_screenshot` (default off) and severity ≥ `evidence.min_severity` (default `high`), at most 1 per PC per 30 s.
-- **Code:** planned (docs/plan/evidence.md Steps 2–8).
+- **Code:** context: `S/Observers/AlertSnapshotRecorder.php` (`#[ObservedBy]` on `Alert`), `S/Models/AlertSnapshot.php`;
+  screenshot: planned (docs/plan/evidence.md Steps 3–8).
 - **In/out/side effects:** `alert_snapshots` row (copies of data the CCC already holds + sha256); screenshot as an
   `evidence_captures` row with `alert_id`, `source = auto`, stored like F46; audit on save and every view.
-- **Status:** not built yet.
+- **Status:** context snapshot working (`AlertSnapshotTest`: latest process list, events and net of the last 120 s, sha256
+  tamper check; purged with raw data). Screenshot not built yet.
 - **Test:** 1. Turn on `evidence.auto_screenshot`. 2. Trigger a high alert on a PC. 3. The alert shows context and a screenshot.
 
 ---
@@ -1283,6 +1285,7 @@ From `server/database/migrations/`.
 | `signature_versions` | signed bundles and which is active |
 | `events` | raw agent events (purged after `retention_days_raw`) |
 | `alerts` | alerts with severity, reasons, acknowledgement |
+| `alert_snapshots` | context frozen when an alert is raised (canonical JSON + sha256, F123; raw retention) |
 | `key_stats` | keystroke timing windows |
 | `paste_events` | paste features |
 | `net_events` | proxy/DNS observations |
