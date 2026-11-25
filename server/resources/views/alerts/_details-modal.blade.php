@@ -1,8 +1,8 @@
 {{-- Alert details popup. Needs the xgAlertDetails() mixin (public/js/app.js) in the enclosing x-data. --}}
   <div class="overlay" x-show="alertModal" x-cloak x-transition.opacity @click.self="alertModal = false">
-    <div class="modal" role="dialog" aria-label="Alert details" style="width:min(680px,100%);max-height:calc(100vh - 48px);display:flex;flex-direction:column" x-show="alertDet">
-      <div class="modal-head"><span class="h2">Alert details</span><button class="xbtn" @click="alertModal = false" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
-      <div class="modal-body stack" style="overflow:auto" x-show="alertDet">
+    <div class="modal" role="dialog" aria-label="Alert details" style="width:min(680px,100%);max-height:calc(100vh - 32px);display:flex;flex-direction:column">
+      <div class="modal-head" style="flex:none"><span class="h2">Alert details</span><button class="xbtn" @click="alertModal = false" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+      <div class="modal-body stack" style="flex:1 1 auto;min-height:0;overflow:auto;padding-bottom:12px">
         <template x-if="alertDet"><div class="stack">
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <span class="sev" :class="alertDet.sev" x-text="alertDet.sev"></span>
@@ -46,6 +46,6 @@
           </details>
         </div></template>
       </div>
-      <div class="modal-foot"><button class="btn" @click="alertModal = false">Close</button><button class="btn btn-solid" x-show="alertDet && !alertDet.acked" @click="ackAlertFromModal()">Mark reviewed</button></div>
+      <div class="modal-foot" style="flex:none;border-top:1px solid var(--border)"><button class="btn" @click="alertModal = false">Close</button><button class="btn btn-solid" x-show="alertDet && !alertDet.acked" @click="ackAlertFromModal()">Mark reviewed</button></div>
     </div>
   </div>
