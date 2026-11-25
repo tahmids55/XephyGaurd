@@ -188,6 +188,8 @@ private:
     double screen_cpu_pct_ = 0;
     int64_t screen_level_ = 0, screen_cost_at_ = 0;
     std::map<std::string, int64_t> next_run_;
+    // Steady-clock deadline of the CCC's process lease (Programs tab open): process_snapshot every 2 s until then.
+    int64_t proc_lease_until_ = 0;
     bool reevaluate_ = false;
 };
 

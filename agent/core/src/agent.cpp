@@ -1342,6 +1342,23 @@ void Agent::handle_command(const protocol::Command& cmd) {
         const int64_t ttl = jr::i64(cmd.args, "ttl_s", 0, 0, 3600);
         if (ttl > 0 && cfg_.screen_enabled) screen_relay_->grant_lease(int(ttl));
         command_result(cmd.id, ttl > 0 && cfg_.screen_enabled ? "ok" : "ignored", json::object());
+    } else if (cmd.type == "process_lease") {
+        // The CCC's Programs tab is open on this PC: send process_snapshot every 2 s for ttl_s more seconds.
+        // Same data as the regular snapshot, only more often; the lease lapses by itself (max 60 s per grant).
+        const int64_t ttl = jr::i64(cmd.args, "ttl_s", 0, 0, 60);
+        const bool on = ttl > 0 && policy_.collect.processes;
+        if (on) {
+            const int64_t now = steady_ms();
+            const bool fresh = now >= proc_lease_until_;
+            proc_lease_until_ = now + ttl * 1000;
+            if (fresh) {
+                scan_processes();
+                process_snapshot();
+                next_run_["snap"] = now + 2000;
+                wake_uplink();
+            }
+        }
+        command_result(cmd.id, on ? "ok" : "ignored", json::object());
     } else if (cmd.type == "flush" || cmd.type == "ping") {
         wake_uplink();
         command_result(cmd.id, "ok", {{"pong", now_ms()}});
@@ -1419,7 +1436,11 @@ void Agent::run_periodic(int64_t now) {
         return false;
     };
     if (p.collect.processes && due("proc", p.intervals.process_scan_s)) scan_processes();
-    if (p.collect.processes && due("snap", p.intervals.snapshot_s)) process_snapshot();
+    const bool proc_live = now < proc_lease_until_;
+    if (p.collect.processes && due("snap", proc_live ? 2 : p.intervals.snapshot_s)) {
+        process_snapshot();
+        if (proc_live) wake_uplink();
+    }
     if (p.collect.ports && due("ports", p.intervals.port_scan_s)) scan_ports();
     if (p.collect.network && (std::exchange(network_dirty_, false) || due("net", 30))) scan_network();
     if (p.collect.network && due("ai_net", 4)) scan_ai_traffic();

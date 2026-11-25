@@ -330,6 +330,28 @@ TEST_CASE("screen_lease command: a positive ttl is accepted, a missing or zero t
     CHECK(r[2].data.at("status") == "ignored");
 }
 
+TEST_CASE("process_lease command: a grant sends a snapshot at once, a renewal does not, bad ttls are ignored") {
+    Harness h;
+    h.procs->procs = {{1, 0, "/sbin/init", "init", "", "root", 0, 1}};
+    h.agent->apply_policy(Policy::default_for(Mode::always_on));
+    const auto before = h.of(ev::process_snapshot).size();
+    h.agent->handle_command({"p1", "process_lease", {{"ttl_s", 20}}});
+    CHECK(h.of(ev::process_snapshot).size() == before + 1);
+    h.agent->handle_command({"p2", "process_lease", {{"ttl_s", 20}}});  // renewal inside the lease
+    CHECK(h.of(ev::process_snapshot).size() == before + 1);
+    h.agent->handle_command({"p3", "process_lease", {{"ttl_s", 0}}});
+    h.agent->handle_command({"p4", "process_lease", {{"ttl_s", 61}}});  // over the agent's cap
+    h.agent->handle_command({"p5", "process_lease", json::object()});
+    const auto r = h.of(ev::command_result);
+    REQUIRE(r.size() >= 5);
+    const auto n = r.size();
+    CHECK(r[n - 5].data.at("status") == "ok");
+    CHECK(r[n - 4].data.at("status") == "ok");
+    CHECK(r[n - 3].data.at("status") == "ignored");
+    CHECK(r[n - 2].data.at("status") == "ignored");
+    CHECK(r[n - 1].data.at("status") == "ignored");
+}
+
 TEST_CASE("policy screen.privacy_rules parse, round-trip, and a malformed list rejects the policy") {
     const json ok = {{"screen", {{"privacy_rules", json::array({{{"process", "keepassxc"}}, {{"title_regex", "bank|private"}}})}}}};
     std::string err;
